@@ -1,0 +1,88 @@
+# Android E2E: unsigned debug build on an emulator + Maestro smoke flow.
+# Manual dispatch only (slow). No signing credentials, no EAS, no
+# publishing: builds `assembleDebug` and runs .maestro/smoke.yaml.
+#
+# Platform notes (verified against the repo, not assumed from the runner):
+# - React Native 0.86 compiles against Android SDK platform 36
+#   (node_modules/react-native/gradle/libs.versions.toml: compileSdk = "36"),
+#   so the workflow installs platform 36 + build-tools 36.0.0 explicitly
+#   instead of relying on whatever the runner image preinstalls.
+# - The emulator runs API 34: that is the *runtime under test*, a separate
+#   choice from the compile platform above.
+# - Maestro is pinned to CLI release cli-2.11.0. The official maestro.zip is
+#   downloaded with a bounded HTTPS-only curl and verified against the
+#   release's published SHA-256 before extraction. No curl|bash installer.
+name: android-e2e
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm ci
+      - name: Install Android SDK platform and build-tools
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?ANDROID_HOME is not set; cannot install SDK packages}"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          # `yes` exits with SIGPIPE (141) once sdkmanager stops reading.
+          # Under `pipefail` that producer status would fail the step even
+          # when licenses succeed, so read only the consumer status.
+          set +o pipefail
+          yes | "$SDKMANAGER" --licenses > /dev/null
+          SDK_STATUS=${PIPESTATUS[1]}
+          set -o pipefail
+          if [ "$SDK_STATUS" -ne 0 ]; then
+            echo "sdkmanager --licenses failed with exit $SDK_STATUS" >&2
+            exit "$SDK_STATUS"
+          fi
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+      - name: Build unsigned debug APK
+        run: |
+          npx expo prebuild --platform android --non-interactive --no-install
+          ./android/gradlew -p android assembleDebug
+      - uses: reactivecircus/android-emulator-runner@e93c997dcab69054e999e3924af3d21c4a736e13 # v2.9.0
+        with:
+          api-level: 34
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          script: |
+            set -euo pipefail
+            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+            adb shell monkey -p com.tengo.app -c android.intent.category.LAUNCHER 1
+            # Pinned Maestro CLI (release cli-2.11.0). SHA-256 taken from the
+            # release's published checksums_sha256.txt on 2026-10-05.
+            MAESTRO_SHA256="5384593cb4e7a106489e75a821d157dd43f4e438df6bc308b72e82c685e1283a"
+            curl --proto '=https' --tlsv1.2 -fsSL --max-time 300 --retry 3 \
+              -o /tmp/maestro.zip \
+              "https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.11.0/maestro.zip"
+            echo "${MAESTRO_SHA256}  /tmp/maestro.zip" | sha256sum -c -
+            unzip -qt /tmp/maestro.zip | grep 'No errors detected in compressed data'
+            mkdir -p "$HOME/.maestro" /tmp/maestro-dist
+            unzip -qo /tmp/maestro.zip -d /tmp/maestro-dist
+            cp -rf /tmp/maestro-dist/maestro/* "$HOME/.maestro"
+            rm -rf /tmp/maestro-dist /tmp/maestro.zip
+            export PATH="$HOME/.maestro/bin:$PATH"
+            maestro test .maestro/smoke.yaml

@@ -1,0 +1,18 @@
+# Lefthook-managed Git hooks (replaces the former scripts/setup-hooks.sh).
+# Install once per clone: `npx lefthook install` (runs automatically via
+# the `prepare` script on `npm install`). If lifecycle scripts are blocked
+# by an allow-scripts policy, install then wire explicitly:
+#   npm install --ignore-scripts && npx lefthook install
+# CI never runs Lefthook; it calls the same npm scripts directly.
+min_version: 2.1.17
+
+pre-commit:
+  commands:
+    biome:
+      # Check-only on staged files: the hook never rewrites files, so
+      # partially staged files are always preserved. Fix violations with
+      # `npm run lint:fix`, then re-stage.
+      glob:
+        - '*.{js,jsx,ts,tsx,json,jsonc}'
+        - '**/*.{js,jsx,ts,tsx,json,jsonc}'
+      run: npx --no-install biome check --no-errors-on-unmatched -- {staged_files}

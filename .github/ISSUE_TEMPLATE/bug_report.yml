@@ -1,0 +1,95 @@
+name: Bug report
+description: Report a reproducible problem in the app or tooling.
+labels: [bug]
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I checked existing issues and this is not a duplicate
+          required: true
+        - label: I will not paste personal or household data, credentials, or secrets below
+          required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Numbered steps that trigger the bug.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should happen on a local-first build?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happens instead? Include the exact error text if any.
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## Environment
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Where the bug was observed.
+      options:
+        - Android emulator
+        - Android device
+        - iOS simulator
+        - iOS device
+        - Tooling / CI (no device)
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device / emulator image
+      description: Model and OS/API level, e.g. pixel_6 API 34, or "n/a" for tooling issues.
+      placeholder: e.g. pixel_6 API 34
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: Build
+      description: Which app build ran.
+      options:
+        - Expo dev client (development build)
+        - Unsigned debug APK (assembleDebug)
+        - Release smoke (expo export bundle)
+        - n/a (tooling / CI only)
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: App / toolchain versions
+      description: App version from app.json, Node/npm, Expo SDK.
+      placeholder: e.g. app 1.0.0, node 26.8.1, npm 11.19.0, expo 57.0.26
+    validations:
+      required: true
+  - type: textarea
+    id: dataloss
+    attributes:
+      label: Data-loss / privacy-safe diagnostics
+      description: >
+        Did local data survive (SQLite `tengo.db`, migrations applied)? Paste
+        redacted logs or `db-state` text only. Never paste household item
+        contents, photos, tokens, or credentials.
+      render: shell
+    validations:
+      required: false

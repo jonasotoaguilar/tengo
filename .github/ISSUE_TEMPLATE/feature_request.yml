@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a small, local-first capability for Tengo.
+labels: [enhancement]
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I checked existing issues and this is not a duplicate
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and value
+      description: Whose household task gets easier, and why does it matter? No backend or shared-inventory assumptions.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed scope
+      description: Smallest useful slice on a local-first build (SQLite + en/es i18n).
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals
+      description: What this request explicitly does not cover (sync, accounts, barcode, publishing, …).
+    validations:
+      required: false
+  - type: textarea
+    id: checks
+    attributes:
+      label: Acceptance checks
+      description: How would we verify it (Jest/RNTL unit tests, emulator or device evidence)?
+    validations:
+      required: false

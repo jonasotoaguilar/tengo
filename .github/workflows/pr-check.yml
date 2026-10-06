@@ -1,0 +1,142 @@
+# PR metadata checks: review hygiene only, never a rebuild.
+# Build, typecheck, tests, and export smoke live in ci.yml; this workflow
+# only validates PR size, issue linkage, and labels. It runs no repo code.
+name: pr-check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check-pr-size:
+    name: Check PR review size
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify PR stays within review budget
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const limit = 800;
+            const EXCLUDED = [/^package-lock\.json$/, /^\.agents\/skills\//];
+            const isExcluded = (name) => EXCLUDED.some((re) => re.test(name));
+            const pr = context.payload.pull_request;
+            const labels = (pr.labels || []).map(label => label.name);
+            const hasException = labels.includes('size:exception');
+
+            // Authored lines only: paginate the files API so large PRs are
+            // fully counted, and keep generated/vendor churn visible but out
+            // of the review budget.
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+
+            let authoredAdditions = 0;
+            let authoredDeletions = 0;
+            let excludedAdditions = 0;
+            let excludedDeletions = 0;
+            let excludedFiles = 0;
+            for (const file of files) {
+              if (isExcluded(file.filename)) {
+                excludedFiles += 1;
+                excludedAdditions += file.additions || 0;
+                excludedDeletions += file.deletions || 0;
+              } else {
+                authoredAdditions += file.additions || 0;
+                authoredDeletions += file.deletions || 0;
+              }
+            }
+            const total = authoredAdditions + authoredDeletions;
+            const excludedTotal = excludedAdditions + excludedDeletions;
+
+            console.log(`Checked ${files.length} file(s) via paginated files API.`);
+            console.log(`Authored size: +${authoredAdditions} / -${authoredDeletions} = ${total} changed lines (budget ${limit})`);
+            console.log(`Excluded (package-lock.json, .agents/skills/**): ${excludedFiles} file(s), +${excludedAdditions} / -${excludedDeletions} = ${excludedTotal} lines (not counted toward budget)`);
+            console.log(`Labels: ${labels.join(', ') || '(none)'}`);
+
+            if (total <= limit) {
+              console.log(`✅ PR is within the ${limit}-line authored review budget.`);
+              return;
+            }
+
+            const message =
+              `PR changes ${total} authored lines (+${authoredAdditions}/-${authoredDeletions}), exceeding the ${limit}-line authored review budget ` +
+              `(excluded ${excludedTotal} generated/vendor lines in ${excludedFiles} file(s)).\n\n` +
+              'Small PRs keep review fast on this greenfield app. ' +
+              'Split the work, or ask the maintainer for the size:exception label when the large diff is unavoidable.';
+
+            if (hasException) {
+              core.warning(`⚠️ ${message}`);
+              console.log('✅ size:exception label present; allowing oversized PR with warning.');
+              return;
+            }
+
+            core.setFailed(`❌ ${message}`);
+
+  check-issue-reference:
+    name: Check issue linkage (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Remind when no linked issue is found
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            const visibleBody = body.replace(/<!--[\s\S]*?-->/g, '');
+            const matches = [...visibleBody.matchAll(/(?:closes|fixes|resolves|related to)\s+#(\d+)/gi)];
+            if (matches.length === 0) {
+              core.warning(
+                '⚠️ No linked issue found. Add `Closes #N` to the PR body when an issue exists; ' +
+                'not every small PR on this repo needs one, so this never fails the check.'
+              );
+            } else {
+              console.log(`✅ Found issue reference(s): ${matches.map(m => `#${m[1]}`).join(', ')}`);
+            }
+
+  check-type-label:
+    name: Check PR type label (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Remind when no type label is set
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+
+            const labels = pr.labels.map(l => l.name);
+            const typeLabels = labels.filter(l => l.startsWith('type:'));
+
+            console.log(`All PR labels: ${labels.join(', ') || '(none)'}`);
+
+            if (typeLabels.length === 0) {
+              core.warning(
+                '⚠️ No type:* label yet (type:bug, type:feature, type:docs, ' +
+                'type:refactor, type:chore, type:breaking-change). ' +
+                'Advisory only until the maintainer defines labels on the repo.'
+              );
+            } else if (typeLabels.length > 1) {
+              core.warning(
+                `⚠️ Multiple type:* labels: ${typeLabels.join(', ')}. ` +
+                'Prefer exactly one so the change kind stays obvious.'
+              );
+            } else {
+              console.log(`✅ PR has type label: ${typeLabels[0]}`);
+            }

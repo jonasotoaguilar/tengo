@@ -1,0 +1,27 @@
+# Tengo native smoke flow: single-session readiness check on a debug/emulator build.
+# Scope: proves one launch reaches the readiness screen and DB bootstrap reports
+# "ready" in that session only. It does NOT relaunch the app (no persistence-across-
+# restart proof) and asserts the raw db-state text, so it does NOT prove locale
+# detection. See README "Tests and their limits" for this boundary.
+# Run locally against an installed debug build:
+#   maestro test .maestro/smoke.yaml
+# Stable testIDs come from the App.tsx readiness screen. The db-state text
+# is the raw state ("initializing" | "ready" | "error"), so this flow is
+# locale-independent.
+appId: com.tengo.app
+---
+- launchApp
+- assertVisible:
+    id: 'readiness-screen'
+- assertVisible:
+    id: 'readiness-title'
+- assertVisible:
+    id: 'readiness-subtitle'
+- extendedWaitUntil:
+    visible:
+      id: 'readiness-db-state'
+      text: '^ready$'
+    timeout: 15000
+- assertVisible:
+    id: 'readiness-db-state'
+    text: '^ready$'

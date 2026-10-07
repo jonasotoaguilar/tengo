@@ -1,0 +1,49 @@
+/**
+ * Approved M1 inventory domain types (no persistence, no queries).
+ *
+ * Every item references exactly one location entity and zero or more
+ * categories via the `item_categories` join (see `src/db/migrations.ts`).
+ * Repository CRUD and filter queries arrive in M2/M3; this module only
+ * describes shapes. `locationId`/`categoryIds` are the domain-side names of
+ * the `location_id` / `item_id, category_id` columns.
+ */
+export interface Location {
+  id: number;
+  name: string;
+  address: string | null;
+  created_at: string;
+}
+
+export interface Category {
+  id: number;
+  name: string;
+  created_at: string;
+}
+
+export interface Item {
+  id: number;
+  name: string;
+  /** Zero means exhausted; distinct UI treatment is deferred past M1. */
+  quantity: number;
+  locationId: number;
+  created_at: string;
+}
+
+/** Input for creating a location: name required, address optional. */
+export interface NewLocationInput {
+  name: string;
+  address?: string | null;
+}
+
+/** Input for creating a category: independent entity, name required. */
+export interface NewCategoryInput {
+  name: string;
+}
+
+/** Input for creating an item: location required, categories optional. */
+export interface NewItemInput {
+  name: string;
+  quantity: number;
+  locationId: number;
+  categoryIds?: number[];
+}

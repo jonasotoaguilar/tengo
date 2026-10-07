@@ -1,14 +1,16 @@
 /**
- * Typed M2 repository errors (location/category persistence).
+ * Typed M2 repository errors (location/category/item persistence).
  *
  * Codes: `validation` (reuses `ValidationError` from `./validation`),
- * `not-found` (missing row), `in-use` (location still referenced by items),
- * `storage` (any other SQLite/driver failure). Messages stay generic and
- * never embed raw SQLite/driver text; the original error travels as `cause`.
+ * `not-found` (missing row, via `EntityNotFoundError` carrying the
+ * `location` | `category` | `item` kind), `in-use` (location still
+ * referenced by items), `storage` (any other SQLite/driver failure).
+ * Messages stay generic and never embed raw SQLite/driver text; the
+ * original error travels as `cause`.
  */
 export { ValidationError } from './validation';
 
-export type EntityKind = 'location' | 'category';
+export type EntityKind = 'location' | 'category' | 'item';
 
 /** Thrown when a fetch/update/delete targets a row that does not exist. */
 export class EntityNotFoundError extends Error {

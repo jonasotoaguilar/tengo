@@ -55,6 +55,26 @@ function ReadinessScreen() {
 }
 
 export default function App() {
+  // DEV-ONLY repository fixture gate (P2b verification infra): enabled
+  // only when `__DEV__` is true AND BOTH `EXPO_PUBLIC_NATIVE_FIXTURE=1`
+  // and `EXPO_PUBLIC_NATIVE_REPOSITORY=1`. Takes precedence over the M1
+  // fixture gate below; bypasses `ReadinessScreen` entirely, so the normal
+  // `tengo.db` bootstrap never runs here. Release builds ignore both flags.
+  const repositoryLaunch =
+    (globalThis as Record<string, unknown>).__DEV__ === true &&
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE === '1' &&
+    process.env.EXPO_PUBLIC_NATIVE_REPOSITORY === '1';
+  if (repositoryLaunch) {
+    const RepositoryScreen = require('./src/dev/NativeRepositoryFixtureScreen')
+      .default as React.ComponentType;
+    return (
+      <I18nextProvider i18n={i18n}>
+        <SafeAreaProvider>
+          <RepositoryScreen />
+        </SafeAreaProvider>
+      </I18nextProvider>
+    );
+  }
   // DEV-ONLY fixture gate (T3 verification infra): enabled only when BOTH
   // `__DEV__` is true and `EXPO_PUBLIC_NATIVE_FIXTURE=1`. This branch
   // bypasses `ReadinessScreen` entirely, so the normal `tengo.db`

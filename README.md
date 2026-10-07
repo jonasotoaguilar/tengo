@@ -143,6 +143,53 @@ then open the dev build on the emulator and read the pass indicator:
 reads `pass`); do not cite Jest or the host script as device evidence.
 No iOS proof exists (no Xcode in this environment).
 
+### DEV-only native repository fixture (P2b verification infra, M2 gate)
+
+`src/dev/nativeRepositoryFixture.ts` +
+`src/dev/NativeRepositoryFixtureScreen.tsx` run the REAL `expo-sqlite`
+driver with the ACTUAL `initializeDatabase()` and the ACTUAL M2
+entity/item repositories against one throwaway `m1-fixture-repository.db`
+(validated before open AND delete; `tengo.db` is always refused). The
+`App.tsx` gate needs `__DEV__` AND **both** public flags
+(`EXPO_PUBLIC_NATIVE_FIXTURE=1` plus `EXPO_PUBLIC_NATIVE_REPOSITORY=1`);
+any other combination keeps the M1 fixture mode/default above unchanged,
+and release builds stay inert.
+
+Three launches on a separate Metro port so the normal `tengo.db` session
+is untouched — force-stop + relaunch between phases (never a same-process
+close/open):
+
+```sh
+EXPO_PUBLIC_NATIVE_FIXTURE=1 EXPO_PUBLIC_NATIVE_REPOSITORY=1 npx expo start --port 8082
+```
+
+- Launch 1 creates locations/categories/items via the real repos, stores
+  ids + marker, closes WITHOUT deleting → `repository-status` reads
+  `restart-required` (`repository-phase` reads `phase-1`).
+- Launch 2 verifies the rows persisted, updates one item, deletes another,
+  closes WITHOUT deleting → `restart-required` (`phase-2`).
+- Launch 3 verifies the edit/deletion + join cleanup persisted, typed
+  `RESTRICT`, invalid-reference and trigger-driven late-failure rollback
+  (no orphans; the temporary trigger lives only on the fixture DB and is
+  dropped in a `finally`), zero/many-category + native-query mapping, and
+  the scoped exclusive-connection FK state. Full pass closes + deletes
+  ONLY the fixture file → `repository-status` reads `pass` (`phase-3`);
+  any failure keeps the DB for inspection and reads `fail`.
+
+Read `repository-phase`, `repository-status`, `repository-summary`
+(`passed/total`), each `repository-check-N`, and `repository-error` via
+Maestro/`adb`. ONLY a final launch-3 `pass` counts as the native
+milestone gate. Actual on-device execution is PENDING (no device
+operations run from here): no native pass is claimed until the verifier
+reports the three observed statuses. Known blocker under investigation:
+the driver's `withExclusiveTransactionAsync` runs item mutations on a NEW
+connection (`Transaction.createAsync`,
+`node_modules/expo-sqlite/build/SQLiteDatabase.js:561-567`) with no FK
+pragma in that path, so scoped transactions may run FK-OFF and item
+deletes may orphan join rows — the harness asserts this honestly and
+fails instead of masking it; see the module header for the exact narrow
+fix needed.
+
 ## Maestro
 
 - CLI: `~/.maestro/bin/maestro` is already on PATH in new shells (see

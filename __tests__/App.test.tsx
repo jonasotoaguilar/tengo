@@ -65,6 +65,66 @@ jest.mock(
   { virtual: true },
 );
 
+jest.mock(
+  '../src/dev/NativeRepositoryFixtureScreen',
+  () => {
+    const { View } = require('react-native');
+    return {
+      __esModule: true,
+      default: () => <View testID="repository-fixture-screen" />,
+    };
+  },
+  { virtual: true },
+);
+
+describe('<App /> DEV-only native repository fixture gate (P2b)', () => {
+  const G = globalThis as Record<string, unknown>;
+  const origDev = G.__DEV__;
+  const origFixture = process.env.EXPO_PUBLIC_NATIVE_FIXTURE;
+  const origRepo = process.env.EXPO_PUBLIC_NATIVE_REPOSITORY;
+
+  afterEach(() => {
+    G.__DEV__ = origDev;
+    if (origFixture === undefined) {
+      delete process.env.EXPO_PUBLIC_NATIVE_FIXTURE;
+    } else {
+      process.env.EXPO_PUBLIC_NATIVE_FIXTURE = origFixture;
+    }
+    if (origRepo === undefined) {
+      delete process.env.EXPO_PUBLIC_NATIVE_REPOSITORY;
+    } else {
+      process.env.EXPO_PUBLIC_NATIVE_REPOSITORY = origRepo;
+    }
+  });
+
+  test('both flags in DEV render the repository screen, never tengo.db', async () => {
+    G.__DEV__ = true;
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE = '1';
+    process.env.EXPO_PUBLIC_NATIVE_REPOSITORY = '1';
+    const SQLite = require('expo-sqlite') as { openDatabaseAsync: jest.Mock };
+    SQLite.openDatabaseAsync.mockClear();
+    await render(<App />);
+    expect(screen.getByTestId('repository-fixture-screen')).toBeTruthy();
+    expect(SQLite.openDatabaseAsync).not.toHaveBeenCalledWith('tengo.db');
+  });
+
+  test('repository flag without the fixture flag keeps the default screen', async () => {
+    G.__DEV__ = true;
+    delete process.env.EXPO_PUBLIC_NATIVE_FIXTURE;
+    process.env.EXPO_PUBLIC_NATIVE_REPOSITORY = '1';
+    await render(<App />);
+    expect(screen.getByTestId('readiness-screen')).toBeTruthy();
+  });
+
+  test('production ignores both flags and keeps normal readiness', async () => {
+    G.__DEV__ = false;
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE = '1';
+    process.env.EXPO_PUBLIC_NATIVE_REPOSITORY = '1';
+    await render(<App />);
+    expect(screen.getByTestId('readiness-screen')).toBeTruthy();
+  });
+});
+
 describe('<App /> DEV-only native fixture gate', () => {
   const G = globalThis as Record<string, unknown>;
   const origDev = G.__DEV__;

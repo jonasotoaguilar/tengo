@@ -19,6 +19,7 @@ import {
 import { I18nextProvider } from 'react-i18next';
 import type { ViewProps } from 'react-native';
 import i18n from '../src/i18n';
+import type { RepositoryDb } from '../src/inventory/database';
 import type InventoryContainerType from '../src/screens/InventoryContainer';
 
 const InventoryContainer = require('../src/screens/InventoryContainer')
@@ -458,4 +459,24 @@ test('add and open stay genuinely disabled until P4', async () => {
   await settle();
   expect(await screen.findByTestId('inventory-add-header')).toBeDisabled();
   expect(screen.getByTestId('inventory-row-1')).toBeTruthy();
+});
+
+test('injected isolated bootstrap serves reads without opening production', async () => {
+  const isolated = makeFakeDb();
+  const bootstrap = jest.fn(
+    async (): Promise<RepositoryDb> => isolated as unknown as RepositoryDb,
+  );
+  await render(
+    <I18nextProvider i18n={i18n}>
+      <InventoryContainer bootstrap={bootstrap} />
+    </I18nextProvider>,
+  );
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '2 of 2',
+  );
+  expect(bootstrap).toHaveBeenCalledTimes(1);
+  // The default production open stays untouched when isolated.
+  expect(initializeDatabase).not.toHaveBeenCalled();
+  expect(isolated.getAllAsync).toHaveBeenCalled();
 });

@@ -31,6 +31,28 @@ import type {
   Location,
 } from '../inventory/types';
 
+/**
+ * Stable default bootstrap: the single production `tengo.db` open. A
+ * module-level function (never a per-render closure) so the effect below
+ * keeps its cached single-flight semantics when no override is injected.
+ */
+function defaultBootstrap(): Promise<RepositoryDb> {
+  return initializeDatabase().then(
+    // The runtime managed handle also serves reads; narrow here rather
+    // than widening the migration `DatabaseLike` contract.
+    (ready) => ready as unknown as RepositoryDb,
+  );
+}
+
+export interface InventoryContainerProps {
+  /**
+   * Optional isolated bootstrap for the DEV-only query fixture: returns
+   * the cached fixture handle instead of opening production `tengo.db`.
+   * Defaults to the stable production bootstrap above.
+   */
+  bootstrap?: () => Promise<RepositoryDb>;
+}
+
 function isFilterEmpty(filter: ItemFilter): boolean {
   const query = filter.query ?? '';
   const locationId = filter.locationId ?? null;
@@ -38,7 +60,9 @@ function isFilterEmpty(filter: ItemFilter): boolean {
   return query.trim() === '' && locationId === null && categoryIds.length === 0;
 }
 
-export default function InventoryContainer() {
+export default function InventoryContainer({
+  bootstrap = defaultBootstrap,
+}: InventoryContainerProps = {}) {
   const [filter, setFilter] = useState<ItemFilter>({});
   const [retryToken, setRetryToken] = useState(0);
   const [viewState, setViewState] = useState<InventoryListState>('loading');
@@ -74,10 +98,8 @@ export default function InventoryContainer() {
         if (db === null) {
           let pendingBootstrap = bootstrapRef.current;
           if (pendingBootstrap === null) {
-            const opened: Promise<RepositoryDb> = initializeDatabase().then(
-              // The runtime managed handle also serves reads; narrow here
-              // rather than widening the migration `DatabaseLike` contract.
-              (ready) => ready as unknown as RepositoryDb,
+            const opened: Promise<RepositoryDb> = bootstrap().then(
+              undefined,
               (error: unknown) => {
                 if (bootstrapRef.current === opened)
                   bootstrapRef.current = null;

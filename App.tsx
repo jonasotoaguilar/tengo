@@ -5,6 +5,28 @@ import i18n from './src/i18n';
 import InventoryContainer from './src/screens/InventoryContainer';
 
 export default function App() {
+  // DEV-ONLY query fixture gate (P3b3 verification infra): enabled only
+  // when `__DEV__` is true AND BOTH `EXPO_PUBLIC_NATIVE_FIXTURE=1` and
+  // `EXPO_PUBLIC_NATIVE_QUERY=1`. Takes precedence over the repository
+  // and M1 fixture gates below; bypasses the default `InventoryContainer`
+  // bootstrap entirely, so the normal `tengo.db` bootstrap never runs here.
+  // Release builds ignore both flags. The harness is required lazily so
+  // release bundles never execute it.
+  const queryLaunch =
+    (globalThis as Record<string, unknown>).__DEV__ === true &&
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE === '1' &&
+    process.env.EXPO_PUBLIC_NATIVE_QUERY === '1';
+  if (queryLaunch) {
+    const QueryScreen = require('./src/dev/NativeQueryFixtureScreen')
+      .default as React.ComponentType;
+    return (
+      <I18nextProvider i18n={i18n}>
+        <SafeAreaProvider>
+          <QueryScreen />
+        </SafeAreaProvider>
+      </I18nextProvider>
+    );
+  }
   // DEV-ONLY repository fixture gate (P2b verification infra): enabled
   // only when `__DEV__` is true AND BOTH `EXPO_PUBLIC_NATIVE_FIXTURE=1`
   // and `EXPO_PUBLIC_NATIVE_REPOSITORY=1`. Takes precedence over the M1

@@ -98,6 +98,18 @@ jest.mock(
 );
 
 jest.mock(
+  '../src/dev/NativeQueryFixtureScreen',
+  () => {
+    const { View } = require('react-native');
+    return {
+      __esModule: true,
+      default: () => <View testID="query-fixture-screen" />,
+    };
+  },
+  { virtual: true },
+);
+
+jest.mock(
   '../src/dev/NativeRepositoryFixtureScreen',
   () => {
     const { View } = require('react-native');
@@ -154,6 +166,56 @@ describe('<App /> DEV-only native repository fixture gate (P2b)', () => {
     G.__DEV__ = false;
     process.env.EXPO_PUBLIC_NATIVE_FIXTURE = '1';
     process.env.EXPO_PUBLIC_NATIVE_REPOSITORY = '1';
+    await renderApp();
+    expect(screen.getByTestId('inventory-list')).toBeTruthy();
+  });
+});
+
+describe('<App /> DEV-only native query fixture gate (P3b3)', () => {
+  const G = globalThis as Record<string, unknown>;
+  const origDev = G.__DEV__;
+  const origFixture = process.env.EXPO_PUBLIC_NATIVE_FIXTURE;
+  const origQuery = process.env.EXPO_PUBLIC_NATIVE_QUERY;
+
+  afterEach(async () => {
+    G.__DEV__ = origDev;
+    if (origFixture === undefined) {
+      delete process.env.EXPO_PUBLIC_NATIVE_FIXTURE;
+    } else {
+      process.env.EXPO_PUBLIC_NATIVE_FIXTURE = origFixture;
+    }
+    if (origQuery === undefined) {
+      delete process.env.EXPO_PUBLIC_NATIVE_QUERY;
+    } else {
+      process.env.EXPO_PUBLIC_NATIVE_QUERY = origQuery;
+    }
+    await cleanup();
+  });
+
+  test('both flags in DEV render the query screen, never tengo.db', async () => {
+    G.__DEV__ = true;
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE = '1';
+    process.env.EXPO_PUBLIC_NATIVE_QUERY = '1';
+    const SQLite = require('expo-sqlite') as { openDatabaseAsync: jest.Mock };
+    SQLite.openDatabaseAsync.mockClear();
+    await renderApp();
+    expect(screen.getByTestId('query-fixture-screen')).toBeTruthy();
+    expect(SQLite.openDatabaseAsync).not.toHaveBeenCalledWith('tengo.db');
+    expect(initializeDatabase).not.toHaveBeenCalled();
+  });
+
+  test('query flag without the fixture flag keeps the default screen', async () => {
+    G.__DEV__ = true;
+    delete process.env.EXPO_PUBLIC_NATIVE_FIXTURE;
+    process.env.EXPO_PUBLIC_NATIVE_QUERY = '1';
+    await renderApp();
+    expect(screen.getByTestId('inventory-list')).toBeTruthy();
+  });
+
+  test('production ignores both flags and keeps the normal inventory', async () => {
+    G.__DEV__ = false;
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE = '1';
+    process.env.EXPO_PUBLIC_NATIVE_QUERY = '1';
     await renderApp();
     expect(screen.getByTestId('inventory-list')).toBeTruthy();
   });

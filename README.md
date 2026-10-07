@@ -93,6 +93,31 @@ does not prove stored data survives a restart, and it asserts the raw
 detection. Run `maestro test .maestro/smoke.yaml` against an installed
 debug build of `com.tengo.app` for that single-session signal only.
 
+### DEV-only native SQLite fixture (T3 verification infra, no product UI)
+
+`src/dev/nativeSqliteFixture.ts` + `src/dev/NativeSqliteFixtureScreen.tsx`
+run the REAL `expo-sqlite` driver with the ACTUAL `initializeDatabase()`
+against throwaway `m1-fixture-*.db` files (fresh/empty-v1 migrate, FK ON,
+zero-qty + joins, null/absent-location and fractional-qty rejection,
+populated-v1 safe stop, forced-transaction rollback). The `App.tsx` gate
+needs BOTH `__DEV__` and `EXPO_PUBLIC_NATIVE_FIXTURE=1`, bypasses the
+normal readiness screen entirely (never opens `tengo.db`), and is inert in
+release. Unit tests mock this boundary; `scripts/verify-inventory-schema.py`
+is host evidence only. Neither is native proof.
+
+Launch on a second Metro port so the normal `tengo.db` session is untouched:
+
+```sh
+EXPO_PUBLIC_NATIVE_FIXTURE=1 npx expo start --port 8082
+```
+
+then open the dev build on the emulator and read the pass indicator:
+`fixture-status` shows `running` → `pass`/`fail`, `fixture-summary` shows
+`passed/total`, each case renders as `fixture-check-N`, failures also set
+`fixture-error`. Observe via Maestro/`adb` (e.g. assert `fixture-status`
+reads `pass`); do not cite Jest or the host script as device evidence.
+No iOS proof exists (no Xcode in this environment).
+
 ## Maestro
 
 - CLI: `~/.maestro/bin/maestro` is already on PATH in new shells (see

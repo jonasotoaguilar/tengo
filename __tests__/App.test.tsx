@@ -52,3 +52,47 @@ describe('<App /> readiness screen', () => {
     expect(await screen.findByText('error')).toBeTruthy();
   });
 });
+
+jest.mock(
+  '../src/dev/NativeSqliteFixtureScreen',
+  () => {
+    const { View } = require('react-native');
+    return {
+      __esModule: true,
+      default: () => <View testID="native-fixture-screen" />,
+    };
+  },
+  { virtual: true },
+);
+
+describe('<App /> DEV-only native fixture gate', () => {
+  const G = globalThis as Record<string, unknown>;
+  const origDev = G.__DEV__;
+  const origFlag = process.env.EXPO_PUBLIC_NATIVE_FIXTURE;
+
+  afterEach(() => {
+    G.__DEV__ = origDev;
+    if (origFlag === undefined) {
+      delete process.env.EXPO_PUBLIC_NATIVE_FIXTURE;
+    } else {
+      process.env.EXPO_PUBLIC_NATIVE_FIXTURE = origFlag;
+    }
+  });
+
+  test('flagged DEV path renders the fixture screen, never tengo.db', async () => {
+    G.__DEV__ = true;
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE = '1';
+    const SQLite = require('expo-sqlite') as { openDatabaseAsync: jest.Mock };
+    SQLite.openDatabaseAsync.mockClear();
+    await render(<App />);
+    expect(screen.getByTestId('native-fixture-screen')).toBeTruthy();
+    expect(SQLite.openDatabaseAsync).not.toHaveBeenCalledWith('tengo.db');
+  });
+
+  test('production ignores the public flag and keeps normal readiness', async () => {
+    G.__DEV__ = false;
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE = '1';
+    await render(<App />);
+    expect(screen.getByTestId('readiness-screen')).toBeTruthy();
+  });
+});

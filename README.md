@@ -74,6 +74,7 @@ against the pinned SDK. Pinned versions live in `package-lock.json`.
 | Path | Contents |
 | ---- | -------- |
 | `App.tsx` | Translated readiness screen + DB bootstrap (`readiness-*` testIDs) |
+| `src/components/` | P3b1 presentational controlled `InventoryList` (`loading \| error \| ready`, `ItemDetail[]` + `totalCount`, `ItemFilter`, real-callback controls, bilingual strings, iOS header Add / Android FAB) — component only, not wired into `App.tsx` (parent integrates in P3b2/P3b3 with native proof) |
 | `src/db/` | `expo-sqlite` init + versioned migrations + managed exclusive-connection factory (`exclusive.ts`), no ORM |
 | `src/inventory/` | M1 domain types + validation/normalization and M2 location/category/item repositories (`RepositoryDb` with exclusive-transaction hook, typed errors, `entityRepository`, `itemRepository`) plus the P3a bounded `queryItems`/`ItemFilter` read-model filter (`itemQuery`, host-fake unit only) |
 | `scripts/verify-inventory-schema.py` | Host SQLite check of the real v2 SQL (not device proof) |
@@ -97,7 +98,16 @@ hook is absent, scoped-handle transaction evidence), the P3a bounded
 item query (`queryItems`/`normalizeItemFilter`: Unicode-lowercase
 substring, location-AND-category-OR, 2-read bound, validation-before-SQL,
 generic storage errors; structural fake-SQL assertions only), the v2 schema
-contract, i18n behavior (en/es), and the readiness screen. Native modules
+contract, i18n behavior (en/es), the readiness screen, and the P3b1
+presentational `InventoryList` (Jest/RNTL under the default iOS preset:
+loading/error/ready states, location-grouped rows with honest filtered
+counts and contextual zero-match copy, verbatim rows with exhausted
+treatment,
+controlled search/location/category-OR filters, no-results reset + prefilled
+add, disabled honest states for absent callbacks, en/es parity; the Android
+FAB branch executes under the Android preset/device run, still pending
+native proof in P3b2/P3b3). The core app still shows only the readiness
+screen: the list is component-only until the parent integrates it. Native modules
 (`expo-sqlite`, `expo-localization`, safe-area insets) are mocked — see
 `jest.setup.ts` for the boundary. Unit tests never touch a real database:
 the repository suites run against in-memory fakes (`RepositoryDb` with

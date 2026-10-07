@@ -29,31 +29,32 @@
  *   exclusive-connection FK state. Full pass => close + delete ONLY the
  *   fixture file. Any failure keeps the DB for inspection.
  *
- * Driver evidence (installed `expo-sqlite`, NOT guessed):
- * `SQLiteDatabase.withExclusiveTransactionAsync`
- * (`node_modules/expo-sqlite/build/SQLiteDatabase.js:155-176`) runs every
+ * Observed device bug: phase 3 failed with the deleted item absent and an
+ * orphan `item_categories` row retained — the driver's
+ * `withExclusiveTransactionAsync` (`SQLiteDatabase.js:155-176`) runs every
  * item mutation on a `Transaction` created by `Transaction.createAsync`
  * (`SQLiteDatabase.js:561-567`), which opens a NEW native connection on
  * the same path with `useNewConnection: true` and only `initAsync()` —
- * no `PRAGMA foreign_keys = ON` anywhere in that path (no `foreign_keys`
- * string exists in the driver's `build/*.js`). SQLite enforces foreign
- * keys per connection and defaults to OFF, and `initializeDatabase` only
- * enables them on the outer connection. So on a real device every
- * exclusive item transaction runs FK-OFF: `deleteItem` cannot cascade to
- * `item_categories`, and bogus join inserts would be accepted. This
- * harness MUST NOT enable FK inside its own transactions (that would hide
- * the production bug); instead phase 3 asserts the scoped-connection FK
- * state and the join cleanup, and fails honestly with the blocker detail
- * when the device proves it. The repository fix stays out of scope here:
- * the pragma is a SQLite no-op inside a transaction (after the driver's
- * `BEGIN`), so the narrow fix must enable FK on the exclusive connection
- * before `BEGIN` — a driver/open-path change, not a harness edit.
+ * no `PRAGMA foreign_keys = ON` anywhere in that path. SQLite enforces
+ * foreign keys per connection and defaults to OFF, and the old init only
+ * enabled them on the outer connection, so scoped transactions ran FK-OFF.
+ * Production now opens through the shared managed factory
+ * (`src/db/exclusive.ts`): the isolated exclusive connection enables
+ * `PRAGMA foreign_keys = ON`, verifies `=== 1`, and only then runs
+ * `BEGIN IMMEDIATE` — the pragma is a no-op after `BEGIN`, so it must run
+ * before. This fixture uses that EXACT factory with the fresh
+ * `m1-fixture-repository-fk.db` file (the failed legacy fixture DB stays
+ * untouched); it adds no harness-only pragma and overrides no repos.
+ * Phase 3 still asserts the join cleanup (`orphans === 0`), the scoped
+ * `PRAGMA foreign_keys === 1` plus bogus-join rejection, and the raw
+ * mapping — those assertions are unchanged and must keep passing.
  *
  * Unit tests cover orchestration with injected fakes only and never claim
  * native proof.
  */
 
 import { initializeDatabase as realInitializeDatabase } from '../db';
+import { openManagedDatabase } from '../db/exclusive';
 import {
   EntityNotFoundError,
   isForeignKeyViolation,
@@ -72,8 +73,14 @@ import {
 } from '../inventory';
 import { assertSafeFixtureName } from './nativeSqliteFixture';
 
-/** The only database this fixture ever opens or deletes. */
-export const REPOSITORY_FIXTURE_DB = 'm1-fixture-repository.db';
+/**
+ * The only database this fixture ever opens or deletes.
+ *
+ * Fresh `fk` name: the prior `m1-fixture-repository.db` file failed phase 3
+ * on device (deleted item absent, orphan join retained) and is preserved
+ * untouched for inspection — this fixture never clears or reuses it.
+ */
+export const REPOSITORY_FIXTURE_DB = 'm1-fixture-repository-fk.db';
 
 export interface FixtureRepositoryDb extends RepositoryDb {
   execAsync(source: string): Promise<void>;
@@ -118,13 +125,15 @@ const ORPHAN_PROBE_LOCATION = 'OrphanProbeLoc';
 const PROBE_ROLLBACK = 'fixture-probe-rollback';
 
 function defaultDeps(): RepositoryFixtureDeps {
-  // Loaded lazily so importing this module never opens a database.
+  // Loaded lazily so importing this module never opens a database. Opens
+  // through the EXACT production managed factory with the fixture file —
+  // no harness-only pragma and no overridden repositories.
   const SQLite = require('expo-sqlite') as {
-    openDatabaseAsync(name: string): Promise<FixtureRepositoryDb>;
     deleteDatabaseAsync(name: string): Promise<void>;
   };
   return {
-    openDatabaseAsync: (name) => SQLite.openDatabaseAsync(name),
+    openDatabaseAsync: (name) =>
+      openManagedDatabase(name) as unknown as Promise<FixtureRepositoryDb>,
     deleteDatabaseAsync: (name) => SQLite.deleteDatabaseAsync(name),
     initializeDatabase: (db) => realInitializeDatabase(db),
     repos: {

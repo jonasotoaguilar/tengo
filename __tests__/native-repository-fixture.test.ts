@@ -312,6 +312,7 @@ describe('repository fixture gate (mocked, not native proof)', () => {
   });
 
   test('fixture database is a validated m1-fixture name, never tengo.db', () => {
+    expect(REPOSITORY_FIXTURE_DB).toBe('m1-fixture-repository-fk.db');
     expect(REPOSITORY_FIXTURE_DB).not.toBe(DATABASE_NAME);
     expect(REPOSITORY_FIXTURE_DB.startsWith('m1-fixture-')).toBe(true);
   });

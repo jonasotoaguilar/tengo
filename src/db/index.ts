@@ -1,5 +1,4 @@
-import * as SQLite from 'expo-sqlite';
-
+import { openManagedDatabase } from './exclusive';
 import {
   getPendingMigrations,
   MIGRATIONS,
@@ -8,6 +7,8 @@ import {
   UnknownSchemaVersionError,
 } from './migrations';
 
+export type { ManagedDatabase } from './exclusive';
+export { openManagedDatabase } from './exclusive';
 export { MigrationRequiredError, UnknownSchemaVersionError };
 
 export const DATABASE_NAME = 'tengo.db';
@@ -101,12 +102,19 @@ async function applyMigration(
   });
 }
 
-/** Open the database and apply pending migrations in version order. */
+/**
+ * Open the database and apply pending migrations in version order.
+ *
+ * An injected `externalDb` keeps the historical fake-friendly semantics for
+ * schema unit tests. The default production open uses the shared managed
+ * factory (`openManagedDatabase`), so item mutations run on FK-enforced
+ * isolated exclusive connections. Only the default open uses the factory.
+ */
 export async function initializeDatabase(
   externalDb?: DatabaseLike,
 ): Promise<DatabaseLike> {
   const db: DatabaseLike =
-    externalDb ?? (await SQLite.openDatabaseAsync(DATABASE_NAME));
+    externalDb ?? (await openManagedDatabase(DATABASE_NAME));
   // Foreign keys on first: per-connection, and never inside a migration
   // transaction (a pragma, not transactional schema work).
   await enableForeignKeys(db);

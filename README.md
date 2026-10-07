@@ -67,7 +67,7 @@ against the pinned SDK. Pinned versions live in `package-lock.json`.
 | Path | Contents |
 | ---- | -------- |
 | `App.tsx` | Translated readiness screen + DB bootstrap (`readiness-*` testIDs) |
-| `src/db/` | `expo-sqlite` init + versioned migrations, no ORM |
+| `src/db/` | `expo-sqlite` init + versioned migrations + managed exclusive-connection factory (`exclusive.ts`), no ORM |
 | `src/inventory/` | M1 domain types + validation/normalization and M2 location/category/item repositories (`RepositoryDb` with exclusive-transaction hook, typed errors, `entityRepository`, `itemRepository`) |
 | `scripts/verify-inventory-schema.py` | Host SQLite check of the real v2 SQL (not device proof) |
 | `src/i18n/` | i18next resources (`en`/`es`; `es` is typed as `typeof en`) |
@@ -147,9 +147,11 @@ No iOS proof exists (no Xcode in this environment).
 
 `src/dev/nativeRepositoryFixture.ts` +
 `src/dev/NativeRepositoryFixtureScreen.tsx` run the REAL `expo-sqlite`
-driver with the ACTUAL `initializeDatabase()` and the ACTUAL M2
-entity/item repositories against one throwaway `m1-fixture-repository.db`
-(validated before open AND delete; `tengo.db` is always refused). The
+driver with the ACTUAL `initializeDatabase()` (now via the shared managed
+factory in `src/db/exclusive.ts`) and the ACTUAL M2
+entity/item repositories against one throwaway `m1-fixture-repository-fk.db`
+(validated before open AND delete; `tengo.db` is always refused; the prior
+failed `m1-fixture-repository.db` stays on-device untouched for inspection). The
 `App.tsx` gate needs `__DEV__` AND **both** public flags
 (`EXPO_PUBLIC_NATIVE_FIXTURE=1` plus `EXPO_PUBLIC_NATIVE_REPOSITORY=1`);
 any other combination keeps the M1 fixture mode/default above unchanged,
@@ -181,14 +183,21 @@ Read `repository-phase`, `repository-status`, `repository-summary`
 Maestro/`adb`. ONLY a final launch-3 `pass` counts as the native
 milestone gate. Actual on-device execution is PENDING (no device
 operations run from here): no native pass is claimed until the verifier
-reports the three observed statuses. Known blocker under investigation:
-the driver's `withExclusiveTransactionAsync` runs item mutations on a NEW
+reports the three observed statuses. Observed device bug: phase 3 failed
+with the deleted item absent and an orphan `item_categories` row retained —
+the driver's `withExclusiveTransactionAsync` ran item mutations on a NEW
 connection (`Transaction.createAsync`,
 `node_modules/expo-sqlite/build/SQLiteDatabase.js:561-567`) with no FK
-pragma in that path, so scoped transactions may run FK-OFF and item
-deletes may orphan join rows — the harness asserts this honestly and
-fails instead of masking it; see the module header for the exact narrow
-fix needed.
+pragma in that path, so scoped transactions ran FK-OFF. The bounded fix is
+the shared managed factory (`src/db/exclusive.ts`, also used for the
+default `tengo.db` open): each isolated exclusive connection enables
+`PRAGMA foreign_keys = ON`, verifies `=== 1`, and only then runs
+`BEGIN IMMEDIATE`; the probe still asserts join cleanup (`orphans === 0`),
+scoped `PRAGMA foreign_keys === 1` plus bogus-join rejection, and the raw
+mapping. Run the three launches fresh against `m1-fixture-repository-fk.db`
+(force-stop + relaunch between phases, never a same-process close/open);
+no native pass is claimed until the verifier reports all three observed
+statuses, and M2 stays open.
 
 ## Maestro
 

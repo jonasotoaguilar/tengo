@@ -1,6 +1,10 @@
 /**
- * M1 inventory domain: types plus validation/normalization.
- * No persistence and no queries here — repository CRUD arrives in M2.
+ * Inventory domain (M1 types/validation) plus M2 location/category
+ * persistence (`RepositoryDb`, typed errors, entity repository).
  */
+
+export * from './database';
+export * from './entityRepository';
+export * from './errors';
 export * from './types';
 export * from './validation';

@@ -3,12 +3,18 @@
 Local-first household inventory app (Expo React Native + TypeScript).
 No backend, no accounts, no sync: one household, one on-device SQLite database.
 
-> Current scope is the foundation plus the M1 inventory model: app shell,
-> SQLite initialization with versioned migrations (schema v2: locations,
-> categories, items with a required location reference and quantity, plus
-> an item-category join), English/Spanish i18n, Jest unit-test scaffolding,
-> and pure domain types/validation (`src/inventory/`). Inventory screens,
-> CRUD, search, and filters do not exist yet (M2/M3).
+> Current scope is the foundation plus the M1 inventory model and M2
+> location/category persistence: app shell, SQLite initialization with
+> versioned migrations (schema v2: locations, categories, items with a
+> required location reference and quantity, plus an item-category join),
+> English/Spanish i18n, Jest unit-test scaffolding, pure domain
+> types/validation (`src/inventory/`), and a parameterized location/category
+> repository (`create/get/list/update/delete` per entity over a minimal
+> `RepositoryDb` of `runAsync`/`getFirstAsync`/`getAllAsync`, with typed
+> `validation`/`not-found`/`in-use`/`storage` errors that never surface raw
+> SQLite text). Deleting a location still referenced by items fails with
+> `in-use`; deleting a category cascades only to join rows, never items.
+> Item CRUD, search, and filters do not exist yet (later M2/M3).
 
 ## Run it
 
@@ -56,7 +62,7 @@ against the pinned SDK. Pinned versions live in `package-lock.json`.
 | ---- | -------- |
 | `App.tsx` | Translated readiness screen + DB bootstrap (`readiness-*` testIDs) |
 | `src/db/` | `expo-sqlite` init + versioned migrations, no ORM |
-| `src/inventory/` | M1 domain types + validation/normalization only (no queries) |
+| `src/inventory/` | M1 domain types + validation/normalization and M2 location/category repository (`RepositoryDb`, typed errors, `entityRepository`) |
 | `scripts/verify-inventory-schema.py` | Host SQLite check of the real v2 SQL (not device proof) |
 | `src/i18n/` | i18next resources (`en`/`es`; `es` is typed as `typeof en`) |
 | `__tests__/` | Jest/RNTL suites (`jest-expo` preset, see `jest.config.js`) |
@@ -67,10 +73,17 @@ against the pinned SDK. Pinned versions live in `package-lock.json`.
 
 `npm test` covers migration logic (fresh DB, empty v1, populated-v1
 safe-stop, already-v2, unknown-future, rollback, FK pragma order),
-DB-initialization logic, M1 domain validation/normalization, the v2 schema
+DB-initialization logic, M1 domain validation/normalization, the M2
+location/category repository (parameterized CRUD, normalization, unicode,
+injection-shaped inputs, invalid ids, missing rows, FK-to-`in-use` mapping
+across native error shapes, generic storage failures), the v2 schema
 contract, i18n behavior (en/es), and the readiness screen. Native modules
 (`expo-sqlite`, `expo-localization`, safe-area insets) are mocked — see
-`jest.setup.ts` for the boundary. Unit tests never touch a real database.
+`jest.setup.ts` for the boundary. Unit tests never touch a real database:
+the repository suite runs against an in-memory fake `RepositoryDb`, so it
+proves SQL structure and error mapping only — not real `expo-sqlite`
+behavior, constraint enforcement, or persistence across restarts. That
+native proof is P2 work on isolated test DBs.
 
 `python3 scripts/verify-inventory-schema.py` additionally runs the real v2
 migration SQL against host SQLite (36 checks: constraints including integer

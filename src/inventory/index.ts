@@ -6,6 +6,7 @@
 export * from './database';
 export * from './entityRepository';
 export * from './errors';
+export * from './itemQuery';
 export * from './itemRepository';
 export * from './types';
 export * from './validation';

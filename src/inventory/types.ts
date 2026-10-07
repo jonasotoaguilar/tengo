@@ -66,6 +66,18 @@ export interface ItemDetail {
 }
 
 /**
+ * Bounded P3a filter for `queryItems` (see `./itemQuery`).
+ * `query` is an optional JS substring; `locationId` null/undefined means
+ * all locations; `categoryIds` empty/undefined means no category filter
+ * (OR across the selected ids, items deduped).
+ */
+export interface ItemFilter {
+  query?: string;
+  locationId?: number | null;
+  categoryIds?: number[];
+}
+
+/**
  * Draft location selector for the add/edit form: exactly one of an
  * existing location id or a new location name/address. No synthetic
  * defaults; the form must supply one side.

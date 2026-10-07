@@ -19,8 +19,15 @@ No backend, no accounts, no sync: one household, one on-device SQLite database.
 > exclusive transaction on the scoped handle and fail closed without it, so
 > failures leave no orphan rows. Deleting a location still referenced by
 > items fails with `in-use`; deleting a category or item cascades only to
-> join rows, never to items or entities. Search and filters do not exist
-> yet (later M2/M3).
+> join rows, never to items or entities. The P3a `queryItems` code unit
+> (`src/inventory/itemQuery.ts`) filters the same read model with at most
+> two batched reads (items+locations join, then one category-link join;
+> empty results skip the second read): optional JS name substring
+> (`toLowerCase` Unicode case, `cafe` never matches `café`, literal `%_\`)
+> AND optional location AND any-category OR, stable `id ASC` order,
+> valid-but-unknown ids yield `[]`, malformed filters reject before SQL,
+> driver failures stay generic `storage/query`. Host-fake unit only — no
+> UI wiring and no real-SQLite proof yet (P3b isolated fixture).
 
 ## Run it
 
@@ -68,7 +75,7 @@ against the pinned SDK. Pinned versions live in `package-lock.json`.
 | ---- | -------- |
 | `App.tsx` | Translated readiness screen + DB bootstrap (`readiness-*` testIDs) |
 | `src/db/` | `expo-sqlite` init + versioned migrations + managed exclusive-connection factory (`exclusive.ts`), no ORM |
-| `src/inventory/` | M1 domain types + validation/normalization and M2 location/category/item repositories (`RepositoryDb` with exclusive-transaction hook, typed errors, `entityRepository`, `itemRepository`) |
+| `src/inventory/` | M1 domain types + validation/normalization and M2 location/category/item repositories (`RepositoryDb` with exclusive-transaction hook, typed errors, `entityRepository`, `itemRepository`) plus the P3a bounded `queryItems`/`ItemFilter` read-model filter (`itemQuery`, host-fake unit only) |
 | `scripts/verify-inventory-schema.py` | Host SQLite check of the real v2 SQL (not device proof) |
 | `src/i18n/` | i18next resources (`en`/`es`; `es` is typed as `typeof en`) |
 | `__tests__/` | Jest/RNTL suites (`jest-expo` preset, see `jest.config.js`) |
@@ -86,7 +93,10 @@ mapping across native error shapes, generic storage failures, item read
 model with location + categories, atomic category-set replacement,
 form drafts with atomic new location/category creation and rollback
 without orphans, fail-closed mutations when the exclusive-transaction
-hook is absent, scoped-handle transaction evidence), the v2 schema
+hook is absent, scoped-handle transaction evidence), the P3a bounded
+item query (`queryItems`/`normalizeItemFilter`: Unicode-lowercase
+substring, location-AND-category-OR, 2-read bound, validation-before-SQL,
+generic storage errors; structural fake-SQL assertions only), the v2 schema
 contract, i18n behavior (en/es), and the readiness screen. Native modules
 (`expo-sqlite`, `expo-localization`, safe-area insets) are mocked — see
 `jest.setup.ts` for the boundary. Unit tests never touch a real database:

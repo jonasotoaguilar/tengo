@@ -25,9 +25,9 @@
     "npm": ">=11"
   },
   "dependencies": {
-    "expo": "~57.0.26",
+    "expo": "~57.0.27",
     "expo-localization": "~57.0.2",
-    "expo-sqlite": "~57.0.3",
+    "expo-sqlite": "~57.0.4",
     "expo-status-bar": "~57.0.1",
     "i18next": "^26.4.2",
     "react": "19.2.3",

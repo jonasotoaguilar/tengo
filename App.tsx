@@ -1,64 +1,14 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
-import { I18nextProvider, useTranslation } from 'react-i18next';
-import { StyleSheet, Text, View } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { initializeDatabase } from './src/db';
+import { I18nextProvider } from 'react-i18next';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import i18n from './src/i18n';
-
-type DbState = 'initializing' | 'ready' | 'error';
-
-function ReadinessScreen() {
-  const {
-    t,
-    i18n: { language },
-  } = useTranslation();
-  const [dbState, setDbState] = useState<DbState>('initializing');
-
-  useEffect(() => {
-    let mounted = true;
-    initializeDatabase()
-      .then(() => {
-        if (mounted) setDbState('ready');
-      })
-      .catch(() => {
-        if (mounted) setDbState('error');
-      });
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  const status =
-    dbState === 'ready'
-      ? t('statusReady')
-      : dbState === 'error'
-        ? t('statusError')
-        : t('statusInitializing');
-
-  return (
-    <SafeAreaView style={styles.container} testID="readiness-screen">
-      <Text testID="readiness-title" style={styles.title}>
-        {t('readinessTitle')}
-      </Text>
-      <Text testID="readiness-subtitle" style={styles.subtitle}>
-        {t('readinessSubtitle')}
-      </Text>
-      <Text testID="readiness-status">{status}</Text>
-      <View style={styles.meta}>
-        <Text testID="readiness-db-state">{dbState}</Text>
-        <Text testID="readiness-language">{language}</Text>
-      </View>
-      <StatusBar style="auto" />
-    </SafeAreaView>
-  );
-}
+import InventoryContainer from './src/screens/InventoryContainer';
 
 export default function App() {
   // DEV-ONLY repository fixture gate (P2b verification infra): enabled
   // only when `__DEV__` is true AND BOTH `EXPO_PUBLIC_NATIVE_FIXTURE=1`
   // and `EXPO_PUBLIC_NATIVE_REPOSITORY=1`. Takes precedence over the M1
-  // fixture gate below; bypasses `ReadinessScreen` entirely, so the normal
+  // fixture gate below; bypasses `InventoryContainer` entirely, so the normal
   // `tengo.db` bootstrap never runs here. Release builds ignore both flags.
   const repositoryLaunch =
     (globalThis as Record<string, unknown>).__DEV__ === true &&
@@ -77,7 +27,7 @@ export default function App() {
   }
   // DEV-ONLY fixture gate (T3 verification infra): enabled only when BOTH
   // `__DEV__` is true and `EXPO_PUBLIC_NATIVE_FIXTURE=1`. This branch
-  // bypasses `ReadinessScreen` entirely, so the normal `tengo.db`
+  // bypasses `InventoryContainer` entirely, so the normal `tengo.db`
   // bootstrap never runs here. Release builds (`__DEV__ === false`) ignore
   // the public flag and always take the normal path below. The harness is
   // required lazily so release bundles never execute it.
@@ -95,37 +45,14 @@ export default function App() {
       </I18nextProvider>
     );
   }
+  // Default (P3b2): the App-wired read-only inventory list. The container
+  // owns the single `tengo.db` bootstrap; nothing else here initializes.
   return (
     <I18nextProvider i18n={i18n}>
       <SafeAreaProvider>
-        <ReadinessScreen />
+        <InventoryContainer />
+        <StatusBar style="auto" />
       </SafeAreaProvider>
     </I18nextProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    opacity: 0.7,
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  meta: {
-    marginTop: 12,
-    alignItems: 'center',
-    gap: 4,
-  },
-});

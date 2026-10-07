@@ -9,8 +9,8 @@ quality commands live in [development.md](development.md).
 mocked (`jest.setup.ts`: `expo-sqlite`, `expo-localization`).
 Suites cover migrations, DB init, M1 domain validation, M2
 location/category/item repositories, the P3a `queryItems` filter,
-the v2 schema contract, i18n (`en`/`es`), the readiness screen, and
-the P3b1 controlled `InventoryList`.
+the v2 schema contract, i18n (`en`/`es`), the App-wired P3b2
+container, and the P3b1 controlled `InventoryList`.
 
 Unit tests prove SQL structure, error mapping, and transaction
 scoping only. They never touch a real database and are never cited
@@ -35,9 +35,10 @@ atomicity). That is host evidence only: it does not prove
   verifies it reads back `1`, and only then runs
   `BEGIN IMMEDIATE`.
 
-P3a `queryItems` (108 tests) and P3b1 controlled `InventoryList`
-(130 tests, including 22 list tests) are reviewed host/fake and
-host-SQL evidence only. There is no real Android UI, FAB, or
+P3a `queryItems` (108 tests), P3b1 controlled `InventoryList`
+(130 tests, including 22 list tests), and the P3b2 App-wired
+container (10 container plus 9 App suites) are reviewed host/fake
+and host-SQL evidence only. There is no real Android UI, FAB, or
 SQLite query proof for them yet.
 
 ## DEV-only native fixture protocol
@@ -73,10 +74,10 @@ production data for verification.
 ## Maestro boundary
 
 The existing `.maestro/smoke.yaml` flow proves one launch reaches
-readiness with DB bootstrap reporting `ready` in that session. It
+the wired inventory list with its loaded count in that session. It
 does not relaunch the app, so it does not prove restart
-persistence, and it asserts raw state text, so it does not prove
-locale detection.
+persistence, and it asserts the list/count testIDs, so it does not
+prove locale detection.
 
 Android list filters, forms, discard/delete dialogs, and restart
 E2E flows are planned but not available; no further Maestro

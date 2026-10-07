@@ -8,11 +8,11 @@ Tengo helps one household record what it owns, how much, and where
 it is — organized by location, in English or Spanish. The app works
 fully offline against on-device SQLite (`tengo.db`).
 
-Current state is honest: the app shows the readiness screen with DB
-bootstrap state. A controlled `InventoryList` component exists but
-is not wired into the app yet. Add/Edit product UI is not available
-until M3/M4. M2 native persistence is verified on Android; M3
-integration, M4 forms, M5 hardening, and full Maestro E2E are still
+Current state is honest: the default app screen is the wired read-only
+inventory list (search, location/category filters, loading/empty/no-results
+with retry) backed by the on-device database. Add/Edit product UI is not
+available until M4. M2 native persistence is verified on Android; M3
+native UI proof, M4 forms, M5 hardening, and full Maestro E2E are still
 pending.
 
 ## Quick Start
@@ -36,23 +36,22 @@ fast: native only. `npm run check` runs `typecheck` + `lint` +
 ## Core Workflow
 
 1. Install and start the dev server (`npm ci`, `npm start`).
-2. Open the app on Android and confirm the readiness screen
-   reports DB state `ready`.
-3. Record and find items by location once M3/M4 land — today
-   there is no inventory UI to walk through.
+2. Open the app on Android and confirm the inventory list loads
+   (count, rows, or the first-run empty state).
+3. Browse, search, and filter items by location and category — adding
+   and editing items lands with M4.
 
 ## Key Features You Should Know About
 
-- Translated readiness screen with versioned SQLite bootstrap
+- Wired inventory list (the App default) with versioned SQLite bootstrap
   (schema v2: locations, categories, items with a required
   location reference and quantity, plus an item-category join).
 - English/Spanish from day one with device-locale detection.
 - Domain validation and parameterized location/category/item
   repositories with typed errors that never surface raw SQLite
   text.
-- Bounded `queryItems` read-model filter and a controlled,
-  component-only `InventoryList` (not yet integrated, no native
-  UI proof yet).
+- Bounded `queryItems` read-model filter and a read-only container with
+  stale-safe filter/retry (host-verified only, no native UI proof yet).
 - DEV-only native fixtures plus a single-session Maestro smoke
   flow; details and limits in [docs/testing.md](docs/testing.md).
 

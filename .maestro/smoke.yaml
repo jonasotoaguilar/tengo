@@ -1,27 +1,24 @@
-# Tengo native smoke flow: single-session readiness check on a debug/emulator build.
-# Scope: proves one launch reaches the readiness screen and DB bootstrap reports
-# "ready" in that session only. It does NOT relaunch the app (no persistence-across-
-# restart proof) and asserts the raw db-state text, so it does NOT prove locale
-# detection. See docs/testing.md "Maestro boundary" for this boundary.
+# Tengo native smoke flow: single-session inventory-list check on a debug/emulator build.
+# Scope: proves one launch reaches the wired inventory list and its loaded
+# count in that session only. It does NOT relaunch the app (no persistence-
+# across-restart proof) and asserts the list/count testIDs, so it does NOT
+# prove locale detection. See docs/testing.md "Maestro boundary" for this
+# boundary. This flow is not native proof until a separate verifier runs it
+# on a device/emulator build, and it never restarts the app.
 # Run locally against an installed debug build:
 #   maestro test .maestro/smoke.yaml
-# Stable testIDs come from the App.tsx readiness screen. The db-state text
-# is the raw state ("initializing" | "ready" | "error"), so this flow is
-# locale-independent.
+# Stable testIDs come from the App-wired inventory list. The count text is
+# translated ("N of M" / "N de M"), so this flow asserts the testID only,
+# never a locale-specific string. Waiting on the ready-only `inventory-count`
+# (absent during loading/error) keeps a slow load from false-passing.
 appId: com.tengo.app
 ---
 - launchApp
 - assertVisible:
-    id: 'readiness-screen'
-- assertVisible:
-    id: 'readiness-title'
-- assertVisible:
-    id: 'readiness-subtitle'
+    id: 'inventory-list'
 - extendedWaitUntil:
     visible:
-      id: 'readiness-db-state'
-      text: '^ready$'
+      id: 'inventory-count'
     timeout: 15000
 - assertVisible:
-    id: 'readiness-db-state'
-    text: '^ready$'
+    id: 'inventory-count'

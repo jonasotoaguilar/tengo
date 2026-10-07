@@ -23,13 +23,21 @@ device, one on-device database.
 
 Tengo is a local-first household inventory organized by location. It
 exists so a household can record items with a name, quantity, and
-location (plus an optional category), then later find, update, or
-remove them without depending on a network, account, or server.
+a required location entity (plus zero or more categories), then
+later find, update, or remove them without depending on a network,
+account, or server. Quantity zero is approved and means exhausted;
+its distinct UI treatment is deferred to UI milestones. Every item
+references a valid location entity (name required, address optional,
+free-entry names such as Casa/Bodega); categories are independent
+entities joined to items. Deletion always requires confirmation and
+there is no trash. Domain models and the database both enforce these
+integrity rules.
 
 Success for the approved MVP means the user can create, edit, delete,
 and search items entirely on-device, in English or Spanish. Search by
-name is the approved baseline; matching by location or category is
-proposed and undecided (see open decision 3).
+name is the approved baseline; multi-category selection filters with
+OR semantics and deduplicated results. Other location/category text
+matching is proposed and undecided (see open decision 3).
 
 ## Positioning
 
@@ -75,10 +83,24 @@ Confirmed foundation (implemented foundation, see Evidence and ROADMAP.md baseli
 
 Approved MVP scope (confirmed by the user; not yet built):
 
-- Inventory items carry name, quantity, location, and an optional
-  category.
-- Operations: create, edit, delete, search.
+- Inventory items carry name and quantity (zero means exhausted).
+- Every item references a valid location entity: name required,
+  address optional, free-entry names such as Casa/Bodega.
+- Categories are independent entities; an item has zero or many
+  categories via a join. Selecting several categories filters with
+  OR semantics and deduplicated results.
+- Operations: create, edit, delete (always confirmed, no trash),
+  search.
 - Organization principle: inventory by location.
+- Integrity is enforced by both domain models and the database.
+- M1 uses a normalized schema (locations, categories, and an
+  item-category join with a required item-location relationship);
+  see ROADMAP.md. No actual device inventory rows have been
+  observed. Migration must never silently lose rows or fabricate a
+  location: nonempty v1 rows that cannot satisfy the required
+  location preserve rows/version and stop with a clear
+  migration-required error. The real native SQLite gate stays
+  pending before M2.
 
 Durable constraints:
 
@@ -99,12 +121,19 @@ Explicit non-goals (not approved, not planned in the MVP):
 Open decisions (explicitly undecided; DESIGN.md recommends defaults
 without claiming approval):
 
-1. Quantity semantics: units, zero, and negative values.
-2. Locations: free text vs. a managed list of household places.
-3. Categories: free text vs. a small fixed set, and whether search
-   filters by category.
-4. Deletion and backup: confirm posture and what, if anything, the
-   user can recover.
+1. Quantity bounds and units: zero is approved as exhausted with UI
+   treatment deferred; units, negatives, and numeric/string bounds
+   (such as 120/80/999999) remain proposals.
+2. Locations: the mandatory location entity (name required, address
+   optional, free entry) is approved; name/address uniqueness and any
+   managed-location UI remain proposals.
+3. Categories: independent entities, zero or many per item, with
+   OR-plus-dedup multi-select filtering, are approved; category
+   management UI and any further text matching remain proposals.
+4. Backup/recovery: deletion posture is approved (always confirm, no
+   trash); anything beyond that is undecided. Field limits, accent
+   handling, and contrast/placeholder semantics in DESIGN.md remain
+   proposals, not approvals.
 
 ## Brand Commitments
 

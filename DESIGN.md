@@ -56,9 +56,14 @@ Reading notes:
   not prove `es` parity, theme tokens, contrast, screen-reader behavior,
   or runtime behavior — §§5/7/9 specify requirements that still need
   implementation checks and a device pass.
-- All recommended defaults shown on the boards (quantity range, free-text
-  locations, optional category, irreversible delete) are proposed and
-  unapproved; each needs its ROADMAP.md §9 gate before build (§10).
+- All recommended defaults shown on the boards (quantity range,
+  free-text locations, single optional category, irreversible delete)
+  were proposed when drawn and the boards are unchanged in this
+  slice. Approved contract now governs over those sketches: quantity
+  zero means exhausted, locations are mandatory entities, categories
+  are zero-or-many entities, deletion always confirms with no trash.
+  Each remaining default still needs its ROADMAP.md §9 gate before
+  build (§10).
 
 
 Mode: Operate. The visitor completes a task (find it, record it,
@@ -90,7 +95,7 @@ stack.
 ```text
 Inventory (list, grouped/filterable by location)
 ├── Search (filter on the list, not a separate destination)
-├── Add item (name, quantity, location, optional category)
+├── Add item (name, quantity, required location, zero or more categories)
 └── Item (edit fields; delete behind explicit confirm)
 ```
 
@@ -128,8 +133,8 @@ PANTRY                            8 items
   current filter).
 - Search has exactly one affordance: the inline search field. No
   separate search icon or second entry point.
-- Group headers show item counts. Locations derive from item rows,
-  so there are no persisted empty groups: a location filter with
+- Group headers show item counts. Location filters come from location
+  entities (see §3.5); a location filter with
   zero matches shows the contextual zero-match state in section 4,
   not an empty header.
 - Primary action only: one Add action opening the form (FAB on
@@ -137,10 +142,12 @@ PANTRY                            8 items
 
 ### 3.2 Search
 
-- Typing filters the visible list; scope is name plus location and
-  category once the gate decision adopts the recommended default
-  (ROADMAP.md section 9).
-- Matching is case- and accent-insensitive (`cafe` finds `café`).
+- Typing filters the visible list; name matching is the approved
+  baseline and multi-category selection filters with OR semantics
+  and deduplicated results. Broader location/category text matching
+  follows the adopted gate decision (ROADMAP.md section 9).
+- Matching is case-insensitive; accent-insensitive folding (`cafe`
+  finds `café`) stays a proposal until adopted.
 - No-match state: names the query ("No results for 'quinoa'"),
   offers clearing the search or adding it as a new item.
 - Search state survives rotation; clearing restores the full list.
@@ -161,9 +168,13 @@ Category    [ Grains (optional)]
 - Save stays enabled except while submitting; validation runs on
   submit and on blur, with inline errors in the current language.
   On a submit with invalid fields, focus moves to the first error.
-- Quantity defaults to 1; stepper plus direct numeric entry.
-- Location is free text with recency suggestions (recommended
-  default); category is optional free text with suggested values.
+- Quantity defaults to 1 (proposed); zero is approved and means
+  exhausted, with distinct exhausted UI deferred to UI milestones.
+- Location is a required entity: name required, address optional,
+  free-entry names such as Casa/Bodega. Categories are zero or many
+  per item via multi-select (selecting several filters with OR and
+  dedup). Bounds, uniqueness, and category-management UI remain
+  proposals.
 - Cancel/Back with unsaved changes asks to discard (no silent loss).
 
 ### 3.4 Edit item (the "detail" surface)
@@ -173,20 +184,23 @@ at the bottom: `( Delete item )` in the error role, requiring the
 confirm in section 4. Save confirms with transient feedback
 (Snackbar on Android, equivalent transient confirmation on iOS).
 
-### 3.5 Location handling
+### 3.5 Location and category handling (approved entities)
 
-- Recommended default: free-text places with recency/frequency
-  suggestions drawn from existing rows. No managed-list admin UI in
-  the MVP (avoids overengineering); suggestions keep entry fast and
-  mostly consistent.
-- Normalization is limited to trim; matching for suggestions is
-  case- and accent-insensitive so "pantry" and "Pantry" converge in
-  search even if stored as typed.
-- Because locations derive from items, a place with no items has no
-  persisted group; selecting its filter yields the contextual
-  zero-match state in section 4, never an empty header.
-- If the user later approves managed locations, the suggestion row
-  becomes the seed of that list without layout changes.
+- Locations are mandatory entities, not free-text columns: every
+  item references exactly one valid location (name required,
+  address optional, free entry). The form therefore selects or
+  creates a location instead of accepting an unbound string; the
+  boards sketch free-text entry and are unchanged, so the approved
+  entity contract governs.
+- Categories are independent entities joined to items: zero or many
+  per item, no duplicate associations. Multi-select filters with OR
+  semantics and deduplicated results.
+- Normalization beyond trim, name/address uniqueness, recency or
+  suggestion behavior, and any managed-list/category admin UI remain
+  proposals. Because locations are entities, an empty place can exist
+  without items only if a future gate approves it; until then, a
+  location filter with zero matches shows the contextual zero-match
+  state in section 4.
 
 ## 4. Interaction, loading, empty, error, destructive states
 
@@ -203,8 +217,8 @@ confirm in section 4. Save confirms with transient feedback
   SQLite text never reaches the screen.
 - Destructive: delete opens a confirm dialog naming the item
   ("Delete 'Rice'? This cannot be undone.") with `( Cancel )` /
-  `( Delete )`; success is announced transiently; there is no
-  trash/undo in the MVP by recommended default.
+  `( Delete )`; success is announced transiently. Approved: every
+  delete confirms and there is no trash/undo in the MVP.
 - Feedback motion: 150–250 ms state transitions only; no
   orchestrated load sequences; reduced-motion settings replace
   slides/parallax with crossfade or instant.
@@ -280,9 +294,11 @@ resolve per OS:
   stateless filtering owned by the list.
 - `LocationChips`: `locations`, `selected`, `onSelect`; horizontal
   scroll, 44/48 minimum targets.
-- `ItemForm`: fields name/quantity/location/category,
-  `errors`, `onSubmit`, `submitting`; validation messages inline.
-- `QuantityStepper`: integer value, min 0, plus/minus plus direct
+- `ItemForm`: fields name/quantity/location-entity/categories
+  (multi-select), `errors`, `onSubmit`, `submitting`; validation
+  messages inline.
+- `QuantityStepper`: integer value, min 0 (zero approved as
+  exhausted) plus/minus plus direct
   entry; exposes a11y value.
 - `DeleteConfirm`: item name, `( Cancel )`, `( Delete )`; returns
   an explicit choice, never deletes on dismiss.
@@ -297,9 +313,11 @@ resolve per OS:
   sections 3–4 on both platforms.
 - Touch targets, type scaling, screen reader, dark scheme, keyboard
   behavior, and safe-area handling meet sections 5–7.
-- Search is accent-insensitive (folded NFD comparison, stored text
-  verbatim); delete always confirms; dismissing a dirty form never
-  silently loses input.
+- Search matches names (approved baseline) plus multi-category OR
+  filtering with dedup; accent-insensitive folding (stored text
+  verbatim) stays a proposal. Delete always confirms and dismissing
+  a dirty form never silently loses input; quantity zero is accepted
+  as exhausted with distinct UI deferred.
 - Text contrast meets the 4.5:1 floor and controls the 3:1 floor
   (proposed); ROADMAP.md section 7 performance budgets observed on
   a device pass.
@@ -309,10 +327,14 @@ resolve per OS:
 - Milestones: list/search states → ROADMAP.md M3; add/edit/delete
   → M4; strings/a11y/performance/matrix → M5; schema/validation
   gates → M1–M2.
-- Unknowns use recommended defaults (approval still required):
-  quantity as non-negative integer 0–999999 without units, zero
-  allowed, v1 backfill 1; free-text locations with suggestions and
-  an `Unassigned` backfill for v1 rows; optional free-text
-  categories searched as a filter; confirmed irreversible delete
-  with no trash in the MVP. Each maps to a ROADMAP.md section 9
-  gate that must be recorded before build.
+- Approved contract (overrides the single-text sketches above):
+  mandatory location entities (name required, address optional,
+  free entry), independent category entities with zero or many per
+  item and OR-plus-dedup multi-select filtering, quantity zero
+  meaning exhausted with UI deferred, and confirmed deletion with no
+  trash. Unknowns still needing gates: numeric/string bounds (such
+  as 120/80/999999), name/address uniqueness, category management
+  and suggestion behavior, accent-folding semantics, and v1 backfill
+  values — never fabricate a location; nonempty v1 rows lacking a
+  location preserve rows and stop with a migration-required error
+  per ROADMAP.md.

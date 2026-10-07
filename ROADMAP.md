@@ -26,10 +26,13 @@ Authoritative prior record: `odd/tasks/mobile-foundation.md`
 
 Goals (approved MVP "Inventory by location"):
 
-1. Create, edit, and delete items carrying name, quantity,
-   location, and optional category; search items with name search
-   as the approved baseline (location/category matching proposed,
-   see section 9).
+1. Create, edit, and delete items carrying name, quantity
+   (zero means exhausted), a required location-entity reference,
+   and zero or more categories; search items with name search
+   as the approved baseline plus multi-category OR filtering with
+dedup (further location/category text matching proposed,
+   see section 9). Deletion always confirms with no trash; domain
+   and database both enforce integrity.
 2. Browse and search organized around location.
 3. Fully offline, on-device, in English and Spanish.
 4. Native-feeling Android and iOS UI from the start (see
@@ -79,30 +82,42 @@ Proposed surfaces: `src/db/migrations.ts` (new v2 migration),
 domain types plus validation (new, e.g. `src/inventory/`), Jest
 suites for migration and validation.
 
-- Add columns/constraints for `quantity`, `location`, optional
-  `category` to `items` (v1 rows carry only `id`/`name`/`created_at`;
-  backfill required). Proposed limits, subject to approval: name
-  required, trimmed, 1–120 characters; quantity integer 0–999999;
-  location required, trimmed, 1–80 characters; category optional,
-  trimmed, max 80 characters. Proposed backfill: `quantity = 1`,
-  `location = 'Unassigned'` (stored key, translated for display),
-  and a proposed index on `location` (plus `name` for search
-  ordering).
-- Accent handling (proposed, subject to approval): store user text
-  verbatim; match accent-insensitively by folding both query and
-  candidate (Unicode NFD, strip combining marks, lowercase) at
-  query time, so `cafe` finds `café` in both languages.
-- Acceptance: v1 database with pre-existing rows migrates to v2 with
-  zero data loss; downgrade is out of scope and documented; every
-  adopted limit and backfill value is recorded in the migration test.
-- Test-first: RED with a migration test on a v1-shaped fixture, then
-  GREEN with the migration; TRIANGULATE with empty DB, v1 rows, and
-  already-v2 DB cases. Distinct from the fake-boundary Jest tests,
-  the migration SQL also runs once against a real native SQLite v1
-  fixture (isolated check, not the Jest suite) before M2.
-- Risk: a `NOT NULL` column without a default makes the migration
-  statement fail; the failure alone does not wipe existing data, but
-  careless retries or table rebuilds can. See section 5.
+- Normalized M1 schema (approved): `locations` (id, name required,
+  address optional, free-entry names such as Casa/Bodega),
+  `categories` (independent entities), `items` with a required
+  `location_id` foreign key plus `quantity` (zero allowed and
+  meaning exhausted), and an `item_categories` join (one row per
+  item-category pair, no duplicates) so an item has zero or many
+  categories. Integrity is enforced by both domain validation and
+  database constraints (foreign keys, required fields, join
+  uniqueness). Still proposals, not approvals: numeric/string
+  bounds (such as 120/80/999999), name/address uniqueness, index
+  choices, and accent-folding semantics.
+- Migration policy (approved): v1 rows carry only
+  `id`/`name`/`created_at` with no location, and no actual device
+  rows have been observed. Fixture migration must never silently
+  lose rows or fabricate a location (no synthetic `Unassigned`).
+  An empty v1 database migrates cleanly and an already-v2 database
+  is a no-op; nonempty v1 rows that cannot satisfy the required
+  location preserve rows/version and stop with a clear
+  migration-required error instead of inventing a location.
+- Acceptance: empty, v1-shaped, and already-v2 fixtures behave as
+  above with zero silent loss; invalid/missing location or category
+  references and duplicate associations are rejected; zero quantity
+  is accepted and invalid quantity rejected; downgrade is out of
+  scope and documented.
+- Test-first: RED with a migration test on a v1-shaped fixture,
+  then GREEN with the migration; TRIANGULATE with empty DB, v1
+  rows, already-v2 DB, invalid/missing relationships, duplicate
+  associations, and zero quantity. Distinct from the fake-boundary
+  Jest tests, the migration SQL also runs once against a real
+  native SQLite v1 fixture (isolated check, not the Jest suite)
+  before M2; that native gate is pending and host SQLite evidence
+  does not replace it.
+- Risk: a `NOT NULL` location reference without a satisfiable value
+  makes the migration statement fail; the failure alone does not
+  wipe existing data, but careless retries, table rebuilds, or
+  fabricated backfills can. See section 5.
 
 ### M2 — Local CRUD repository (depends on M1)
 
@@ -129,8 +144,10 @@ Proposed surfaces: list screen, search field, empty/first-run states,
 loading/error states. Design contract: [DESIGN.md](DESIGN.md)
 sections 3–4 (list, search, states, tokens).
 
-- List grouped or filterable by location; search matches name (and
-  location/category per the adopted decision in section 9).
+- List grouped or filterable by location entities; search matches name
+  plus approved multi-category OR filtering with dedup (further
+  location/category text matching per the adopted decision in
+  section 9).
 - Acceptance: empty DB teaches the user how to add the first item
   (not a bare "nothing here"); search is case- and
   accent-insensitive for `en`/`es`; loading shows skeletons, not a
@@ -147,7 +164,9 @@ Proposed surfaces: add/edit form screen (or sheet per OS convention),
 location input, delete confirmation, validation messages. Design
 contract: [DESIGN.md](DESIGN.md) sections 3–5.
 
-- Fields: name, quantity stepper/input, location, optional category.
+- Fields: name, quantity stepper/input, required location entity
+  (name required, address optional), zero or more categories via
+  multi-select.
 - Acceptance: validation blocks empty names and invalid quantities
   with inline messages in the current language; delete requires
   explicit confirmation and announces the result; form state
@@ -195,12 +214,16 @@ them. Fixed runners (already in `package.json`): `npm test`,
 
 ## 5. Migration and data-loss risks
 
-- v1→v2 must backfill `quantity`/`location` for rows that predate
-  those columns; a `NOT NULL` column without a default makes the
-  migration statement fail (the failure alone does not wipe data).
-  Mitigation: additive migration with explicit defaults, exercised
-  by a v1-fixture Jest test plus one real native SQLite fixture
-  check before any UI work.
+- v1→v2 normalizes to locations, categories, and the item-category
+  join with a required item-location reference; v1 rows predate
+  those tables and no actual device rows have been observed. Never
+  silently discard rows and never fabricate a location (no synthetic
+  `Unassigned`): nonempty v1 data that cannot satisfy the required
+  location preserves rows/version and blocks migration with an
+  explicit migration-required error. Mitigation: fixture-driven
+  migration with explicit preserve-and-stop behavior, exercised by
+  v1-fixture Jest tests plus one real native SQLite fixture check
+  before any UI work (pending before M2).
 - No downgrade path is proposed; document that a v2 database does
   not open cleanly on older code.
 - The app provides no backup or sync of its own, so an in-app
@@ -227,14 +250,21 @@ today, sections 3–5 record what is proposed.
 
 ## 7. Cross-cutting requirements (MVP must meet all)
 
-- Search: name matching is the approved baseline; location/category
-  matching follows the adopted decision (section 9); case- and
-  accent-insensitive in both languages; no-match state names the
+- Search: name matching is the approved baseline; multi-category
+  selection filters with OR semantics and deduplicated results;
+  further location/category text matching follows the adopted
+  decision (section 9); case- and
+  accent-insensitive in both languages (accent folding stays a
+  proposal until adopted); no-match state names the
   query and offers a clear path.
-- Validation (proposed limits, subject to approval): name trimmed
-  1–120 characters; quantity integer 0–999999; location trimmed
-  1–80 characters, required; category trimmed, max 80, optional.
-  Inline errors in the current language, next to the field.
+- Validation (approved): every item references a valid location
+  entity (name required, address optional); zero or more categories
+  per item with no duplicate associations; quantity zero accepted
+  as exhausted; invalid quantity and missing/invalid references
+  rejected with inline errors in the current language, next to the
+  field. Still proposals, not approvals: trimmed length/numeric
+  bounds (such as name 1–120, quantity 0–999999, location 1–80,
+  category max 80), name/address uniqueness, and index choices.
 - Errors: typed domain errors mapped to translated UI copy; DB
   failure shows retry, never raw SQLite text or a blank screen.
 - Empty: first-run teaches adding the first item; location groups
@@ -266,13 +296,13 @@ come from emulator/simulator or hardware. None of these is decided.
 
 ## 9. Decision gates (must close before or during build)
 
-| Gate | Closes in | Recommended default (approval still required) |
-| ---- | --------- | ---------------------------------------------- |
-| Wireframes + gate defaults reviewed | G0 (before M1) | Review DESIGN.md wireframes; adopt, amend, or defer each default with a named owner |
-| Quantity semantics | M1 | Non-negative integer 0–999999, no units; zero allowed ("ran out, keep the row"); v1 backfill 1 |
-| Locations | M1/M4 | Free text with recency suggestions, not a managed list |
-| Categories | M1/M4 | Optional free text (suggested values only); search filters by it |
-| Deletion/backup | M4 | Confirm every delete; no trash/undo in MVP; irreversible is stated in the dialog |
+| Gate | Closes in | Status |
+| ---- | --------- | ------ |
+| Wireframes + gate defaults reviewed | G0 (before M1) | Proposed: review DESIGN.md wireframes; adopt, amend, or defer each remaining default with a named owner (delivery of boards alone does not complete this gate) |
+| Quantity semantics | M1 | Approved: zero allowed meaning exhausted, distinct UI deferred; bounds/units/negatives remain proposed |
+| Locations | M1/M4 | Approved: mandatory location entity, name required, address optional, free entry; uniqueness and managed-location UI remain proposed |
+| Categories | M1/M4 | Approved: independent entities, zero or many per item, multi-select OR filter with dedup; management UI and further text matching remain proposed |
+| Deletion/backup | M4 | Approved: confirm every delete, no trash/undo in MVP, irreversibility stated in the dialog; anything beyond that undecided |
 
 No milestone is complete while its gate decision is unrecorded.
 
@@ -291,9 +321,12 @@ enough to review in one pass.
 
 - [ ] G0: wireframes reviewed and every section 9 gate has a
   recorded user decision before any M1 schema work.
-- [ ] M1: v1→v2 migrates fixture rows with zero loss on the fake
-  boundary and in one real native SQLite fixture check; validation
-  rules tested.
+- [ ] M1: normalized locations/categories/item-category schema with
+  required item-location relationship; empty, v1-shaped, and
+  already-v2 fixtures behave per the preserve-and-stop migration
+  policy on the fake boundary and in one real native SQLite fixture
+  check (pending before M2); validation rules tested including zero
+  quantity, invalid/missing references, and duplicate associations.
 - [ ] M2: CRUD repository with parameterized SQL; error mapping
   tested; create/edit/delete survive force-stop + relaunch on a
   debug build.
@@ -303,6 +336,9 @@ enough to review in one pass.
 - [ ] M5: `en`/`es` audit, screen-reader pass, contrast floor and
   performance budgets observed on a device pass, extended Maestro
   flows observed on a debug build.
-- [ ] All four open gates in section 9 recorded as user decisions.
+- [ ] All four open gates in section 9 recorded as user decisions;
+  approved quantity/location/category/deletion entries stay approved
+  while bounds, uniqueness, management UI, and accent semantics stay
+  proposed.
 - [ ] No backend/accounts/sync introduced; web still fails fast;
   releases still source-only.

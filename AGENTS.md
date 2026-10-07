@@ -14,7 +14,7 @@ When working on this project, load the relevant skill(s) BEFORE doing the work t
 | Document | Use when | Path |
 | --- | --- | --- |
 | Product | Product intent, local-only household inventory scope, MVP requirements, non-goals, or unresolved product decisions matter. Proposed defaults are not approved requirements. | [`PRODUCT.md`](PRODUCT.md) |
-| Design | Proposed native Android/iOS UX, board mapping B1–B9, states, validation, transitions, or design tokens matter. Wireframes describe planned behavior, not implemented screens. | [`DESIGN.md`](DESIGN.md) |
+| Design | Proposed native Android UX, board mapping B1–B9, states, validation, transitions, or design tokens matter. Wireframes describe planned behavior, not implemented screens. B2 is a historical alternative, not the active target. | [`DESIGN.md`](DESIGN.md) |
 | Roadmap | Selecting implementation milestones, dependencies, acceptance criteria, or verification gates. Resolve pending decisions before implementing the behavior they govern. | [`ROADMAP.md`](ROADMAP.md) |
 | Wireframe guide | Board descriptions, platform variants, artifact navigation, or proposed interaction rules are needed. | [`design/wireframes/README.md`](design/wireframes/README.md) |
 | Editable wireframes | Inspecting or editing the OpenPencil source for the Tengo wireframes page and boards B1–B9. Preserve editable source alongside derived previews. | [`design/tengo-wireframes.op`](design/tengo-wireframes.op) |

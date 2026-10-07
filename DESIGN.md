@@ -1,9 +1,11 @@
 # Design — Tengo inventory by location
 
-Proposed planning design, not implemented. The working tree contains only
-the readiness foundation (`App.tsx`, `src/db/`, `src/i18n/`); no
-inventory screen exists. This document plans the MVP UX so
-implementation can follow it later. Product truth lives in
+Proposed planning design: no inventory screen is wired into the app
+yet. The working tree holds the readiness foundation (`App.tsx`
+default screen, `src/db/`, `src/i18n/`) plus implemented-but-unwired
+building blocks (`src/inventory/` repositories and bounded query,
+controlled `src/components/InventoryList.tsx`). This document plans
+the MVP UX so implementation can follow it later. Product truth lives in
 [PRODUCT.md](PRODUCT.md); build order and acceptance live in
 [ROADMAP.md](ROADMAP.md) (M1–M5, gates, checklist).
 
@@ -21,14 +23,14 @@ explicitly — do not silently change product scope or behavior.
 - Static map: [design/wireframes/overview.png](design/wireframes/overview.png)
   (all boards at a glance).
 - Board notes: [design/wireframes/README.md](design/wireframes/README.md)
-  (per-board OS idiom, numbered transitions ①–⑧, pending-approval rules).
+  (board notes, numbered transitions ①–⑧, pending-approval rules; B2 idiom is historical).
 - Per-board static exports: `design/wireframes/previews/01–09-*.png`
   (one PNG per board, exported after visual inspection).
 
 | Board | Content | Maps to |
 | ----- | ------- | ------- |
-| B1 | Populated list, chips filter, search, FAB | Android variant of §3.1 |
-| B2 | Same list content, large title, compose-style Add | iOS variant of §3.1 |
+| B1 | Populated list, chips filter, search, FAB | Active Android target for §3.1 |
+| B2 | Same list content, large title, compose-style Add | Historical alternative to §3.1, not the active Android target (artifact name unchanged) |
 | B3 | Search filter + no-results (`quinoa`) | §3.2 |
 | B4 | First-run empty, single CTA | §4 empty first-run |
 | B5 | Add item form | §3.3 |
@@ -39,8 +41,8 @@ explicitly — do not silently change product scope or behavior.
 
 Main transitions (full numbered list ①–⑧ in the board notes):
 
-- List B1/B2 → Add B5 via FAB (Android) / + Add (iOS); row tap → Edit B6.
-- List search → B3 states; Clear returns to B1/B2; Add "quinoa" → B5 prefilled.
+- Active path: list B1 → Add B5 via FAB; row tap → Edit B6. B2 is a historical alternative, not the active Android target.
+- List search → B3 states; Clear returns to B1 (B2 is historical only); Add "quinoa" → B5 prefilled.
 - First launch → B4; CTA → B5.
 - B5/B6 Save → list with transient confirm; dirty Back → B9 discard dialog.
 - B6 Delete → B9 confirm dialog; no separate read-only detail screen.
@@ -48,7 +50,7 @@ Main transitions (full numbered list ①–⑧ in the board notes):
 
 Reading notes:
 
-- B1/B2 are OS variants of the same list, not a sequence; B3–B9 are
+- B1/B2 are historical OS variants of the same list, not a sequence; only B1 is the active Android target. B3–B9 are
   states of that list and its form, not a linear flow.
 - Arrows on the static map show reachability between boards; they are
   not a clickable prototype.
@@ -118,14 +120,13 @@ Conventions below: `[ ]` input, `( )` button, `>` row/tap target,
 [Location filter chips: All | Kitchen | Pantry | Garage | …]
 ------------------------------------------
 KITCHEN                          12 items
-> Rice · x2 · Kitchen                44pt
-> Olive oil · x1 · Kitchen           44pt
+> Rice · x2 · Kitchen                48dp
+> Olive oil · x1 · Kitchen           48dp
 ------------------------------------------
 PANTRY                            8 items
-> Lentils · x4 · Pantry              44pt
+> Lentils · x4 · Pantry              48dp
 ------------------------------------------
-( + Add item )  one primary action (FAB on Android, system
-                compose button on iOS — never stacked)
+( + Add item )  one primary action: the FAB on Android.
 ```
 
 - Behavior: list opens focused on browse; search filters in place;
@@ -138,7 +139,8 @@ PANTRY                            8 items
   zero matches shows the contextual zero-match state in section 4,
   not an empty header.
 - Primary action only: one Add action opening the form (FAB on
-  Android, system compose-style button on iOS). Never stacked.
+  Android, never stacked; B2 sketches a historical compose-style
+  button, not the active target).
 
 ### 3.2 Search
 
@@ -156,8 +158,7 @@ PANTRY                            8 items
 
 ```text
 [Top bar: < Back | New item | (Save)]
-(OS idiom: Save sits in the top bar on iOS per B2/B6;
-Android uses a bottom/sticky Save per B5 — position follows §6.)
+(Position follows §6; B2/B6 top-bar placement is a historical alternative, not the active Android target.)
 Name        [ Rice             ]
 Quantity    [ (–)  2  (+)      ]
 Location    [ Pantry         v ]
@@ -182,7 +183,7 @@ Category    [ Grains (optional)]
 Same layout as Add with title "Edit item". Adds a destructive zone
 at the bottom: `( Delete item )` in the error role, requiring the
 confirm in section 4. Save confirms with transient feedback
-(Snackbar on Android, equivalent transient confirmation on iOS).
+(Snackbar on Android).
 
 ### 3.5 Location and category handling (approved entities)
 
@@ -226,48 +227,42 @@ confirm in section 4. Save confirms with transient feedback
 ## 5. Tokens, typography, spacing, touch (proposed)
 
 Semantic role tokens only — raw hex never drives UI, so light/dark
-resolve per OS:
+resolve per theme:
 
 - Roles mapped per platform (proposed values, subject to approval):
 
-  | App role | Android M3 role | iOS semantic | Light (proposed) | Dark (proposed) |
-  | -------- | --------------- | ------------ | ---------------- | --------------- |
-  | background | background | systemBackground | #FFFFFF | #121212 |
-  | surface | surface | secondarySystemBackground | #F4F2EC | #1C1C1E |
-  | primary action | primary / onPrimary | tint | #2F6B3A / #FFFFFF | #7BC79A / #0B2E18 |
-  | secondary container | secondaryContainer | systemFill | #E5E1D5 | #2C2C2E |
-  | outline / separator | outline / outlineVariant | separator | #C9C5B8 | #38383A |
-  | error | error / onError | systemRed | #B3261E / #FFFFFF | #FFB4AB / #410002 |
-  | label | onBackground | label | #1A1C19 | #F2F1ED |
-  | secondary label | onSurfaceVariant | secondaryLabel | #5C5F58 | #AEB0AD |
+  | App role | Android M3 role | Light (proposed) | Dark (proposed) |
+  | -------- | --------------- | ---------------- | --------------- |
+  | background | background | #FFFFFF | #121212 |
+  | surface | surface | #F4F2EC | #1C1C1E |
+  | primary action | primary / onPrimary | #2F6B3A / #FFFFFF | #7BC79A / #0B2E18 |
+  | secondary container | secondaryContainer | #E5E1D5 | #2C2C2E |
+  | outline / separator | outline / outlineVariant | #C9C5B8 | #38383A |
+  | error | error / onError | #B3261E / #FFFFFF | #FFB4AB / #410002 |
+  | label | onBackground | #1A1C19 | #F2F1ED |
+  | secondary label | onSurfaceVariant | #5C5F58 | #AEB0AD |
 - Contrast floor (proposed, unmeasured until a device pass): text
   at least 4.5:1 against its background; interactive controls and
   focus indicators at least 3:1 against adjacent colors.
 - Light: paper-neutral background, one tonal step for grouped
   headers/filter chips; dark: true dark scheme (not an invert),
-  tonal elevation per Material, translucency/materials per HIG.
+  tonal elevation per Material 3.
 - One accent carries primary actions, selection, and focus; never
   decoration or inactive states.
-- Type: system faces only in the MVP (SF Pro/Compact on iOS via
-  Dynamic Type styles; Material type scale Body/Title/Label on
+- Type: system faces only in the MVP (Material type scale Body/Title/Label on
   Android in `sp`). One family across the app; tighter scale
   (1.125–1.2). Prose measure 65–75ch where prose appears.
-- Spacing: 8dp/pt base grid; 16 screen margins; 8 between related
+- Spacing: 8dp base grid; 16 screen margins; 8 between related
   rows, 16+ between groups; more space above a header than below it.
-- Touch: 44x44 pt minimum on iOS, 48x48 dp on Android, 8dp/pt
+- Touch: 48x48 dp minimum on Android, 8dp
   gaps between adjacent targets.
 
-## 6. Native adaptive navigation and system behavior
+## 6. Native navigation and system behavior (Android)
 
 - Android: top app bar for screen context plus single FAB for Add;
   system Back and predictive Back always work; bottom sheets and
   Material dialogs/snackbars per Material 3.
-- iOS: large titles on the top-level list collapsing to inline;
-  navigation-stack push for Add/Edit; sheet presentation only for
-  self-contained quick add if adopted; edge-swipe back stays alive;
-  action sheets/alerts, SF Symbols iconography, no ported Material
-  widgets.
-- Shared guarantees on both OSes: edge-to-edge layout inside safe
+- Guarantees: edge-to-edge layout inside safe
   area and window insets (notch, home indicator, status/navigation
   bars); keyboard (IME) insets keep Save and focused fields
   visible; no control hides behind system bars or the keyboard.
@@ -277,9 +272,9 @@ resolve per OS:
 - Every interactive element has a localized screen-reader name;
   quantity steppers expose value and increment/decrement actions;
   errors are announced, not color-only.
-- Type follows system size settings (Dynamic Type / font scale);
+- Type follows system font-scale settings;
   layout is verified at a large size without truncation.
-- Reduced motion (iOS Reduce Motion, Android Remove animations):
+- Reduced motion (Android Remove animations):
   crossfade or instant cuts; content visible by default.
 - All strings live in `src/i18n/resources.ts` with `es` parity
   enforced by the existing `typeof en` lock; Spanish is verified on
@@ -293,7 +288,7 @@ resolve per OS:
 - `SearchField`: controlled query, clear action, accessible label;
   stateless filtering owned by the list.
 - `LocationChips`: `locations`, `selected`, `onSelect`; horizontal
-  scroll, 44/48 minimum targets.
+  scroll, 48dp minimum targets.
 - `ItemForm`: fields name/quantity/location-entity/categories
   (multi-select), `errors`, `onSubmit`, `submitting`; validation
   messages inline.
@@ -310,7 +305,7 @@ resolve per OS:
 - List, search, add, edit, and delete all work offline with both
   languages; no screen shows untranslated or hardcoded text.
 - Empty, loading, error, no-match, and delete-confirm states match
-  sections 3–4 on both platforms.
+  sections 3–4 on Android.
 - Touch targets, type scaling, screen reader, dark scheme, keyboard
   behavior, and safe-area handling meet sections 5–7.
 - Search matches names (approved baseline) plus multi-category OR
@@ -324,9 +319,11 @@ resolve per OS:
 
 ## 10. Roadmap cross-links and unknowns
 
-- Milestones: list/search states → ROADMAP.md M3; add/edit/delete
-  → M4; strings/a11y/performance/matrix → M5; schema/validation
-  gates → M1–M2.
+- Milestones: list/search states → ROADMAP.md M3 (query and
+  controlled component host-verified; App integration pending);
+  add/edit/delete → M4 (pending); strings/a11y/performance/matrix
+  → M5 (pending); schema/validation gates → M1–M2 (done; see
+  [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
 - Approved contract (overrides the single-text sketches above):
   mandatory location entities (name required, address optional,
   free entry), independent category entities with zero or many per

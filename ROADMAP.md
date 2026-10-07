@@ -1,7 +1,9 @@
 # Roadmap — Tengo inventory by location
 
-Planning document, not a status report. The MVP is approved but not
-built. "Current" below means read against the working tree (read-only
+Planning document, not a status report. The MVP product UI is
+approved but not built: M1 schema/domain and M2 repositories plus
+their Android native gates are done, while M3 App integration, M4
+forms, and M5 hardening stay pending. "Current" below means read against the working tree (read-only
 review; no tests, builds, or installs were run for this document). Companion docs: [PRODUCT.md](PRODUCT.md) (confirmed
 product record) and [DESIGN.md](DESIGN.md) (proposed UX, not implemented).
 
@@ -10,12 +12,13 @@ product record) and [DESIGN.md](DESIGN.md) (proposed UX, not implemented).
 | Area | State | Evidence |
 | ---- | ----- | -------- |
 | App shell | Implemented: readiness screen with translated title, subtitle, DB state | `App.tsx` |
-| Database | Implemented: `tengo.db`, versioned migrations, schema v1 `items(id, name, created_at)` | `src/db/index.ts`, `src/db/migrations.ts` |
+| Database | Implemented: `tengo.db`, versioned migrations, schema v2 (locations, categories, items with required location reference and quantity, item-category join) | `src/db/index.ts`, `src/db/migrations.ts` |
 | i18n | Implemented: `en`/`es`, device-locale detection, English fallback, type-locked keys | `src/i18n/index.ts`, `src/i18n/resources.ts` |
 | Unit tests | Implemented scaffolding: native boundary mocked, never touches a real DB | `jest.setup.ts`, `__tests__/`, `jest.config.js` |
-| Native smoke | Minimal: one launch reaches readiness; no restart-persistence or locale proof | `.maestro/smoke.yaml`, README "Tests and their limits" |
-| Inventory CRUD | Not started: no screens, no domain logic, no search | `App.tsx` (readiness only); `odd/tasks/mobile-foundation.md` |
-| Releases | Source-only GitHub releases; no signing, EAS, or store upload | README "Quality and automation" |
+| Native smoke | Minimal: one launch reaches readiness; no restart-persistence or locale proof | `.maestro/smoke.yaml`, [Maestro boundary](docs/testing.md#maestro-boundary) |
+| Inventory CRUD | Repository APIs implemented and Android-verified; no screens yet: the controlled `InventoryList` and bounded `queryItems` exist but are not wired into `App.tsx` (M3/M4 pending) | `src/inventory/`, `src/components/InventoryList.tsx`, [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
+| Native gates | Done: M1 migration 5/5 and M2 persistence phases 5/5, 3/3, 8/8 on Android | [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
+| Releases | Source-only GitHub releases; no signing, EAS, or store upload | [quality commands](docs/development.md#quality-commands) |
 | Review/tooling | Prior native review held per user instruction; work-unit commits pending authorization | `odd/tasks/mobile-foundation.md` |
 
 Authoritative prior record: `odd/tasks/mobile-foundation.md`
@@ -35,7 +38,7 @@ dedup (further location/category text matching proposed,
    and database both enforce integrity.
 2. Browse and search organized around location.
 3. Fully offline, on-device, in English and Spanish.
-4. Native-feeling Android and iOS UI from the start (see
+4. Native-feeling Android UI from the start (see
    [DESIGN.md](DESIGN.md)).
 
 Non-goals (explicitly out of the MVP):
@@ -61,10 +64,12 @@ and section 5 tokens; this document's section 9 gate table.
 - Review the list, search, add, edit, and location wireframes plus
   the recommended defaults (field limits, backfill values,
   quantity, locations, categories, deletion) and record a user
-  decision per gate before M1 writes any migration.
+  decision per gate; the section 9 contract decisions below already
+  govern M1/M2, and full wireframe review still gates M3/M4 UI work.
 - Acceptance: every gate in section 9 has an explicit user decision
   (adopt, amend, or defer with a named owner); DESIGN.md wireframes
-  reviewed with no open layout or state contradiction.
+  reviewed with no open layout or state contradiction before UI
+  milestones build screens.
 - UI-from-start rule: M1 field limits, backfill values, and index
   choices must match the reviewed wireframes; a schema change that
   alters the form or list returns to the wireframes first.
@@ -78,9 +83,11 @@ discipline.
 
 ### M1 — Data model and migration v2 (depends on M0)
 
-Proposed surfaces: `src/db/migrations.ts` (new v2 migration),
-domain types plus validation (new, e.g. `src/inventory/`), Jest
-suites for migration and validation.
+Status: done — schema, validation, Jest suites, and the Android
+native fixture gate all pass (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
+Surfaces: `src/db/migrations.ts` (v2 migration), domain types
+plus validation (`src/inventory/`), Jest suites for migration
+and validation.
 
 - Normalized M1 schema (approved): `locations` (id, name required,
   address optional, free-entry names such as Casa/Bodega),
@@ -94,8 +101,8 @@ suites for migration and validation.
   bounds (such as 120/80/999999), name/address uniqueness, index
   choices, and accent-folding semantics.
 - Migration policy (approved): v1 rows carry only
-  `id`/`name`/`created_at` with no location, and no actual device
-  rows have been observed. Fixture migration must never silently
+  `id`/`name`/`created_at` with no location, and no production v1
+  rows have been observed on any device (fixture rows are throwaway). Fixture migration must never silently
   lose rows or fabricate a location (no synthetic `Unassigned`).
   An empty v1 database migrates cleanly and an already-v2 database
   is a no-op; nonempty v1 rows that cannot satisfy the required
@@ -112,8 +119,8 @@ suites for migration and validation.
   associations, and zero quantity. Distinct from the fake-boundary
   Jest tests, the migration SQL also runs once against a real
   native SQLite v1 fixture (isolated check, not the Jest suite)
-  before M2; that native gate is pending and host SQLite evidence
-  does not replace it.
+  before M2; that native gate passed on Android and host SQLite
+  evidence does not replace it (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
 - Risk: a `NOT NULL` location reference without a satisfiable value
   makes the migration statement fail; the failure alone does not
   wipe existing data, but careless retries, table rebuilds, or
@@ -121,7 +128,9 @@ suites for migration and validation.
 
 ### M2 — Local CRUD repository (depends on M1)
 
-Proposed surfaces: repository module (create/read/update/delete with
+Status: done — repository module, Jest suites, and Android
+persistence across force-stop/relaunch pass (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
+Surfaces: repository module (create/read/update/delete with
 parameterized SQL, no ORM), Jest suites against the fake DB boundary.
 
 - Parameterized queries only; no string-interpolated user input.
@@ -140,6 +149,9 @@ parameterized SQL, no ORM), Jest suites against the fake DB boundary.
 
 ### M3 — Inventory list, search, and empty states (depends on M2)
 
+Status: in progress — bounded `queryItems` and the controlled
+`InventoryList` are host-verified only; App integration, native UI
+proof (FAB, real SQLite query), and device metrics stay pending.
 Proposed surfaces: list screen, search field, empty/first-run states,
 loading/error states. Design contract: [DESIGN.md](DESIGN.md)
 sections 3–4 (list, search, states, tokens).
@@ -149,18 +161,20 @@ sections 3–4 (list, search, states, tokens).
   location/category text matching per the adopted decision in
   section 9).
 - Acceptance: empty DB teaches the user how to add the first item
-  (not a bare "nothing here"); search is case- and
-  accent-insensitive for `en`/`es`; loading shows skeletons, not a
+  (not a bare "nothing here"); search is case-insensitive for
+  `en`/`es` with accent folding per the adopted gate decision
+  (section 9); loading shows skeletons, not a
   bare spinner; DB error shows retry.
-- Test-first: RED with component tests for empty, populated, and
-  error states; GREEN with the screen; TRIANGULATE no-match search
+- Test-first (for the pending App integration): RED with
+  integration tests for empty, populated, and error states (the
+  presentational component cases already exist host-side); GREEN with the screen; TRIANGULATE no-match search
   and very long names.
 - UX from the start: this is the first user-visible MVP surface, so
   [DESIGN.md](DESIGN.md) list/search wireframes govern layout.
 
 ### M4 — Add, edit, location input, delete (depends on M2, UX from M3)
 
-Proposed surfaces: add/edit form screen (or sheet per OS convention),
+Proposed surfaces: add/edit form screen (or bottom sheet per Android convention),
 location input, delete confirmation, validation messages. Design
 contract: [DESIGN.md](DESIGN.md) sections 3–5.
 
@@ -184,8 +198,8 @@ labels, performance pass, extended Maestro flows.
 
 - Full `en`/`es` string audit (no hardcoded UI text, `es` parity via
   the existing type lock).
-- Screen-reader pass on every screen and control; touch targets per
-  OS minimum; reduced-motion honored.
+- Screen-reader pass on every screen and control; 48dp minimum
+  touch targets on Android; reduced-motion honored.
 - Performance: list stays smooth with a few hundred items on a
   low-end device; search responds per keystroke without blocking.
 - Native test matrix: unit Jest (mocked boundary) plus on-device
@@ -216,14 +230,15 @@ them. Fixed runners (already in `package.json`): `npm test`,
 
 - v1→v2 normalizes to locations, categories, and the item-category
   join with a required item-location reference; v1 rows predate
-  those tables and no actual device rows have been observed. Never
+  those tables and no production v1 rows have been observed on any
+  device (fixture rows are throwaway). Never
   silently discard rows and never fabricate a location (no synthetic
   `Unassigned`): nonempty v1 data that cannot satisfy the required
   location preserves rows/version and blocks migration with an
   explicit migration-required error. Mitigation: fixture-driven
   migration with explicit preserve-and-stop behavior, exercised by
-  v1-fixture Jest tests plus one real native SQLite fixture check
-  before any UI work (pending before M2).
+  v1-fixture Jest tests plus the real native SQLite fixture check
+  on Android (passed before M2; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
 - No downgrade path is proposed; document that a v2 database does
   not open cleanly on older code.
 - The app provides no backup or sync of its own, so an in-app
@@ -233,20 +248,23 @@ them. Fixed runners (already in `package.json`): `npm test`,
 - Never interpolate user input into SQL; use bound parameters in
   every new query (M2 acceptance).
 
-## 6. Native test matrix (proposed, not yet run)
+## 6. Native test matrix (fixtures verified; UI/E2E pending)
 
 | Layer | What | Where |
 | ----- | ---- | ----- |
 | Unit | Migration, validation, repository logic on fakes | `__tests__/` via `npm run test:ci` |
 | Type/lint/format | `tsc --noEmit`, Biome check and format | `npm run check` |
 | Compat/export | `expo install --check`, unsigned Android export smoke | `npm run compat`, `npm run export:smoke` |
-| Device smoke | Readiness plus (new) add/search/edit/delete flows | Maestro on debug build (`com.tengo.app`) |
-| Native migration | v2 migration SQL on a real v1 SQLite fixture | Isolated native check (not Jest), before M2 |
-| CRUD persistence | Create/edit/delete survive force-stop + relaunch | Debug build (`com.tengo.app`), recorded manually |
-| Manual device | Restart persistence, `es` device locale, dark mode, large text, keyboard/safe-area on one Android phone and one iPhone | Emulator/simulator or hardware; record which produced the evidence |
+| Device smoke | Single-launch readiness (the only passing Maestro flow today) | Maestro on debug build (`com.tengo.app`); see [Maestro boundary](docs/testing.md#maestro-boundary) |
+| Add/search/edit/delete flows | Pending: not available as Maestro flows yet | Planned; no commands documented until the flows exist |
+| Native migration | Passed on Android: M1 fixture 5/5 | Isolated native check (not Jest); see [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
+| CRUD persistence | Passed on Android: phases 5/5, 3/3, 8/8 across force-stop + relaunch | Debug build (`com.tengo.app`); see [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
+| Manual device | Restart persistence, `es` device locale, dark mode, large text, keyboard/safe-area on one Android phone | Emulator or hardware; record which produced the evidence |
 
-No successful runs are claimed here; section 1 records what exists
-today, sections 3–5 record what is proposed.
+Fixture/native rows above are verified (see section 1 and
+[verified native evidence](docs/testing.md#verified-native-evidence-android-only));
+UI flows, device metrics, and extended Maestro E2E stay pending.
+Sections 3–5 record what is proposed.
 
 ## 7. Cross-cutting requirements (MVP must meet all)
 
@@ -269,8 +287,8 @@ today, sections 3–5 record what is proposed.
   failure shows retry, never raw SQLite text or a blank screen.
 - Empty: first-run teaches adding the first item; location groups
   with zero items explain why rather than silently vanishing.
-- Accessibility: screen-reader names on all controls; OS minimum
-  touch targets; visible focus; errors announced; reduced-motion
+- Accessibility: screen-reader names on all controls; 48dp minimum
+  touch targets on Android; visible focus; errors announced; reduced-motion
   honored (crossfade/instant instead of slides/parallax). Proposed
   contrast floor, unmeasured until a device pass: text at least
   4.5:1, interactive controls at least 3:1 against adjacent colors.
@@ -290,9 +308,9 @@ The pipeline stays source-only (`release.yml` on tag `v*`): `git
 archive` tarball plus unsigned export bundle; tag must equal
 `v<package.json version>`. No signing, no EAS, no store upload. If a
 future step proposes store distribution, it needs explicit user
-choices first: TestFlight vs. App Store, Google Play internal track
+choices first: Google Play internal track
 vs. production, signing ownership, and whether review screenshots
-come from emulator/simulator or hardware. None of these is decided.
+come from emulator or hardware. None of these is decided.
 
 ## 9. Decision gates (must close before or during build)
 
@@ -319,17 +337,19 @@ enough to review in one pass.
 
 ## 11. MVP completion checklist
 
-- [ ] G0: wireframes reviewed and every section 9 gate has a
-  recorded user decision before any M1 schema work.
-- [ ] M1: normalized locations/categories/item-category schema with
+- [ ] G0: section 9 contract decisions recorded (quantity, location,
+  category, deletion entries are approved); full wireframe review
+  still gates M3/M4 UI work.
+- [x] M1: normalized locations/categories/item-category schema with
   required item-location relationship; empty, v1-shaped, and
   already-v2 fixtures behave per the preserve-and-stop migration
-  policy on the fake boundary and in one real native SQLite fixture
-  check (pending before M2); validation rules tested including zero
-  quantity, invalid/missing references, and duplicate associations.
-- [ ] M2: CRUD repository with parameterized SQL; error mapping
+  policy on the fake boundary and in the real native SQLite fixture
+  check on Android (passed; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
+  validation rules tested including zero quantity,
+  invalid/missing references, and duplicate associations.
+- [x] M2: CRUD repository with parameterized SQL; error mapping
   tested; create/edit/delete survive force-stop + relaunch on a
-  debug build.
+  debug build (passed on Android; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
 - [ ] M3: list/search/empty/loading/error states per DESIGN.md.
 - [ ] M4: add/edit/delete with validation and confirm; no silent
   data loss.

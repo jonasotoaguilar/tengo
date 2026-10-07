@@ -2,7 +2,7 @@
 # Scope: proves one launch reaches the readiness screen and DB bootstrap reports
 # "ready" in that session only. It does NOT relaunch the app (no persistence-across-
 # restart proof) and asserts the raw db-state text, so it does NOT prove locale
-# detection. See README "Tests and their limits" for this boundary.
+# detection. See docs/testing.md "Maestro boundary" for this boundary.
 # Run locally against an installed debug build:
 #   maestro test .maestro/smoke.yaml
 # Stable testIDs come from the App.tsx readiness screen. The db-state text

@@ -4,11 +4,11 @@
 
 ## Platform
 
-adaptive
+Android only.
 
-One product that adapts its design language per OS: Material Design 3
-conventions on Android, Human Interface Guidelines conventions on iOS,
-built from a single Expo React Native codebase.
+One Android product following Material Design 3 conventions, built
+from a single Expo React Native codebase. Other platforms are outside
+the current scope: not a delivery criterion, blocker, or pending task.
 
 ## Users
 
@@ -49,16 +49,19 @@ app, which is unknown and must not be promised.
 
 ## Operating Context
 
-- The app runs natively on Android and iOS via Expo React Native.
+- The app runs natively on Android via Expo React Native.
 - The database is on-device SQLite (`expo-sqlite`, database
   `tengo.db`), opened and migrated at launch. See `src/db/index.ts`
   and `src/db/migrations.ts`.
 - The device locale selects English or Spanish at launch via
   `expo-localization`; `es` is type-locked to `en` so keys cannot
   drift. See `src/i18n/index.ts` and `src/i18n/resources.ts`.
-- Today the only implemented screen is the readiness screen in `App.tsx`
-  (translated title, subtitle, DB bootstrap state). Inventory screens
-  and CRUD do not exist yet.
+- The default screen is still the readiness screen in `App.tsx`
+  (translated title, subtitle, DB bootstrap state). Behind it, M1
+  domain validation, the M2 location/category/item repositories,
+  the bounded `queryItems` filter, and the controlled
+  `InventoryList` component are implemented but not wired into the
+  app: no Add/Edit product UI exists yet (M3/M4 pending).
 
 ## Capabilities and Constraints
 
@@ -66,22 +69,23 @@ Confirmed foundation (implemented foundation, see Evidence and ROADMAP.md baseli
 
 - App shell with translated readiness screen and DB bootstrap
   (`App.tsx`).
-- Versioned SQLite migrations, currently schema version 1 with table
-  `items(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')))`.
-  See `src/db/migrations.ts`.
+- Versioned SQLite migrations, currently schema version 2:
+  `locations`, `categories`, `items` (required `location_id`
+  reference plus `quantity`), and the `item_categories` join.
+  See `src/db/migrations.ts`. The M1/M2 native gates passed on
+  Android (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
 - English/Spanish i18n with device-locale detection and English
   fallback. See `src/i18n/`.
 - Jest/`jest-expo` unit-test scaffolding with the native boundary
   mocked (`jest.setup.ts`); unit tests never touch a real database.
 - A single-session Maestro smoke flow (`.maestro/smoke.yaml`) that
   proves one launch reaches readiness; it does not prove restart
-  persistence or locale detection (see README "Tests and their
-  limits").
+  persistence or locale detection (see
+  [Maestro boundary](docs/testing.md#maestro-boundary)).
 - Source-only GitHub releases; no signing, no EAS, no store upload
-  (see README "Quality and automation").
+  (see [quality commands](docs/development.md#quality-commands)).
 
-Approved MVP scope (confirmed by the user; not yet built):
+Approved MVP scope (confirmed by the user; repository APIs implemented, product UI pending M3/M4):
 
 - Inventory items carry name and quantity (zero means exhausted).
 - Every item references a valid location entity: name required,
@@ -95,17 +99,17 @@ Approved MVP scope (confirmed by the user; not yet built):
 - Integrity is enforced by both domain models and the database.
 - M1 uses a normalized schema (locations, categories, and an
   item-category join with a required item-location relationship);
-  see ROADMAP.md. No actual device inventory rows have been
-  observed. Migration must never silently lose rows or fabricate a
+  see ROADMAP.md. No production v1 rows have been observed on any
+  device (fixture rows are throwaway). Migration must never silently lose rows or fabricate a
   location: nonempty v1 rows that cannot satisfy the required
   location preserve rows/version and stop with a clear
-  migration-required error. The real native SQLite gate stays
-  pending before M2.
+  migration-required error. The native SQLite gate passed on
+  Android before M2 (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
 
 Durable constraints:
 
 - Local-first, single household, on-device only.
-- Android/iOS native via Expo React Native + SQLite.
+- Android native via Expo React Native + SQLite.
 - English/Spanish.
 - No backend, no accounts, no sync.
 - Native only: `npm run web` fails fast by design.
@@ -144,25 +148,30 @@ until the user approves it.
 
 ## Evidence on Hand
 
-- `README.md`: foundation-only scope statement, commands, source
-  map, test limits, Maestro boundary, quality/automation notes.
+- `README.md`: scope statement and links; detail lives in
+  [docs/development.md](docs/development.md) (setup, source map,
+  quality) and [docs/testing.md](docs/testing.md) (test limits,
+  native protocol, Maestro boundary).
 - `App.tsx`: readiness screen and DB bootstrap (`readiness-*`
-  testIDs).
+  testIDs); the default screen is still readiness and the fixture
+  branches are DEV-only.
 - `src/db/index.ts`, `src/db/migrations.ts`: init logic,
-  `DATABASE_NAME`, `SCHEMA_VERSION = 1`, v1 `items` schema.
+  `DATABASE_NAME`, `SCHEMA_VERSION = 2`, v2
+  locations/categories/items/join schema.
 - `src/i18n/index.ts`, `src/i18n/resources.ts`: `en`/`es` resources,
   `resolveLanguage`, `detectDeviceLanguage`.
 - `jest.setup.ts`, `__tests__/`: mocked SQL/native boundary and
   unit suites.
 - `.maestro/smoke.yaml`: single-session readiness flow.
-- `odd/tasks/mobile-foundation.md`: foundation record, including
-  native runtime evidence (schema `user_version=1` survives restart;
-  CRUD persistence not proven) and the held review state.
+- `odd/tasks/mobile-foundation.md`: historical planning record
+  (foundation scope and held review; its v1-era native notes are
+  superseded by [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
 - `odd/tasks/product-roadmap-design.md`: the planning task that
   authorizes these documents; documentation only, no implementation.
-- Absences future work must not fabricate: no inventory UI, no CRUD
-  logic, no search implementation, no store listing, no user
-  research or testimonials.
+- Absences future work must not fabricate: no Add/Edit inventory
+  UI, no App-wired list/search, no store listing, no user
+  research or testimonials. (Repository and bounded-query logic
+  exist in `src/inventory/`; they are not product UI.)
 
 ## Product Principles
 
@@ -180,6 +189,6 @@ until the user approves it.
 No product-specific accessibility standard has been confirmed. The
 planning default (see DESIGN.md) is native platform behavior: system
 font scaling, screen-reader labels on every control, minimum touch
-targets per OS (44x44 pt iOS, 48x48 dp Android), visible focus and
+targets (48x48 dp minimum on Android), visible focus and
 error states, and honored reduced-motion settings. Spanish is a
 first-class language, not a translation pass.

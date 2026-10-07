@@ -24,4 +24,4 @@ Worker reproduced compat version mismatch, then updated exactly the two direct d
 Read-only scout identified documentation, static previews and editable document as separate logical slices, but could not inspect committed bytes directly. Parent Git spot check confirmed original committed .op has one page (n3, Tengo wireframes), 12 roots, approximately 85,854 bytes when serialized by parser; physical pretty-printed size is larger. Earlier task claims that Page 1 was retained in saved artifact are not supported by committed source. Do not promise .op slice fits native budget; extraction/incremental JSON requires separate validation. No restructuring performed.
 
 ## Next step
-Wait for U1 verification, commit isolated dependency update and inspect its native candidate. Resolve .op review feasibility before publishing replacement plan slices.
+U1 complete: dependency PR #4 merged as 2eac1931b35edd883f2e60c5b0e198b20592c01d. Current docs/inventory-plan-documents slice carries docs + static previews only; editable `design/tengo-wireframes.op` deferred to a later deliverable. U2/U3 pending until full delivery.

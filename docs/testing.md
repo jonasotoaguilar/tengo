@@ -42,7 +42,7 @@ and zero-quantity/category mapping. The Unicode query measured
 3.8 ms in that diagnostic run; no performance budget was asserted.
 
 The complete `.maestro/m3-query.yaml` flow subsequently passed on
-Tengo_API34 with Maestro 2.11.0: 72/72 commands, one success,
+emulator-5554 (AVD Tengo_API34) with Maestro 2.11.0: 72/72 commands, one success,
 zero failures, 73.7 seconds. It covered grouped rows and counts,
 exhausted labels, Android FAB visibility, Unicode/literal search,
 overlapping category OR without duplicates, no-results/clear,
@@ -53,8 +53,21 @@ post-retry and final-clear count text was not captured.
 Independent host verification passed 164 tests and `npm run check`.
 P3b2's reviewed container unit included 13 container and 9 App tests.
 Native M3 evidence uses the real container and repositories on
-fixture databases, not production `tengo.db`. Forms, restart E2E,
-locale detection, accessibility and performance budgets remain
+fixture databases, not production `tengo.db`.
+
+The M4 form flow (`.maestro/m4-forms.yaml`) passed on emulator-5554 (AVD Tengo_API34)
+and CLI: 97/97 commands, JUnit failures=0, ~261s, first attempt. It
+exercised the real add/edit form against the isolated CRUD fixture
+(`m1-fixture-crud-m4.db`) and covered empty first-run, create with an
+inline new location and category, create persistence across
+force-stop/relaunch, edit of name and quantity, edit persistence across
+restart, dirty-discard Cancel and Discard, delete Cancel and
+confirmation, and delete persistence across restart. Production
+`tengo.db` was never created, opened, or modified. Details and the
+previously failed attempts are in the CRUD fixture section below.
+
+Locale detection, accessibility, responsive layout (orientation, large
+font, keyboard, contrast, light/dark) and the performance budgets remain
 separate pending checks.
 
 ## DEV-only native fixture protocol
@@ -165,21 +178,65 @@ The reset control is
 disabled until the fixture reaches a terminal state (`ready`/`error`),
 never mid-open. The `.maestro/m4-forms.yaml` flow fail-closes
 on `crud-fixture-screen` first, then taps the reset control so every run
-starts from the empty isolated database. After the tap it waits for
-`crud-fixture-status` to pass through `running` and reach terminal
-`ready` before asserting the empty state: the empty title alone could
-already be visible from a previous empty run, so only the status cycle
-proves the fresh generation is ready. It covers
+starts from the empty isolated database. After the tap it waits on the
+first-run call to action rather than on the transient status text: a
+`tapOn` waits for the app to settle (~3.7s measured here), which outlasts
+the reset, so `running` is already gone by the time the next command
+samples the screen. The empty call to action is rendered only when the
+read model returns zero items, and a stale empty read can only coexist
+with an already-empty database, so in both cases the first created row is
+still row 1. It covers
 empty first-run plus the add call to action, create with inline new
 location/category, relaunch persistence of the create, edit, relaunch
 persistence of the edit, dirty-discard (Cancel keeps the edit,
 Discard keeps the stored values), delete (Cancel keeps the row, confirm
 removes it back to empty), and relaunch persistence of the delete. It
 uses stable testIDs with en/es count regexes and anchored
-`Quantity|Cantidad <n>` quantity assertions.
+`Quantity|Cantidad <n>` quantity assertions. The name field is cleared
+with `eraseText`, but the quantity edit uses the stepper: tapping a short
+centred number places the caret inside it, so a backspace-based clear
+erases nothing and the new digit lands before the old one.
 
-The flow is authored here, not yet run: no native result is claimed
-until a separate verifier runs it on a device/emulator build.
+Run the isolated Android form flow with the guarded CRUD bundle:
+
+```sh
+maestro --udid emulator-5554 test .maestro/m4-forms.yaml
+```
+
+`npm run verify:flows` (part of `npm run check`) statically validates every
+flow under `.maestro/` before any device run: only command names registered
+by the pinned Maestro CLI, never `clearText`, a `hideKeyboard` before the
+next tap after every `inputText`, and no waits on a transient state that a
+tap-settle window hides. It does not verify selectors against component
+source.
+
+### M4 form flow — observed Android result
+
+The following was observed on the Android emulator (emulator-5554 (AVD Tengo_API34),
+`com.tengo.app` debug 1.0.0) by an independent device verifier, not
+inferred from source or unit tests:
+
+- `maestro --udid emulator-5554 test .maestro/m4-forms.yaml`: **97/97
+  commands COMPLETED, JUnit `failures=0`, status SUCCESS, ~261s, first
+  attempt** (no rerun needed).
+- Observed on device: empty first-run; create with an inline new location
+  and a new inline category; create persistence across `stopApp`/
+  `launchApp`; edit of name and quantity; edit persistence across
+  restart; dirty-discard Cancel path; dirty-discard Discard path; delete
+  Cancel path; delete confirmation naming the item; delete confirmation
+  returning the empty state; delete persistence across restart.
+- Database safety: only `m1-fixture-crud-m4.db` was used; `tengo.db` was
+  never created, opened, or modified, and the query fixture files kept
+  their sizes and timestamps.
+
+Several earlier attempts failed before this result and are recorded here
+so they are not repeated: an unregistered `clearText` command, a wait on
+the transient `running` status, a keyboard covering a tap target after an
+`inputText`, and a cursor-dependent clear of the numeric quantity field.
+The first three are now prevented by `npm run verify:flows`; the fourth is
+why the quantity edit uses the stepper. Not yet proven natively: typing a
+new value into a non-empty numeric quantity field, and any locale other
+than the one the device was set to.
 
 ## Maestro boundary
 
@@ -195,10 +252,10 @@ Run the isolated Android list flow with the guarded query bundle:
 maestro --udid emulator-5554 test .maestro/m3-query.yaml
 ```
 
-Forms, discard/delete dialogs and restart E2E were pending until the
-M4 form flow above was authored; that flow is still not yet run, so
-until a separate verifier runs it on a device/emulator build those
-areas remain unproven. Maestro runs
+Forms, discard/delete dialogs and restart E2E are covered by the M4 form
+flow above, whose passing Android result is recorded in that section.
+Maestro runs
 against the installed debug build; responsive Android checks
-(orientation, large font, keyboard, contrast, light/dark) need a
-device pass with actual metrics, still pending.
+(orientation, large font, keyboard, contrast, light/dark) and the
+performance budgets still need a device pass with actual metrics, and
+remain pending.

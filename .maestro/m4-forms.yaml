@@ -11,23 +11,22 @@
 # once the fixture reports `ready`, never mid-open) so every run begins
 # from the empty isolated database. The reset closes the isolated handle,
 # then deletes, then reopens only the allowlisted fixture file. After the
-tap, the flow
-# waits for `crud-fixture-status` to go through `running` and reach
-# terminal `ready` BEFORE asserting the empty state: `inventory-empty-title`
-# may already be visible from a previous empty run, so waiting on it alone
-# could pass before the delete/reopen completes and row 1 would not be the
-# created row. A missed `running` window fails closed here (timeout)
-# instead of silently proceeding. Because the database is empty at that
+# tap, the flow waits on the first-run call to action
+# (`inventory-add-empty`) before asserting the empty state; the step-0
+# comment below owns the rationale. Because the database is empty at that
 # point, the first created item takes id 1, which makes the
 # `inventory-row-1` selectors below safe instead of accidental.
 # Selectors use stable testIDs verified against the source (see the report);
 # count regexes accept the existing en/es copy, and quantity assertions
 # anchor the full `Quantity|Cantidad <n>` label so `5` never matches `15`.
-# `clearText` replaces field contents before edit inputs so the new value
-# never appends to the old.
-# This flow is authored here, not yet run: it is not native proof until a
-# separate verifier runs it on a device/emulator build; Maestro is never
-# executed in CI here.
+# `eraseText: 40` replaces the name field contents before edit inputs (40
+# backspaces clears that short text safely) so the new value never appends.
+# It is deliberately NOT used on the numeric quantity field: tapping a short
+# centred number places the caret inside it, so backspace clears nothing and
+# the new digit lands before the old one. The quantity edit uses the stepper.
+# This flow PASSED on the Android emulator (97/97 commands, 0 failures); the
+# recorded result and its exact scope live in docs/testing.md, and each run
+# must still be observed there rather than inferred from this comment.
 appId: com.tengo.app
 ---
 - launchApp
@@ -43,21 +42,20 @@ appId: com.tengo.app
     id: 'crud-fixture-status'
 # 0. Reset-first deterministic start: every run begins from the empty
 # isolated database, so `inventory-row-1` below is the created row.
+#
+# The transient `running` status is deliberately NOT awaited. `tapOn`
+# waits for the app to settle (measured ~3.7s here), which outlasts the
+# reset, so `running` is already gone when the next command samples the
+# screen and a `running` assertion fails on a perfectly good reset.
+# The stable end state is used instead: the first-run empty call to
+# action is only rendered when the read model returns zero items, and a
+# stale empty read can only coexist with an empty database — in both
+# cases the first row created by the flow is still row 1.
 - tapOn:
     id: 'crud-fixture-reset'
 - extendedWaitUntil:
     visible:
-      id: 'crud-fixture-status'
-      text: 'running'
-    timeout: 15000
-- extendedWaitUntil:
-    visible:
-      id: 'crud-fixture-status'
-      text: 'ready'
-    timeout: 30000
-- extendedWaitUntil:
-    visible:
-      id: 'inventory-empty-title'
+      id: 'inventory-add-empty'
     timeout: 30000
 - assertVisible:
     id: 'inventory-empty-title'
@@ -75,6 +73,7 @@ appId: com.tengo.app
 - tapOn:
     id: 'item-form/name'
 - inputText: 'Maestro Tomato'
+- hideKeyboard
 - tapOn:
     id: 'item-form/quantity'
 - inputText: '3'
@@ -88,9 +87,9 @@ appId: com.tengo.app
 - tapOn:
     id: 'item-form/new-category/name'
 - inputText: 'Maestro Greens'
+- hideKeyboard
 - tapOn:
     id: 'item-form/new-category/add'
-- hideKeyboard
 - tapOn:
     id: 'item-form/save'
 - extendedWaitUntil:
@@ -129,13 +128,19 @@ appId: com.tengo.app
     id: 'item-form-screen'
 - tapOn:
     id: 'item-form/name'
-- clearText
+- eraseText: 40
 - inputText: 'Maestro Tomato Edited'
-- tapOn:
-    id: 'item-form/quantity'
-- clearText
-- inputText: '5'
 - hideKeyboard
+# Quantity is edited with the stepper, never by clearing the numeric field.
+# Tapping a short centered number places the caret inside it, so a
+# backspace-based clear is cursor-dependent: it erased nothing and the new
+# digit landed before the old one (observed `53` where `5` was expected).
+# Typing a quantity into an EMPTY field is already covered by the create
+# step above, so this edit proves the stepper path instead.
+- tapOn:
+    id: 'item-form/increment'
+- tapOn:
+    id: 'item-form/increment'
 - tapOn:
     id: 'item-form/save'
 - extendedWaitUntil:
@@ -174,7 +179,7 @@ appId: com.tengo.app
     id: 'item-form-screen'
 - tapOn:
     id: 'item-form/name'
-- clearText
+- eraseText: 40
 - inputText: 'Unsaved Change'
 - hideKeyboard
 - tapOn:

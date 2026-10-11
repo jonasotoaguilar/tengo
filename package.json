@@ -15,7 +15,8 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "check": "npm run typecheck && npm run lint && npm run format:check",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm run verify:flows",
+    "verify:flows": "node scripts/verify-maestro-flows.mjs",
     "compat": "expo install --check",
     "export:smoke": "expo export --platform android --output-dir dist/ci-export",
     "prepare": "lefthook install"

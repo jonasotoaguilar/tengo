@@ -2,8 +2,9 @@
 
 Planning document, not a status report. The MVP product UI is
 approved but not built: M1 schema/domain and M2 repositories plus
-their Android native gates are done, while M3 App integration, M4
-forms, and M5 hardening stay pending. "Current" below means read against the working tree (read-only
+their Android native gates are done, and M3 list/search plus M4 add/
+edit/delete are wired and verified on Android, while M5 hardening
+stays pending. "Current" below means read against the working tree (read-only
 review; no tests, builds, or installs were run for this document). Companion docs: [PRODUCT.md](PRODUCT.md) (confirmed
 product record) and [DESIGN.md](DESIGN.md) (proposed UX, not implemented).
 
@@ -16,7 +17,7 @@ product record) and [DESIGN.md](DESIGN.md) (proposed UX, not implemented).
 | i18n | Implemented: `en`/`es`, device-locale detection, English fallback, type-locked keys | `src/i18n/index.ts`, `src/i18n/resources.ts` |
 | Unit tests | Implemented scaffolding: native boundary mocked, never touches a real DB | `jest.setup.ts`, `__tests__/`, `jest.config.js` |
 | Native smoke | Minimal: one launch reaches readiness; no restart-persistence or locale proof | `.maestro/smoke.yaml`, [Maestro boundary](docs/testing.md#maestro-boundary) |
-| Inventory CRUD | Repository APIs implemented and Android-verified; no screens yet: the controlled `InventoryList` and bounded `queryItems` exist but are not wired into `App.tsx` (M3/M4 pending) | `src/inventory/`, `src/components/InventoryList.tsx`, [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
+| Inventory CRUD | Implemented and Android-verified end to end: repository APIs, the controlled `InventoryList`, the controlled `ItemForm` with its route-epoch controller, the container route/modal wiring behind an explicit `enableMutations` opt-in, and a passing Android form flow over an isolated fixture database | `src/inventory/`, `src/components/`, `src/screens/`, [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | Native gates | Done: M1 migration 5/5 and M2 persistence phases 5/5, 3/3, 8/8 on Android | [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | Releases | Source-only GitHub releases; no signing, EAS, or store upload | [quality commands](docs/development.md#quality-commands) |
 | Review/tooling | Prior native review held per user instruction; work-unit commits pending authorization | `odd/tasks/mobile-foundation.md` |
@@ -149,9 +150,10 @@ parameterized SQL, no ORM), Jest suites against the fake DB boundary.
 
 ### M3 — Inventory list, search, and empty states (depends on M2)
 
-Status: in progress — bounded `queryItems` and the controlled
-`InventoryList` are host-verified only; App integration, native UI
-proof (FAB, real SQLite query), and device metrics stay pending.
+Status: in progress — bounded `queryItems`, the controlled
+`InventoryList` and App integration are wired, and the Android query flow
+passed on the isolated fixture database (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
+device metrics stay pending.
 Proposed surfaces: list screen, search field, empty/first-run states,
 loading/error states. Design contract: [DESIGN.md](DESIGN.md)
 sections 3–4 (list, search, states, tokens).
@@ -174,6 +176,11 @@ sections 3–4 (list, search, states, tokens).
 
 ### M4 — Add, edit, location input, delete (depends on M2, UX from M3)
 
+Status: done — the controlled form, its controller and the container wiring
+are implemented, and the Android form flow passed over an isolated fixture
+database (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
+Still pending from this area: native proof for typing into a non-empty
+numeric quantity field, and the responsive/a11y checks that belong to M5.
 Proposed surfaces: add/edit form screen (or bottom sheet per Android convention),
 location input, delete confirmation, validation messages. Design
 contract: [DESIGN.md](DESIGN.md) sections 3–5.
@@ -203,8 +210,8 @@ labels, performance pass, extended Maestro flows.
 - Performance: list stays smooth with a few hundred items on a
   low-end device; search responds per keystroke without blocking.
 - Native test matrix: unit Jest (mocked boundary) plus on-device
-  checks per section 6; Maestro flows extended to add/search/edit/
-  delete on a debug build.
+  checks per section 6; Maestro flows extended beyond the passing M3/M4
+  flows on a debug build.
 - Acceptance: criteria in sections 6–7 all observed; any failure is
   recorded, not waived.
 
@@ -248,22 +255,23 @@ them. Fixed runners (already in `package.json`): `npm test`,
 - Never interpolate user input into SQL; use bound parameters in
   every new query (M2 acceptance).
 
-## 6. Native test matrix (fixtures verified; UI/E2E pending)
+## 6. Native test matrix (M3 query and M4 form flows verified; device metrics, locale, a11y, responsive layout, performance budgets pending)
 
 | Layer | What | Where |
 | ----- | ---- | ----- |
 | Unit | Migration, validation, repository logic on fakes | `__tests__/` via `npm run test:ci` |
 | Type/lint/format | `tsc --noEmit`, Biome check and format | `npm run check` |
 | Compat/export | `expo install --check`, unsigned Android export smoke | `npm run compat`, `npm run export:smoke` |
-| Device smoke | Single-launch readiness (the only passing Maestro flow today) | Maestro on debug build (`com.tengo.app`); see [Maestro boundary](docs/testing.md#maestro-boundary) |
-| Add/search/edit/delete flows | Pending: not available as Maestro flows yet | Planned; no commands documented until the flows exist |
+| Device smoke | Single-launch readiness | Maestro on debug build (`com.tengo.app`); see [Maestro boundary](docs/testing.md#maestro-boundary) |
+| Add/search/edit/delete flows | Passed on Android: `.maestro/m4-forms.yaml` 97/97 commands, 0 failures, covering empty first-run, create with inline location/category, edit, dirty-discard, delete confirmation and force-stop/relaunch persistence for create, edit and delete | Isolated CRUD fixture; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | Native migration | Passed on Android: M1 fixture 5/5 | Isolated native check (not Jest); see [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | CRUD persistence | Passed on Android: phases 5/5, 3/3, 8/8 across force-stop + relaunch | Debug build (`com.tengo.app`); see [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | Manual device | Restart persistence, `es` device locale, dark mode, large text, keyboard/safe-area on one Android phone | Emulator or hardware; record which produced the evidence |
 
 Fixture/native rows above are verified (see section 1 and
 [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
-UI flows, device metrics, and extended Maestro E2E stay pending.
+device metrics, locale detection, accessibility, responsive layout, and
+performance budgets stay pending.
 Sections 3–5 record what is proposed.
 
 ## 7. Cross-cutting requirements (MVP must meet all)
@@ -351,8 +359,12 @@ enough to review in one pass.
   tested; create/edit/delete survive force-stop + relaunch on a
   debug build (passed on Android; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
 - [ ] M3: list/search/empty/loading/error states per DESIGN.md.
-- [ ] M4: add/edit/delete with validation and confirm; no silent
-  data loss.
+- [x] M4: add/edit/delete with validation and confirm; no silent
+  data loss. Verified on Android: inline entity creation,
+  dirty-discard Cancel/Discard and delete confirmation observed, and
+  create, edit and delete all survived force-stop + relaunch on an
+  isolated fixture database (no production data touched); see
+  [verified native evidence](docs/testing.md#verified-native-evidence-android-only).
 - [ ] M5: `en`/`es` audit, screen-reader pass, contrast floor and
   performance budgets observed on a device pass, extended Maestro
   flows observed on a debug build.

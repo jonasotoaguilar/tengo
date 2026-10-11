@@ -114,6 +114,7 @@ function FilterChip({ testID, selected, onPress, palette, label }: ChipProps) {
     <Pressable
       testID={testID}
       accessibilityRole="button"
+      accessibilityLabel={label}
       accessibilityState={{ selected }}
       onPress={onPress}
       style={[
@@ -328,6 +329,20 @@ export default function InventoryList({
     }
     const item = entry.item;
     const rowId = `inventory-row-${item.id}`;
+    // One composed label so a screen reader announces the whole row as a
+    // single unit; shared by the static and pressable rows. It mirrors what
+    // is rendered, including the exhausted state and the categories, so no
+    // visible information stays silent for a screen-reader user.
+    const categoryNames = item.categories.map((entry) => entry.name).join(', ');
+    const rowLabel = [
+      item.name,
+      `${t('inventoryQuantityLabel')} ${item.quantity}`,
+      item.quantity === 0 ? t('inventoryExhausted') : null,
+      item.location.name,
+      categoryNames === '' ? t('inventoryNoCategories') : categoryNames,
+    ]
+      .filter((part): part is string => part !== null)
+      .join(', ');
     const body = (
       <>
         <Text selectable style={[styles.itemName, { color: palette.text }]}>
@@ -371,6 +386,8 @@ export default function InventoryList({
       return (
         <View
           testID={rowId}
+          accessibilityRole="text"
+          accessibilityLabel={rowLabel}
           accessibilityHint={t('inventoryOpenUnavailableHint')}
           style={[styles.row, { borderColor: palette.border }]}
         >
@@ -383,7 +400,9 @@ export default function InventoryList({
       <Pressable
         testID={rowId}
         accessibilityRole="button"
+        accessibilityLabel={rowLabel}
         accessibilityHint={t('inventoryOpenItemHint')}
+        accessibilityState={{ disabled: false }}
         onPress={() => open(item.id)}
         style={[styles.row, { borderColor: palette.border }]}
       >
@@ -418,6 +437,7 @@ export default function InventoryList({
       ) : null}
       <TextInput
         testID="inventory-search"
+        accessibilityRole="search"
         accessibilityLabel={t('inventorySearchLabel')}
         placeholder={t('inventorySearchPlaceholder')}
         placeholderTextColor={palette.secondary}
@@ -662,7 +682,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    minHeight: 44,
+    minHeight: 48,
   },
   count: {
     flex: 1,
@@ -670,8 +690,8 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   headerAdd: {
-    minHeight: 44,
-    minWidth: 44,
+    minHeight: 48,
+    minWidth: 48,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
@@ -741,6 +761,7 @@ const styles = StyleSheet.create({
   },
   row: {
     borderTopWidth: 1,
+    minHeight: 48,
     paddingVertical: 12,
     gap: 2,
   },

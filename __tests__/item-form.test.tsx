@@ -614,3 +614,35 @@ describe('M4 blur callback (Gap B)', () => {
     expect(onFieldBlur).not.toHaveBeenCalled();
   });
 });
+
+describe('P5a selection-chip labels and symbol glyphs', () => {
+  test('location and category chips expose their visible name as the label', async () => {
+    const view = await renderForm(baseProps());
+    expect(
+      view.getByTestId('item-form/location-10').props.accessibilityLabel,
+    ).toBe('Pantry');
+    expect(
+      view.getByTestId('item-form/location-new').props.accessibilityLabel,
+    ).toBe('New location');
+    expect(
+      view.getByTestId('item-form/category-20').props.accessibilityLabel,
+    ).toBe('Bulk');
+  });
+
+  test('steppers and draft-remove render the fixed non-translatable symbols', async () => {
+    const view = await renderForm(
+      baseProps({
+        values: {
+          ...emptyValues,
+          quantityRaw: '2',
+          categories: [{ kind: 'new', category: { name: 'Grains' } }],
+        },
+      }),
+    );
+    expect(view.getByTestId('item-form/decrement')).toHaveTextContent('−');
+    expect(view.getByTestId('item-form/increment')).toHaveTextContent('+');
+    expect(
+      view.getByTestId('item-form/new-category/remove-0'),
+    ).toHaveTextContent('✕');
+  });
+});

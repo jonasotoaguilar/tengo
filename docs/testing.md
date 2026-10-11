@@ -104,6 +104,10 @@ the prior failed `m1-fixture-repository.db` stays on-device
 untouched for inspection. Never uninstall, reset, or clear
 production data for verification.
 
+The DEV fixture screens intentionally use untranslated English strings:
+they render only when `__DEV__` plus an `EXPO_PUBLIC_NATIVE_*` flag is set
+and can never ship in a release build.
+
 ## Query fixture protocol (P3b3, DEV-only)
 
 The query fixture embeds the real `InventoryContainer` with an injected

@@ -28,6 +28,7 @@ import type { Category, ItemDetail, Location } from '../inventory/types';
 import useItemFormController, {
   type ItemFormRoute,
 } from './useItemFormController';
+import useReducedMotion from './useReducedMotion';
 
 export interface ItemFormScreenProps {
   /** Already-open managed handle. Never opened, reopened, or closed here. */
@@ -95,6 +96,9 @@ export default function ItemFormScreen({
     onDeleted,
     onDismissed: onDismiss,
   });
+  // The form modal is the only animated surface in the app: it slides in
+  // by default and appears instantly when reduced motion is requested.
+  const reduceMotion = useReducedMotion();
 
   const formMessage = formMessageFor(controller.formErrorCode, t);
   const errors: ItemFormErrors =
@@ -106,7 +110,7 @@ export default function ItemFormScreen({
     <Modal
       testID="item-form-screen"
       visible
-      animationType="slide"
+      animationType={reduceMotion ? 'none' : 'slide'}
       onRequestClose={controller.onRequestClose}
     >
       <View style={[styles.container, { backgroundColor: palette.background }]}>
@@ -122,6 +126,7 @@ export default function ItemFormScreen({
               testID="item-form-screen/retry"
               accessibilityRole="button"
               accessibilityLabel={t('inventoryRetry')}
+              accessibilityState={{ disabled: false }}
               onPress={controller.onRetry}
               style={[styles.button, { backgroundColor: palette.accent }]}
             >
@@ -133,6 +138,7 @@ export default function ItemFormScreen({
               testID="item-form-screen/load-close"
               accessibilityRole="button"
               accessibilityLabel={t('itemFormClose')}
+              accessibilityState={{ disabled: false }}
               onPress={controller.onRequestClose}
               style={styles.textButton}
             >
@@ -158,6 +164,7 @@ export default function ItemFormScreen({
               testID="item-form/loading-close"
               accessibilityRole="button"
               accessibilityLabel={t('itemFormClose')}
+              accessibilityState={{ disabled: false }}
               onPress={controller.onRequestClose}
               style={styles.textButton}
             >
@@ -189,6 +196,8 @@ export default function ItemFormScreen({
         {controller.confirmDiscard ? (
           <View
             testID="item-form-screen/discard-dialog"
+            accessibilityRole="alert"
+            accessibilityLabel={t('itemFormDiscardTitle')}
             accessibilityViewIsModal
             style={[styles.overlay, { backgroundColor: palette.overlay }]}
           >
@@ -211,6 +220,7 @@ export default function ItemFormScreen({
                 testID="item-form-screen/discard-cancel"
                 accessibilityRole="button"
                 accessibilityLabel={t('itemFormDiscardCancel')}
+                accessibilityState={{ disabled: false }}
                 onPress={controller.onCancelDiscard}
                 style={styles.textButton}
               >
@@ -224,10 +234,12 @@ export default function ItemFormScreen({
                 testID="item-form-screen/discard-confirm"
                 accessibilityRole="button"
                 accessibilityLabel={t('itemFormDiscardConfirm')}
+                accessibilityHint={t('itemFormDiscardMessage')}
+                accessibilityState={{ disabled: false }}
                 onPress={controller.onConfirmDiscard}
                 style={[styles.button, { backgroundColor: palette.error }]}
               >
-                <Text style={[styles.buttonText, { color: '#FFFFFF' }]}>
+                <Text style={[styles.buttonText, { color: palette.accentOn }]}>
                   {t('itemFormDiscardConfirm')}
                 </Text>
               </Pressable>
@@ -238,6 +250,10 @@ export default function ItemFormScreen({
         {controller.confirmDelete ? (
           <View
             testID="item-form-screen/delete-dialog"
+            accessibilityRole="alert"
+            accessibilityLabel={t('itemFormDeleteTitle', {
+              name: controller.detail?.name ?? controller.values.name,
+            })}
             accessibilityViewIsModal
             style={[styles.overlay, { backgroundColor: palette.overlay }]}
           >
@@ -262,6 +278,7 @@ export default function ItemFormScreen({
                 testID="item-form-screen/delete-cancel"
                 accessibilityRole="button"
                 accessibilityLabel={t('itemFormDeleteCancel')}
+                accessibilityState={{ disabled: false }}
                 onPress={controller.onCancelDelete}
                 style={styles.textButton}
               >
@@ -275,12 +292,17 @@ export default function ItemFormScreen({
                 testID="item-form-screen/delete-confirm"
                 accessibilityRole="button"
                 accessibilityLabel={t('itemFormDeleteConfirm')}
+                accessibilityHint={t('itemFormDeleteMessage')}
+                accessibilityState={{
+                  disabled: controller.submitting,
+                  busy: controller.submitting,
+                }}
                 onPress={() => {
                   void controller.onConfirmDelete();
                 }}
                 style={[styles.button, { backgroundColor: palette.error }]}
               >
-                <Text style={[styles.buttonText, { color: '#FFFFFF' }]}>
+                <Text style={[styles.buttonText, { color: palette.accentOn }]}>
                   {t('itemFormDeleteConfirm')}
                 </Text>
               </Pressable>

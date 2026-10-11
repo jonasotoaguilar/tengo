@@ -15,7 +15,7 @@ import {
   within,
 } from '@testing-library/react-native';
 import { I18nextProvider } from 'react-i18next';
-import type { ViewProps } from 'react-native';
+import type { ViewProps, ViewStyle } from 'react-native';
 import { Platform, StyleSheet } from 'react-native';
 
 import type InventoryListType from '../src/components/InventoryList';
@@ -515,4 +515,139 @@ test('Spanish renders grouped counts and location zero-match copy', async () => 
     await emptyView.unmount();
     await i18n.changeLanguage('en');
   }
+});
+
+describe('P5a accessibility labels and touch-target floors', () => {
+  test('filter chips expose their visible label as the accessibility label', async () => {
+    const view = await renderList(
+      baseProps({ items: [makeItem({ id: 1 })], totalCount: 1 }),
+    );
+    expect(
+      view.getByTestId('inventory-location-all').props.accessibilityLabel,
+    ).toBe('All');
+    expect(
+      view.getByTestId('inventory-location-11').props.accessibilityLabel,
+    ).toBe('Fridge');
+    expect(
+      view.getByTestId('inventory-category-20').props.accessibilityLabel,
+    ).toBe('Bulk');
+  });
+
+  test('pressable rows read name, quantity and location as one labelled unit', async () => {
+    const view = await renderList(
+      baseProps({
+        items: [makeItem({ id: 5, name: 'Rice', quantity: 3 })],
+        totalCount: 1,
+        onOpenItem: jest.fn(),
+      }),
+    );
+    const row = view.getByTestId('inventory-row-5');
+    expect(row.props.accessibilityRole).toBe('button');
+    const label = String(row.props.accessibilityLabel ?? '');
+    expect(label).toMatch(/Rice/);
+    expect(label).toMatch(/3/);
+    expect(label).toMatch(/Pantry/);
+    expect(row.props.accessibilityState).toMatchObject({ disabled: false });
+    expect(String(row.props.accessibilityHint ?? '')).toMatch(/open/i);
+  });
+
+  test('the composed row label also announces exhausted state and categories', async () => {
+    const exhausted = await renderList(
+      baseProps({
+        items: [
+          makeItem({
+            id: 6,
+            name: 'Beans',
+            quantity: 0,
+            categories: [
+              { id: 1, name: 'Bulk', created_at: 'c1' },
+              { id: 2, name: 'Cold', created_at: 'c2' },
+            ],
+          }),
+        ],
+        totalCount: 1,
+        onOpenItem: jest.fn(),
+      }),
+    );
+    const exhaustedLabel = String(
+      exhausted.getByTestId('inventory-row-6').props.accessibilityLabel ?? '',
+    );
+    // Everything rendered on the row must be audible: quantity zero reads as
+    // the exhausted wording, and the category names are announced.
+    expect(exhaustedLabel).toMatch(/exhausted/i);
+    expect(exhaustedLabel).toMatch(/Bulk/);
+    expect(exhaustedLabel).toMatch(/Cold/);
+
+    const uncategorised = await renderList(
+      baseProps({
+        items: [makeItem({ id: 7, name: 'Salt', quantity: 2, categories: [] })],
+        totalCount: 1,
+        onOpenItem: jest.fn(),
+      }),
+    );
+    const plainLabel = String(
+      uncategorised.getByTestId('inventory-row-7').props.accessibilityLabel ??
+        '',
+    );
+    expect(plainLabel).toMatch(/no categories/i);
+    expect(plainLabel).not.toMatch(/exhausted/i);
+  });
+
+  test('static rows share the same composed label without becoming buttons', async () => {
+    const items = [makeItem({ id: 5, name: 'Rice', quantity: 3 })];
+    const pressable = await renderList(
+      baseProps({ items, totalCount: 1, onOpenItem: jest.fn() }),
+    );
+    const pressableLabel = String(
+      pressable.getByTestId('inventory-row-5').props.accessibilityLabel ?? '',
+    );
+    await pressable.unmount();
+    const view = await renderList(baseProps({ items, totalCount: 1 }));
+    const row = view.getByTestId('inventory-row-5');
+    expect(row.props.accessibilityRole).not.toBe('button');
+    expect(String(row.props.accessibilityLabel ?? '')).toBe(pressableLabel);
+    expect(String(row.props.accessibilityHint ?? '')).toMatch(/not available/i);
+  });
+
+  test('search input carries the search role with its label intact', async () => {
+    const view = await renderList(
+      baseProps({ items: [makeItem({ id: 1 })], totalCount: 1 }),
+    );
+    const search = view.getByTestId('inventory-search');
+    expect(search.props.accessibilityRole).toBe('search');
+    expect(search.props.accessibilityLabel).toBe('Search inventory');
+  });
+
+  test('interactive controls meet the 48dp Android touch floor', async () => {
+    const view = await renderList(
+      baseProps({
+        items: [makeItem({ id: 1 })],
+        totalCount: 1,
+        onAdd: jest.fn(),
+        onOpenItem: jest.fn(),
+      }),
+    );
+    const titleRow = view.getByTestId('inventory-count').parent as unknown as {
+      props: { style?: ViewStyle };
+    } | null;
+    expect(
+      StyleSheet.flatten(titleRow?.props.style)?.minHeight,
+    ).toBeGreaterThanOrEqual(48);
+    const rowStyle = StyleSheet.flatten(
+      view.getByTestId('inventory-row-1').props.style,
+    );
+    expect(rowStyle?.minHeight).toBeGreaterThanOrEqual(48);
+    if (Platform.OS === 'ios') {
+      const headerAdd = StyleSheet.flatten(
+        view.getByTestId('inventory-add-header').props.style,
+      );
+      expect(headerAdd?.minHeight).toBeGreaterThanOrEqual(48);
+      expect(headerAdd?.minWidth).toBeGreaterThanOrEqual(48);
+    } else {
+      const fab = StyleSheet.flatten(
+        view.getByTestId('inventory-add-fab').props.style,
+      );
+      expect(fab?.minHeight).toBeGreaterThanOrEqual(48);
+    }
+  });
 });

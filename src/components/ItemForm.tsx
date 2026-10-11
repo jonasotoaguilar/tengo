@@ -112,6 +112,16 @@ const ERROR_ORDER: ItemFormField[] = [
   'form',
 ];
 
+/**
+ * Non-translatable symbols: the steppers and the draft-remove affordance
+ * render these fixed glyphs inline. Their accessible names come from i18n
+ * (`itemFormDecrement`, `itemFormIncrement`, `itemFormRemoveCategory`),
+ * so never add the glyphs themselves to the translation resources.
+ */
+const DECREMENT_GLYPH = '−';
+const INCREMENT_GLYPH = '+';
+const REMOVE_GLYPH = '✕';
+
 /** First field to focus when the parent reports validation errors. */
 export function firstErrorField(errors?: ItemFormErrors): ItemFormField | null {
   if (!errors) return null;
@@ -514,7 +524,7 @@ export default function ItemForm({
                 },
               ]}
             >
-              −
+              {DECREMENT_GLYPH}
             </Text>
           </Pressable>
           <TextInput
@@ -565,7 +575,7 @@ export default function ItemForm({
                 },
               ]}
             >
-              +
+              {INCREMENT_GLYPH}
             </Text>
           </Pressable>
         </View>
@@ -598,6 +608,7 @@ export default function ItemForm({
                 key={location.id}
                 testID={`item-form/location-${location.id}`}
                 accessibilityRole="button"
+                accessibilityLabel={location.name}
                 accessibilityState={{ selected, disabled: pending }}
                 disabled={pending}
                 onPress={() => selectExistingLocation(location.id)}
@@ -622,6 +633,7 @@ export default function ItemForm({
           <Pressable
             testID="item-form/location-new"
             accessibilityRole="button"
+            accessibilityLabel={t('itemFormLocationNew')}
             accessibilityState={{
               selected: values.location?.kind === 'new',
               disabled: pending,
@@ -715,6 +727,7 @@ export default function ItemForm({
                 key={category.id}
                 testID={`item-form/category-${category.id}`}
                 accessibilityRole="button"
+                accessibilityLabel={category.name}
                 accessibilityState={{ selected, disabled: pending }}
                 disabled={pending}
                 onPress={() => toggleExistingCategory(category.id)}
@@ -764,7 +777,7 @@ export default function ItemForm({
                   <Text
                     style={[styles.draftRemoveText, { color: palette.accent }]}
                   >
-                    ✕
+                    {REMOVE_GLYPH}
                   </Text>
                 </Pressable>
               </View>

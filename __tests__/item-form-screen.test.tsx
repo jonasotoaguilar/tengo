@@ -42,6 +42,14 @@ jest.mock('../src/inventory/itemRepository', () => ({
   deleteItem: jest.fn(),
 }));
 
+jest.mock('../src/screens/useReducedMotion', () => ({
+  __esModule: true,
+  default: jest.fn(() => false),
+}));
+
+const mockReducedMotion = require('../src/screens/useReducedMotion')
+  .default as jest.Mock;
+
 jest.mock('react-native-safe-area-context', () => {
   const React = require('react');
   const { View } = require('react-native');
@@ -112,6 +120,7 @@ async function fillValidCreateForm(): Promise<void> {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockReducedMotion.mockReturnValue(false);
   defaultMocks();
 });
 
@@ -329,4 +338,112 @@ test('M4-LOAD: create route never shows the loading surface', async () => {
   await renderScreen({ route: { kind: 'create' } });
   expect(await screen.findByTestId('item-form/name')).toBeTruthy();
   expect(screen.queryByTestId('item-form/loading')).toBeNull();
+});
+
+describe('P5a action states, confirmation hints, dialog roles, reduced motion', () => {
+  test('load-error retry and close expose an enabled state', async () => {
+    repository.getItem.mockRejectedValueOnce(new Error('gone'));
+    await renderScreen({ route: { kind: 'edit', itemId: 1 } });
+    expect(await screen.findByTestId('item-form-screen/retry')).toBeTruthy();
+    expect(
+      screen.getByTestId('item-form-screen/retry').props.accessibilityState,
+    ).toMatchObject({ disabled: false });
+    expect(
+      screen.getByTestId('item-form-screen/load-close').props
+        .accessibilityState,
+    ).toMatchObject({ disabled: false });
+  });
+
+  test('loading close exposes an enabled state while the load is in flight', async () => {
+    repository.getItem.mockImplementationOnce(
+      () => new Promise<ItemDetail>(() => {}),
+    );
+    await renderScreen({ route: { kind: 'edit', itemId: 1 } });
+    expect(await screen.findByTestId('item-form/loading')).toBeTruthy();
+    expect(
+      screen.getByTestId('item-form/loading-close').props.accessibilityState,
+    ).toMatchObject({ disabled: false });
+  });
+
+  test('discard dialog carries an alert role with a name; confirm has state and hint', async () => {
+    await renderScreen({ route: { kind: 'create' } });
+    await screen.findByTestId('item-form/name');
+    await fireEvent.changeText(screen.getByTestId('item-form/name'), 'Quinoa');
+    await fireEvent.press(screen.getByTestId('item-form/close'));
+    const dialog = await screen.findByTestId('item-form-screen/discard-dialog');
+    expect(dialog.props.accessibilityRole).toBe('alert');
+    expect(String(dialog.props.accessibilityLabel ?? '')).toMatch(/discard/i);
+    expect(
+      screen.getByTestId('item-form-screen/discard-cancel').props
+        .accessibilityState,
+    ).toMatchObject({ disabled: false });
+    const confirm = screen.getByTestId('item-form-screen/discard-confirm');
+    expect(confirm.props.accessibilityState).toMatchObject({
+      disabled: false,
+    });
+    expect(String(confirm.props.accessibilityHint ?? '')).toMatch(
+      /unsaved|lost/i,
+    );
+  });
+
+  test('delete dialog carries an alert role with a name; confirm has state and hint', async () => {
+    await renderScreen({ route: { kind: 'edit', itemId: 1 } });
+    await screen.findByTestId('item-form/delete');
+    await fireEvent.press(screen.getByTestId('item-form/delete'));
+    const dialog = await screen.findByTestId('item-form-screen/delete-dialog');
+    expect(dialog.props.accessibilityRole).toBe('alert');
+    expect(String(dialog.props.accessibilityLabel ?? '')).toMatch(/Rice/);
+    expect(
+      screen.getByTestId('item-form-screen/delete-cancel').props
+        .accessibilityState,
+    ).toMatchObject({ disabled: false });
+    const confirm = screen.getByTestId('item-form-screen/delete-confirm');
+    expect(confirm.props.accessibilityState).toMatchObject({
+      disabled: false,
+      busy: false,
+    });
+    expect(String(confirm.props.accessibilityHint ?? '')).toMatch(/undone/i);
+  });
+
+  test('delete confirm reports busy while the delete is in flight', async () => {
+    let resolveDelete!: () => void;
+    repository.deleteItem.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDelete = resolve;
+        }),
+    );
+    await renderScreen({ route: { kind: 'edit', itemId: 1 } });
+    await screen.findByTestId('item-form/delete');
+    await fireEvent.press(screen.getByTestId('item-form/delete'));
+    await screen.findByTestId('item-form-screen/delete-dialog');
+    await fireEvent.press(
+      screen.getByTestId('item-form-screen/delete-confirm'),
+    );
+    expect(
+      screen.getByTestId('item-form-screen/delete-confirm').props
+        .accessibilityState,
+    ).toMatchObject({ disabled: true, busy: true });
+    await act(async () => {
+      resolveDelete();
+    });
+  });
+
+  test('form modal keeps the slide animation without a reduced-motion request', async () => {
+    mockReducedMotion.mockReturnValue(false);
+    await renderScreen({ route: { kind: 'create' } });
+    await screen.findByTestId('item-form/name');
+    expect(screen.getByTestId('item-form-screen').props.animationType).toBe(
+      'slide',
+    );
+  });
+
+  test('form modal appears instantly when reduced motion is requested', async () => {
+    mockReducedMotion.mockReturnValue(true);
+    await renderScreen({ route: { kind: 'create' } });
+    await screen.findByTestId('item-form/name');
+    expect(screen.getByTestId('item-form-screen').props.animationType).toBe(
+      'none',
+    );
+  });
 });

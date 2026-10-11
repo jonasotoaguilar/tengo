@@ -31,6 +31,12 @@
  */
 import { initializeDatabase as realInitializeDatabase } from '../db';
 import { openManagedDatabase } from '../db/exclusive';
+import {
+  createCategory as realCreateCategory,
+  createItem as realCreateItem,
+  createLocation as realCreateLocation,
+  queryItems as realQueryItems,
+} from '../inventory';
 import type { RepositoryDb } from '../inventory/database';
 
 /**
@@ -222,4 +228,231 @@ export async function resetNativeCrudFixture(
     );
   }
   await deps.deleteDatabaseAsync(database);
+}
+
+/**
+ * P5b measurement battery (DEV-only, on demand from the fixture screen).
+ *
+ * Runs against the already-open isolated fixture handle and reports real
+ * wall-clock numbers with PASS/FAIL against the ROADMAP section 7 budgets.
+ * Never runs automatically; never opens a database itself. The allowlist is
+ * enforced BEFORE any driver or repository call, so a refused name throws
+ * with zero calls — production `tengo.db` is unreachable here.
+ *
+ * Documented pass order: prefix-scoped cleanup of prior measurement rows,
+ * then the timed seed (setup diagnostic, no budget), then the timed
+ * first-viewport read, the timed filtered search read, and finally the
+ * timed single-row probe write. A missed budget records its check as
+ * failing with the measured value and the pass still runs the remaining
+ * checks; only an unexpected driver/repository error aborts the pass.
+ *
+ * Seeding semantics (idempotent reseed): every measurement row carries the
+ * stable `Perf p5b ` name prefix and dedicated locations and categories, so
+ * the pass deletes exactly its own prior rows (items first for the location
+ * RESTRICT FK, then locations, then categories) before seeding. The 500
+ * inserts run sequentially through the real repository, one atomic exclusive
+ * transaction per insert. The seed is deliberately NOT wrapped in the
+ * handle's batch transaction (`withTransactionAsync`): the repository's
+ * exclusive transaction runs on its own native connection on the same file,
+ * so nesting it inside a driver batch transaction fails on device (observed:
+ * `Could not create item: storage unavailable.`). Setup time is unbudgeted,
+ * so a per-insert transaction costs nothing the battery reports. A failed
+ * pass may leave partial `Perf p5b ` rows, but the next pass removes exactly
+ * those rows before reseeding — repeated passes never duplicate measurement
+ * rows and never touch non-measurement (M4 flow) data.
+ *
+ * The search figure is the DATA-LAYER cost of one keystroke (the filtered
+ * `queryItems` call); the UI-per-keystroke figure adds render on top and
+ * is not separately instrumented.
+ */
+
+/** Rows seeded per measurement pass (setup, not budgeted). */
+export const CRUD_MEASURE_SEED_COUNT = 500;
+
+/** Stable name prefix for every measurement row; cleanup matches only this. */
+export const CRUD_MEASURE_NAME_PREFIX = 'Perf p5b ';
+
+/** ROADMAP budget: first-viewport data readiness, under 1000 ms. */
+export const CRUD_MEASURE_FIRST_VIEWPORT_BUDGET_MS = 1000;
+/** ROADMAP budget: search data-layer cost per keystroke, under 200 ms. */
+export const CRUD_MEASURE_SEARCH_BUDGET_MS = 200;
+/** ROADMAP budget: single-row write end to end, under 100 ms. */
+export const CRUD_MEASURE_WRITE_BUDGET_MS = 100;
+
+/** Name query matching a realistic subset (~111 of the 500 seeded rows). */
+export const CRUD_MEASURE_SEARCH_QUERY = 'Perf p5b item 1';
+
+/** Stable check labels (screen, `adb` logcat, and docs share these). */
+export const CRUD_MEASURE_LABEL_SEED =
+  'seed 500 items (diagnostic setup, no budget)';
+export const CRUD_MEASURE_LABEL_FIRST_VIEWPORT =
+  'first-viewport data readiness (budget 1000ms)';
+export const CRUD_MEASURE_LABEL_SEARCH =
+  'search per keystroke, data layer only (budget 200ms)';
+export const CRUD_MEASURE_LABEL_WRITE = 'single-row write (budget 100ms)';
+
+export interface CrudMeasureDeps {
+  createLocation: typeof realCreateLocation;
+  createCategory: typeof realCreateCategory;
+  createItem: typeof realCreateItem;
+  queryItems: typeof realQueryItems;
+  now: () => number;
+}
+
+export interface CrudMeasureCheck {
+  name: string;
+  pass: boolean;
+  detail: string;
+}
+
+export interface CrudMeasureResult {
+  database: string;
+  status: 'pass' | 'fail';
+  checks: CrudMeasureCheck[];
+}
+
+function defaultCrudMeasureDeps(): CrudMeasureDeps {
+  return {
+    createLocation: realCreateLocation,
+    createCategory: realCreateCategory,
+    createItem: realCreateItem,
+    queryItems: realQueryItems,
+    now: () => performance.now(),
+  };
+}
+
+function formatMs(value: number): string {
+  return `${value.toFixed(1)}ms`;
+}
+
+function budgetDetail(measuredMs: number, budgetMs: number): string {
+  const verdict = measuredMs < budgetMs ? 'PASS' : 'FAIL';
+  return `${formatMs(measuredMs)} vs budget ${budgetMs}ms: ${verdict}`;
+}
+
+/**
+ * Run one measurement pass against the open isolated fixture handle.
+ * Never throws except for a refused database name (allowlist first); every
+ * other failure — including missed budgets — is reported in `checks`.
+ */
+export async function runCrudMeasurePass(
+  db: CrudFixtureDb,
+  database: string = CRUD_FIXTURE_DB,
+  injectedDeps?: CrudMeasureDeps,
+): Promise<CrudMeasureResult> {
+  assertSafeCrudFixtureName(database);
+  const deps = injectedDeps ?? defaultCrudMeasureDeps();
+  const checks: CrudMeasureCheck[] = [];
+  const timed = async <T>(
+    task: () => Promise<T>,
+  ): Promise<{ value: T; measuredMs: number }> => {
+    const start = deps.now();
+    const value = await task();
+    return { value, measuredMs: deps.now() - start };
+  };
+  try {
+    // Cleanup-first reseed: remove exactly this battery's prior rows.
+    // Items go first (location RESTRICT), then locations, then categories.
+    const like = `${CRUD_MEASURE_NAME_PREFIX}%`;
+    await db.runAsync('DELETE FROM items WHERE name LIKE ?', [like]);
+    await db.runAsync('DELETE FROM locations WHERE name LIKE ?', [like]);
+    await db.runAsync('DELETE FROM categories WHERE name LIKE ?', [like]);
+
+    const seedTask = async (): Promise<void> => {
+      const locations = [
+        await deps.createLocation(db, {
+          name: `${CRUD_MEASURE_NAME_PREFIX}location 0`,
+        }),
+        await deps.createLocation(db, {
+          name: `${CRUD_MEASURE_NAME_PREFIX}location 1`,
+        }),
+        await deps.createLocation(db, {
+          name: `${CRUD_MEASURE_NAME_PREFIX}location 2`,
+        }),
+        await deps.createLocation(db, {
+          name: `${CRUD_MEASURE_NAME_PREFIX}location 3`,
+        }),
+        await deps.createLocation(db, {
+          name: `${CRUD_MEASURE_NAME_PREFIX}location 4`,
+        }),
+      ];
+      const categories = [
+        await deps.createCategory(db, {
+          name: `${CRUD_MEASURE_NAME_PREFIX}category 0`,
+        }),
+        await deps.createCategory(db, {
+          name: `${CRUD_MEASURE_NAME_PREFIX}category 1`,
+        }),
+        await deps.createCategory(db, {
+          name: `${CRUD_MEASURE_NAME_PREFIX}category 2`,
+        }),
+      ];
+      for (let index = 0; index < CRUD_MEASURE_SEED_COUNT; index += 1) {
+        const padded = String(index).padStart(3, '0');
+        await deps.createItem(db, {
+          name: `${CRUD_MEASURE_NAME_PREFIX}item ${padded}`,
+          quantity: index % 7,
+          locationId: locations[index % locations.length].id,
+          categoryIds: [categories[index % categories.length].id],
+        });
+      }
+    };
+    // One exclusive transaction per insert; never nested inside a batch
+    // transaction on the same handle (device-observed failure).
+    const seed = await timed(seedTask);
+    checks.push({
+      name: CRUD_MEASURE_LABEL_SEED,
+      pass: true,
+      detail: `${formatMs(seed.measuredMs)} setup: ${CRUD_MEASURE_SEED_COUNT} items with locations/categories, no budget asserted`,
+    });
+
+    const viewport = await timed(() => deps.queryItems(db, {}));
+    checks.push({
+      name: CRUD_MEASURE_LABEL_FIRST_VIEWPORT,
+      pass: viewport.measuredMs < CRUD_MEASURE_FIRST_VIEWPORT_BUDGET_MS,
+      detail: budgetDetail(
+        viewport.measuredMs,
+        CRUD_MEASURE_FIRST_VIEWPORT_BUDGET_MS,
+      ),
+    });
+
+    const search = await timed(() =>
+      deps.queryItems(db, { query: CRUD_MEASURE_SEARCH_QUERY }),
+    );
+    checks.push({
+      name: CRUD_MEASURE_LABEL_SEARCH,
+      pass: search.measuredMs < CRUD_MEASURE_SEARCH_BUDGET_MS,
+      detail: `${budgetDetail(search.measuredMs, CRUD_MEASURE_SEARCH_BUDGET_MS)} (data-layer cost of one keystroke; UI render on top is not separately instrumented)`,
+    });
+
+    // Untimed probe setup (prefixed, so the next pass cleans it up); only
+    // the single `createItem` below is timed against the write budget.
+    const probeLocation = await deps.createLocation(db, {
+      name: `${CRUD_MEASURE_NAME_PREFIX}probe location`,
+    });
+    const write = await timed(() =>
+      deps.createItem(db, {
+        name: `${CRUD_MEASURE_NAME_PREFIX}single-write`,
+        quantity: 1,
+        locationId: probeLocation.id,
+        categoryIds: [],
+      }),
+    );
+    checks.push({
+      name: CRUD_MEASURE_LABEL_WRITE,
+      pass: write.measuredMs < CRUD_MEASURE_WRITE_BUDGET_MS,
+      detail: budgetDetail(write.measuredMs, CRUD_MEASURE_WRITE_BUDGET_MS),
+    });
+
+    const failed = checks.some((check) => !check.pass);
+    return { database, status: failed ? 'fail' : 'pass', checks };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    checks.push({
+      name: 'measurement pass aborted',
+      pass: false,
+      detail,
+    });
+    return { database, status: 'fail', checks };
+  }
 }

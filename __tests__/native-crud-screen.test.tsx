@@ -48,15 +48,19 @@ jest.mock('../src/dev/nativeCrudFixture', () => {
     ...actual,
     openNativeCrudFixture: jest.fn(),
     resetNativeCrudFixture: jest.fn(),
+    runCrudMeasurePass: jest.fn(),
   };
 });
 
 import { initializeDatabase } from '../src/db';
 import InventoryContainer from '../src/screens/InventoryContainer';
 
-const { openNativeCrudFixture, resetNativeCrudFixture } = jest.requireMock(
-  '../src/dev/nativeCrudFixture',
-) as { openNativeCrudFixture: jest.Mock; resetNativeCrudFixture: jest.Mock };
+const { openNativeCrudFixture, resetNativeCrudFixture, runCrudMeasurePass } =
+  jest.requireMock('../src/dev/nativeCrudFixture') as {
+    openNativeCrudFixture: jest.Mock;
+    resetNativeCrudFixture: jest.Mock;
+    runCrudMeasurePass: jest.Mock;
+  };
 
 const MockedInventoryContainer = InventoryContainer as unknown as jest.Mock;
 
@@ -74,10 +78,16 @@ beforeEach(() => {
   MockedInventoryContainer.mockClear();
   openNativeCrudFixture.mockReset();
   resetNativeCrudFixture.mockReset();
+  runCrudMeasurePass.mockReset();
   (initializeDatabase as jest.Mock).mockClear();
   const db = fakeHandle();
   openNativeCrudFixture.mockResolvedValue({ database: CRUD_FIXTURE_DB, db });
   resetNativeCrudFixture.mockResolvedValue(undefined);
+  runCrudMeasurePass.mockResolvedValue({
+    database: CRUD_FIXTURE_DB,
+    status: 'pass',
+    checks: [],
+  });
 });
 
 function lastContainerProps(): {
@@ -272,4 +282,103 @@ test('closes the isolated handle on unmount', async () => {
   const handle = (await props.bootstrap()) as { closeAsync: jest.Mock };
   await rendered.unmount();
   expect(handle.closeAsync).toHaveBeenCalled();
+});
+
+/**
+ * P5b measurement control (mocked, not native proof).
+ *
+ * The control runs the fixture measurement pass on demand against the
+ * isolated handle: never automatically on mount, disabled until the
+ * fixture is ready, and the reported numbers plus PASS/FAIL text stay
+ * readable on screen. Real milliseconds are observed only on device.
+ */
+function mockMeasureResult() {
+  return {
+    database: CRUD_FIXTURE_DB,
+    status: 'pass',
+    checks: [
+      {
+        name: 'seed 500 items (diagnostic setup, no budget)',
+        pass: true,
+        detail: '410.2ms setup: 500 items, no budget asserted',
+      },
+      {
+        name: 'first-viewport data readiness (budget 1000ms)',
+        pass: true,
+        detail: '120.5ms vs budget 1000ms: PASS',
+      },
+      {
+        name: 'search per keystroke, data layer only (budget 200ms)',
+        pass: true,
+        detail: '45.0ms vs budget 200ms: PASS',
+      },
+      {
+        name: 'single-row write (budget 100ms)',
+        pass: true,
+        detail: '20.1ms vs budget 100ms: PASS',
+      },
+    ],
+  };
+}
+
+test('measurement control is disabled until the fixture is ready and never runs on mount', async () => {
+  const gate = deferredOpen();
+  openNativeCrudFixture.mockImplementation(() => gate.promise);
+  await render(<NativeCrudFixtureScreen />);
+  expect(screen.getByTestId('crud-fixture-measure')).toBeDisabled();
+  expect(runCrudMeasurePass).not.toHaveBeenCalled();
+  gate.resolve({ database: CRUD_FIXTURE_DB, db: fakeHandle() });
+  expect(await screen.findByTestId('mock-inventory-container')).toBeTruthy();
+  expect(screen.getByTestId('crud-fixture-measure')).not.toBeDisabled();
+  // Ready but untouched: the pass runs only on demand, never on mount.
+  expect(runCrudMeasurePass).not.toHaveBeenCalled();
+});
+
+test('measurement control runs the pass and surfaces numbers with PASS/FAIL text', async () => {
+  runCrudMeasurePass.mockResolvedValue(mockMeasureResult());
+  await render(<NativeCrudFixtureScreen />);
+  await screen.findByTestId('mock-inventory-container');
+  await fireEvent.press(screen.getByTestId('crud-fixture-measure'));
+  expect(runCrudMeasurePass).toHaveBeenCalledTimes(1);
+  expect(runCrudMeasurePass).toHaveBeenCalledWith(
+    expect.objectContaining({ closeAsync: expect.anything() }),
+    CRUD_FIXTURE_DB,
+  );
+  const results = await screen.findByTestId('crud-fixture-measure-results');
+  expect(results).toHaveTextContent(/120\.5ms/);
+  expect(results).toHaveTextContent(/PASS/);
+  expect(
+    await screen.findByTestId('crud-fixture-measure-check-1'),
+  ).toHaveTextContent(/first-viewport data readiness/);
+});
+
+test('a missed budget surfaces FAIL text with its measured value', async () => {
+  const failed = mockMeasureResult();
+  failed.status = 'fail';
+  failed.checks[2] = {
+    name: 'search per keystroke, data layer only (budget 200ms)',
+    pass: false,
+    detail: '350.0ms vs budget 200ms: FAIL',
+  };
+  runCrudMeasurePass.mockResolvedValue(failed);
+  await render(<NativeCrudFixtureScreen />);
+  await screen.findByTestId('mock-inventory-container');
+  await fireEvent.press(screen.getByTestId('crud-fixture-measure'));
+  const results = await screen.findByTestId('crud-fixture-measure-results');
+  expect(results).toHaveTextContent(/FAIL/);
+  expect(results).toHaveTextContent(/350\.0ms/);
+});
+
+test('first list layout reports a wall-time diagnostic after the viewport lays out', async () => {
+  await render(<NativeCrudFixtureScreen />);
+  await screen.findByTestId('mock-inventory-container');
+  expect(screen.getByTestId('crud-fixture-first-layout')).toHaveTextContent(
+    /diagnostic/,
+  );
+  await fireEvent(screen.getByTestId('crud-fixture-list-viewport'), 'layout', {
+    nativeEvent: { layout: { width: 360, height: 640 } },
+  });
+  expect(screen.getByTestId('crud-fixture-first-layout')).toHaveTextContent(
+    /\d+(\.\d+)?ms/,
+  );
 });

@@ -11,13 +11,19 @@ import { DATABASE_NAME } from '../src/db';
 import {
   assertSafeCrudFixtureName,
   CRUD_FIXTURE_DB,
+  CRUD_MEASURE_LABEL_FIRST_VIEWPORT,
+  CRUD_MEASURE_LABEL_SEARCH,
+  CRUD_MEASURE_LABEL_SEED,
+  CRUD_MEASURE_LABEL_WRITE,
   type CrudFixtureDb,
   type CrudFixtureDeps,
   CrudFixtureResetRefusedError,
+  type CrudMeasureDeps,
   closeCrudFixtureHandle,
   isNativeCrudFixtureEnabled,
   openNativeCrudFixture,
   resetNativeCrudFixture,
+  runCrudMeasurePass,
 } from '../src/dev/nativeCrudFixture';
 
 const DEV = globalThis as Record<string, unknown>;
@@ -255,5 +261,257 @@ describe('CRUD fixture production isolation (mocked)', () => {
     };
     expect(SQLite.openDatabaseAsync).not.toHaveBeenCalledWith(DATABASE_NAME);
     expect(SQLite.openDatabaseAsync).not.toHaveBeenCalledWith(CRUD_FIXTURE_DB);
+  });
+});
+
+/**
+ * P5b measurement battery (mocked, not native proof).
+ *
+ * The pass never opens a database itself: the caller hands it the already
+ * open isolated fixture handle plus the fixture name, and the allowlist is
+ * enforced before any repository or driver call. Numbers here come from the
+ * injected `now()` seam, so budgets are exercised deterministically; real
+ * milliseconds are observed only on device.
+ */
+function makeMeasureDb(order: string[]) {
+  const db = {
+    runAsync: jest.fn(async (source: string) => {
+      order.push(`cleanup:${source.split(' ')[2]}`);
+      return { lastInsertRowId: 1, changes: 0 };
+    }),
+    getFirstAsync: jest.fn(async () => null),
+    getAllAsync: jest.fn(async () => []),
+    execAsync: jest.fn(async () => {}),
+    closeAsync: jest.fn(async () => {}),
+    withTransactionAsync: jest.fn(async (task: () => Promise<void>) => {
+      order.push('seed-transaction-begin');
+      await task();
+      order.push('seed-transaction-commit');
+    }),
+  } as unknown as CrudFixtureDb & {
+    runAsync: jest.Mock;
+    withTransactionAsync: jest.Mock;
+  };
+  return db;
+}
+
+function makeMeasureDeps(
+  order: string[],
+  nowValues: number[],
+): CrudMeasureDeps {
+  let tick = 0;
+  let locationId = 0;
+  let categoryId = 0;
+  let itemId = 0;
+  const now = () => nowValues[Math.min(tick++, nowValues.length - 1)];
+  return {
+    now,
+    createLocation: jest.fn(async (_db: unknown, input: { name: string }) => {
+      order.push(`createLocation:${input.name}`);
+      locationId += 1;
+      return {
+        id: locationId,
+        name: input.name,
+        address: null,
+        created_at: '',
+      };
+    }) as unknown as CrudMeasureDeps['createLocation'],
+    createCategory: jest.fn(async (_db: unknown, input: { name: string }) => {
+      order.push(`createCategory:${input.name}`);
+      categoryId += 1;
+      return { id: categoryId, name: input.name, created_at: '' };
+    }) as unknown as CrudMeasureDeps['createCategory'],
+    createItem: jest.fn(async () => {
+      order.push('createItem');
+      itemId += 1;
+      return { id: itemId };
+    }) as unknown as CrudMeasureDeps['createItem'],
+    queryItems: jest.fn(async (_db: unknown, filter: unknown) => {
+      order.push(`queryItems:${JSON.stringify(filter)}`);
+      return [];
+    }) as unknown as CrudMeasureDeps['queryItems'],
+  };
+}
+
+/** Eight `now()` reads: seed, first-viewport, search, single write. */
+function flatNow(msPerPhase: [number, number, number, number]): number[] {
+  let cursor = 0;
+  const values: number[] = [];
+  for (const elapsed of msPerPhase) {
+    values.push(cursor);
+    cursor += elapsed;
+    values.push(cursor);
+  }
+  return values;
+}
+
+describe('CRUD measurement pass (mocked)', () => {
+  test('runs the documented order through the injected deps seam with a value per check', async () => {
+    const order: string[] = [];
+    const db = makeMeasureDb(order);
+    const deps = makeMeasureDeps(order, flatNow([400, 120, 45, 20]));
+    const result = await runCrudMeasurePass(db, CRUD_FIXTURE_DB, deps);
+    expect(result.database).toBe(CRUD_FIXTURE_DB);
+    expect(result.status).toBe('pass');
+    expect(result.checks.map((check) => check.name)).toEqual([
+      CRUD_MEASURE_LABEL_SEED,
+      CRUD_MEASURE_LABEL_FIRST_VIEWPORT,
+      CRUD_MEASURE_LABEL_SEARCH,
+      CRUD_MEASURE_LABEL_WRITE,
+    ]);
+    // Every check reports its measured milliseconds in the detail text.
+    for (const check of result.checks) {
+      expect(check.detail).toMatch(/\d+(\.\d+)?ms/);
+    }
+    // Documented order: cleanup, then the transactional seed (locations,
+    // categories, 500 items), then first-viewport read, filtered search
+    // read, and finally the single-row probe write.
+    const firstCreate = order.findIndex((entry) =>
+      entry.startsWith('createLocation:'),
+    );
+    expect(firstCreate).toBeGreaterThan(0);
+    expect(
+      order
+        .slice(0, firstCreate)
+        .every((entry) => entry.startsWith('cleanup:')),
+    ).toBe(true);
+    // The seed never opens a batch transaction on the handle: on device the
+    // repository's exclusive transaction runs on its own native connection,
+    // so nesting it inside `withTransactionAsync` aborts the pass.
+    expect(order).not.toContain('seed-transaction-begin');
+    expect(order).not.toContain('seed-transaction-commit');
+    expect(db.withTransactionAsync).not.toHaveBeenCalled();
+    expect(order.filter((entry) => entry === 'createItem').length).toBe(501);
+    const viewportIndex = order.findIndex((entry) => entry === 'queryItems:{}');
+    const searchIndex = order.findIndex((entry) =>
+      entry.startsWith('queryItems:{"query"'),
+    );
+    expect(viewportIndex).toBeGreaterThan(-1);
+    expect(searchIndex).toBeGreaterThan(viewportIndex);
+    expect(order.lastIndexOf('createItem')).toBeGreaterThan(searchIndex);
+    expect(deps.queryItems).toHaveBeenCalledTimes(2);
+  });
+
+  test('the seed never nests a batch transaction around repository writes', async () => {
+    // Device-observed failure this test locks in: the repository creates each
+    // item inside an exclusive transaction on an isolated native connection,
+    // so wrapping the 500 seed inserts in the handle's batch transaction
+    // aborted the whole pass with "Could not create item: storage
+    // unavailable." The handle below refuses to nest exactly like the device.
+    const order: string[] = [];
+    const db = makeMeasureDb(order);
+    (db.withTransactionAsync as jest.Mock).mockImplementation(async () => {
+      order.push('seed-transaction-begin');
+      throw new Error('Could not create item: storage unavailable.');
+    });
+    const deps = makeMeasureDeps(order, flatNow([10, 5, 5, 5]));
+    const result = await runCrudMeasurePass(db, CRUD_FIXTURE_DB, deps);
+    expect(db.withTransactionAsync).not.toHaveBeenCalled();
+    expect(result.checks.map((check) => check.name)).toEqual([
+      CRUD_MEASURE_LABEL_SEED,
+      CRUD_MEASURE_LABEL_FIRST_VIEWPORT,
+      CRUD_MEASURE_LABEL_SEARCH,
+      CRUD_MEASURE_LABEL_WRITE,
+    ]);
+    expect(result.status).toBe('pass');
+    expect(order.filter((entry) => entry === 'createItem').length).toBe(501);
+  });
+
+  test('an over-budget check fails while the pass still completes the remaining checks', async () => {
+    const order: string[] = [];
+    const db = makeMeasureDb(order);
+    // Search costs 350ms against its 200ms budget; everything else fits.
+    const deps = makeMeasureDeps(order, flatNow([400, 120, 350, 20]));
+    const result = await runCrudMeasurePass(db, CRUD_FIXTURE_DB, deps);
+    expect(result.status).toBe('fail');
+    expect(result.checks).toHaveLength(4);
+    const [seed, viewport, search, write] = result.checks;
+    expect(seed.pass).toBe(true);
+    expect(viewport.pass).toBe(true);
+    expect(search.pass).toBe(false);
+    expect(search.detail).toContain('FAIL');
+    expect(search.detail).toMatch(/350/);
+    // The missed budget never aborts the pass: the write probe still ran.
+    expect(write.pass).toBe(true);
+    expect(write.detail).toContain('PASS');
+    expect(order.lastIndexOf('createItem')).toBeGreaterThan(
+      order.findIndex((entry) => entry.startsWith('queryItems:{"query"')),
+    );
+  });
+
+  test('a second pass cleans its own rows first and never widens the deletes', async () => {
+    const order: string[] = [];
+    const db = makeMeasureDb(order);
+    const first = await runCrudMeasurePass(
+      db,
+      CRUD_FIXTURE_DB,
+      makeMeasureDeps(order, flatNow([10, 5, 5, 5])),
+    );
+    expect(first.status).toBe('pass');
+    const afterFirst = order.length;
+    expect(afterFirst).toBeGreaterThan(0);
+    const second = await runCrudMeasurePass(
+      db,
+      CRUD_FIXTURE_DB,
+      makeMeasureDeps(order, flatNow([10, 5, 5, 5])),
+    );
+    expect(second.status).toBe('pass');
+    const secondPassOrder = order.slice(afterFirst);
+    // Cleanup deletes target exactly the three entity tables and the
+    // measurement prefix — never an unscoped delete.
+    const cleanups = order.filter((entry) => entry.startsWith('cleanup:'));
+    expect(cleanups.length).toBeGreaterThan(0);
+    expect(
+      cleanups.every((entry) =>
+        ['cleanup:items', 'cleanup:locations', 'cleanup:categories'].includes(
+          entry,
+        ),
+      ),
+    ).toBe(true);
+    for (const call of db.runAsync.mock.calls) {
+      expect(String(call[1])).toContain('Perf p5b ');
+    }
+    // Second-pass cleanup runs after the first pass writes and before the
+    // second pass seeds, so repeated passes cannot duplicate or corrupt.
+    const creates = order.filter((entry) => entry === 'createItem');
+    expect(creates.length).toBe(2 * 501);
+    const secondPassFirstCreate = secondPassOrder.findIndex(
+      (entry) => entry === 'createItem',
+    );
+    expect(secondPassFirstCreate).toBeGreaterThan(0);
+    const secondPassFirstCleanup = secondPassOrder.findIndex((entry) =>
+      entry.startsWith('cleanup:'),
+    );
+    expect(secondPassFirstCleanup).toBeGreaterThanOrEqual(0);
+    expect(secondPassFirstCleanup).toBeLessThan(secondPassFirstCreate);
+  });
+
+  test('a refused database name throws before any driver or repository call', async () => {
+    const order: string[] = [];
+    const db = makeMeasureDb(order);
+    const deps = makeMeasureDeps(order, flatNow([10, 5, 5, 5]));
+    await expect(runCrudMeasurePass(db, 'tengo.db', deps)).rejects.toThrow(
+      /Refusing unsafe CRUD fixture/,
+    );
+    expect(order).toEqual([]);
+    expect(db.runAsync).not.toHaveBeenCalled();
+    expect(deps.createItem).not.toHaveBeenCalled();
+    expect(deps.queryItems).not.toHaveBeenCalled();
+  });
+
+  test('seeding still completes when the driver has no batch-transaction hook', async () => {
+    const order: string[] = [];
+    const full = makeMeasureDb(order);
+    const { withTransactionAsync, ...rest } = full as unknown as Record<
+      string,
+      unknown
+    >;
+    void withTransactionAsync;
+    const db = rest as unknown as CrudFixtureDb;
+    const deps = makeMeasureDeps(order, flatNow([10, 5, 5, 5]));
+    const result = await runCrudMeasurePass(db, CRUD_FIXTURE_DB, deps);
+    expect(result.status).toBe('pass');
+    expect(result.checks).toHaveLength(4);
+    expect(order.filter((entry) => entry === 'createItem').length).toBe(501);
   });
 });

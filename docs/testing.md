@@ -201,6 +201,75 @@ with `eraseText`, but the quantity edit uses the stepper: tapping a short
 centred number places the caret inside it, so a backspace-based clear
 erases nothing and the new digit lands before the old one.
 
+### P5b performance measurement pass (DEV-only, on demand)
+
+The fixture screen carries a `Measure performance` control
+(`crud-fixture-measure`) that runs one measurement pass against the
+isolated fixture database and reports real wall-clock numbers with
+PASS/FAIL against the ROADMAP section 7 budgets. The pass never runs
+automatically on mount, enforces the fixture-name allowlist before any
+driver or repository call, and never touches production `tengo.db`.
+It reports four checks under stable labels:
+
+- `seed 500 items (diagnostic setup, no budget)` — inserts 500 items
+  with their locations through the real repository, one atomic exclusive
+  transaction per insert. The seed is deliberately not wrapped in a batch
+  transaction: the repository's exclusive transaction runs on its own
+  native connection, so nesting it inside the driver's
+  `withTransactionAsync` aborted the pass on device (`Could not create
+  item: storage unavailable.`). Setup only; no budget.
+- `first-viewport data readiness (budget 1000ms)` — the real
+  `queryItems` call producing the first page for the 500-item database.
+  Budget: under 1000 ms.
+- `search per keystroke, data layer only (budget 200ms)` — a filtered
+  `queryItems` call (`Perf p5b item 1`, matching a realistic subset).
+  Budget: under 200 ms. This figure is the DATA-LAYER cost of one
+  keystroke; the UI-per-keystroke figure adds render on top of it and
+  is not separately instrumented.
+- `single-row write (budget 100ms)` — one real item creation end to end
+  through the repository. Budget: under 100 ms.
+
+A missed budget is recorded as FAIL with its measured value and the
+pass still completes the remaining checks; a missed budget is never
+waived or rounded. Repeated passes are safe: every measurement row
+carries the stable `Perf p5b ` name prefix with dedicated locations
+and categories, and each pass deletes exactly those rows before
+reseeding, so measurement data never duplicates and M4 flow data is
+never touched. The screen also reports the wall time from mount to the
+first list-viewport `onLayout` under `crud-fixture-first-layout` as a
+diagnostic with the observed value; no budget applies to it.
+
+Results render under `crud-fixture-measure-results` with per-check
+`crud-fixture-measure-check-<index>` lines carrying the label, the
+measured milliseconds, and PASS/FAIL, so a device verifier reads them
+from the screen and from `adb`-visible text. No budget may be claimed
+as met until its number has been observed on a device pass.
+
+#### Recorded device pass (emulator-5554, AVD Tengo_API34, Android 14)
+
+First real pass, run on the installed debug build with the guarded CRUD
+bundle and the isolated `m1-fixture-crud-m4.db`, after the seed fix
+described above. Observed values, verbatim from the screen:
+
+- `first list layout: 87.2ms (diagnostic, no budget)`
+- `seed 500 items (diagnostic setup, no budget): 24095.2ms setup: 500
+  items with locations/categories, no budget asserted — PASS`
+- `first-viewport data readiness (budget 1000ms): 202.3ms vs budget
+  1000ms: PASS`
+- `search per keystroke, data layer only (budget 200ms): 200.8ms vs
+  budget 200ms: FAIL`
+- `single-row write (budget 100ms): 31.3ms vs budget 100ms: PASS`
+
+The search figure is a real miss of the proposed ROADMAP section 7
+budget and is recorded as FAIL, not waived or rounded: 200.8 ms of
+data-layer work against a 200 ms budget, so the UI-per-keystroke figure
+that adds render on top cannot meet it either. The seed figure is
+unbudgeted setup and is slow by construction — one exclusive
+transaction per insert (500 of them) — not a product-path measurement.
+These are single-sample numbers from one emulator; no repetition,
+percentile or second device is claimed. `tengo.db` was never created,
+opened or modified.
+
 Run the isolated Android form flow with the guarded CRUD bundle:
 
 ```sh
@@ -260,6 +329,7 @@ Forms, discard/delete dialogs and restart E2E are covered by the M4 form
 flow above, whose passing Android result is recorded in that section.
 Maestro runs
 against the installed debug build; responsive Android checks
-(orientation, large font, keyboard, contrast, light/dark) and the
-performance budgets still need a device pass with actual metrics, and
-remain pending.
+(orientation, large font, keyboard, contrast, light/dark) still need a
+device pass with actual observations and remain pending. The P5b
+performance pass above has now been measured on device; its search
+check missed its proposed budget and is recorded there as FAIL.

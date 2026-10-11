@@ -29,8 +29,12 @@
  *
  * Fail-closed stable testIDs for Maestro: `crud-fixture-screen` on the
  * root, `crud-fixture-reset` for the fixture-only reset,
- * `crud-fixture-status` for the readiness signal, and the
- * `crud-fixture-list-viewport` wrapper. The header stays compact so the
+ * `crud-fixture-status` for the readiness signal, the
+ * `crud-fixture-list-viewport` wrapper, `crud-fixture-measure` for the
+ * on-demand P5b measurement pass, `crud-fixture-measure-results` plus
+ * `crud-fixture-measure-check-<index>` for its reported numbers and
+ * PASS/FAIL text, and `crud-fixture-first-layout` for the
+ * mount-to-first-layout diagnostic. The header stays compact so the
  * real list keeps the viewport; no details modal — the list itself is
  * the assertion surface.
  */
@@ -39,11 +43,29 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { RepositoryDb } from '../inventory/database';
 import InventoryContainer from '../screens/InventoryContainer';
 import {
+  CRUD_FIXTURE_DB,
   type CrudFixtureDb,
+  type CrudMeasureResult,
   closeCrudFixtureHandle,
   openNativeCrudFixture,
   resetNativeCrudFixture,
+  runCrudMeasurePass,
 } from './nativeCrudFixture';
+
+/** Wall clock available on device and in Jest; `performance.now` first. */
+function wallNow(): number {
+  try {
+    if (
+      typeof performance !== 'undefined' &&
+      typeof performance.now === 'function'
+    ) {
+      return performance.now();
+    }
+  } catch {
+    // Fall through to Date.now below.
+  }
+  return Date.now();
+}
 
 type CrudStatus = 'running' | 'ready' | 'error';
 
@@ -51,6 +73,17 @@ export default function NativeCrudFixtureScreen() {
   const [generation, setGeneration] = useState(0);
   const [status, setStatus] = useState<CrudStatus>('running');
   const [resetting, setResetting] = useState(false);
+  // P5b measurement battery: on demand only, never on mount. Holds the
+  // last pass result for the on-screen/`adb` report.
+  const [measuring, setMeasuring] = useState(false);
+  const [measureResult, setMeasureResult] = useState<CrudMeasureResult | null>(
+    null,
+  );
+  // Wall time from first render (screen mount) to the first list-viewport
+  // layout; a real `onLayout` diagnostic, never a budget.
+  const [firstLayoutMs, setFirstLayoutMs] = useState<number | null>(null);
+  const mountMsRef = useRef<number | null>(null);
+  if (mountMsRef.current === null) mountMsRef.current = wallNow();
   // Cached isolated fixture handle: created once per generation and
   // reused by every container bootstrap — never reopened per filter,
   // never the production handle.
@@ -179,6 +212,34 @@ export default function NativeCrudFixtureScreen() {
   // Actionable only at a terminal state: never mid-open, never mid-reset.
   const resetDisabled = status === 'running' || resetting;
 
+  // First viewport layout only: later layouts (rotation, keyboard) never
+  // overwrite the mount-to-first-layout diagnostic.
+  const onViewportLayout = useCallback(() => {
+    setFirstLayoutMs((previous) =>
+      previous === null && mountMsRef.current !== null
+        ? wallNow() - mountMsRef.current
+        : previous,
+    );
+  }, []);
+
+  // On-demand measurement against the cached isolated handle: never
+  // automatic, never production (the handle is the fixture handle and the
+  // name is the allowlisted fixture file).
+  const onMeasure = useCallback(async () => {
+    const handle = handleRef.current;
+    if (!handle || measuring) return;
+    setMeasuring(true);
+    try {
+      const result = await runCrudMeasurePass(handle, CRUD_FIXTURE_DB);
+      if (mountedRef.current) setMeasureResult(result);
+    } finally {
+      if (mountedRef.current) setMeasuring(false);
+    }
+  }, [measuring]);
+
+  // Actionable only when the fixture handle is cached and no pass runs.
+  const measureDisabled = status !== 'ready' || measuring;
+
   return (
     <View style={styles.container} testID="crud-fixture-screen">
       <View style={styles.header}>
@@ -200,8 +261,47 @@ export default function NativeCrudFixtureScreen() {
         >
           <Text>Reset fixture</Text>
         </Pressable>
+        <Pressable
+          testID="crud-fixture-measure"
+          accessibilityRole="button"
+          accessibilityLabel="Run the performance measurement pass"
+          accessibilityHint="Seeds 500 rows and times reads and writes on the isolated fixture database"
+          accessibilityState={{ disabled: measureDisabled }}
+          disabled={measureDisabled}
+          onPress={() => {
+            void onMeasure();
+          }}
+          style={styles.button}
+        >
+          <Text>{measuring ? 'Measuring…' : 'Measure performance'}</Text>
+        </Pressable>
+        <Text testID="crud-fixture-first-layout" style={styles.diagnostic}>
+          {firstLayoutMs === null
+            ? 'first list layout: pending (diagnostic, no budget)'
+            : `first list layout: ${firstLayoutMs.toFixed(1)}ms (diagnostic, no budget)`}
+        </Text>
+        {measureResult ? (
+          <View testID="crud-fixture-measure-results">
+            <Text style={styles.diagnostic}>
+              {`measurement: ${measureResult.status} (${measureResult.checks.length} checks)`}
+            </Text>
+            {measureResult.checks.map((check, index) => (
+              <Text
+                key={check.name}
+                testID={`crud-fixture-measure-check-${index}`}
+                style={styles.diagnostic}
+              >
+                {`${check.name}: ${check.detail} — ${check.pass ? 'PASS' : 'FAIL'}`}
+              </Text>
+            ))}
+          </View>
+        ) : null}
       </View>
-      <View style={styles.listViewport} testID="crud-fixture-list-viewport">
+      <View
+        style={styles.listViewport}
+        testID="crud-fixture-list-viewport"
+        onLayout={onViewportLayout}
+      >
         {status === 'ready' ? (
           <InventoryContainer
             key={generation}
@@ -243,5 +343,9 @@ const styles = StyleSheet.create({
   },
   listViewport: {
     flex: 1,
+  },
+  diagnostic: {
+    fontSize: 12,
+    marginTop: 4,
   },
 });

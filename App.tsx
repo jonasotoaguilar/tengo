@@ -67,12 +67,13 @@ export default function App() {
       </I18nextProvider>
     );
   }
-  // Default (P3b2): the App-wired read-only inventory list. The container
-  // owns the single `tengo.db` bootstrap; nothing else here initializes.
+  // Default (U2b): the App-wired inventory list with opt-in mutations.
+  // The container owns the single `tengo.db` bootstrap; nothing else here
+  // initializes.
   return (
     <I18nextProvider i18n={i18n}>
       <SafeAreaProvider>
-        <InventoryContainer />
+        <InventoryContainer enableMutations />
         <StatusBar style="auto" />
       </SafeAreaProvider>
     </I18nextProvider>

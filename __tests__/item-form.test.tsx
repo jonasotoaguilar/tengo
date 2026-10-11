@@ -536,3 +536,51 @@ test('passes parent error copy through verbatim without raw sqlite text', async 
   expect(node).toBeTruthy();
   expect(view.getByText('Could not save: storage unavailable.')).toBeTruthy();
 });
+
+describe('U2b delete affordance', () => {
+  test('renders in edit mode only when the prop is provided', async () => {
+    const onRequestDelete = jest.fn();
+    const view = await renderForm(baseProps({ mode: 'edit', onRequestDelete }));
+    const action = await view.findByTestId('item-form/delete');
+    expect(action).toBeTruthy();
+    expect(action.props.accessibilityRole).toBe('button');
+    expect(action.props.accessibilityLabel).toBe('Delete item');
+    expect(action.props.accessibilityState?.disabled ?? false).toBe(false);
+    expect(view.getByText('Delete item')).toBeTruthy();
+    await fireEvent.press(action);
+    expect(onRequestDelete).toHaveBeenCalledTimes(1);
+  });
+
+  test('not rendered in edit mode without the prop', async () => {
+    const view = await renderForm(baseProps({ mode: 'edit' }));
+    await view.findByTestId('item-form/save');
+    expect(view.queryByTestId('item-form/delete')).toBeNull();
+  });
+
+  test('not rendered in add mode even when the prop is provided', async () => {
+    const view = await renderForm(
+      baseProps({ mode: 'add', onRequestDelete: jest.fn() }),
+    );
+    await view.findByTestId('item-form/save');
+    expect(view.queryByTestId('item-form/delete')).toBeNull();
+  });
+
+  test('disabled while submitting', async () => {
+    const onRequestDelete = jest.fn();
+    const view = await renderForm(
+      baseProps({ mode: 'edit', onRequestDelete, submitting: true }),
+    );
+    const action = await view.findByTestId('item-form/delete');
+    expect(action.props.accessibilityState.disabled).toBe(true);
+    await fireEvent.press(action);
+    expect(onRequestDelete).not.toHaveBeenCalled();
+  });
+
+  test('renders the Spanish label when locale is es', async () => {
+    await i18n.changeLanguage('es');
+    const view = await renderForm(
+      baseProps({ mode: 'edit', onRequestDelete: jest.fn() }),
+    );
+    expect(await view.findByText('Eliminar artículo')).toBeTruthy();
+  });
+});

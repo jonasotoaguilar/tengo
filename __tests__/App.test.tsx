@@ -83,6 +83,12 @@ describe('<App /> wired inventory screen', () => {
     await act(async () => {});
     expect(initializeDatabase).toHaveBeenCalledTimes(1);
   });
+
+  test('default path opts into mutations: first-run Add is enabled', async () => {
+    await renderApp();
+    expect(await screen.findByTestId('inventory-empty-title')).toBeTruthy();
+    expect(screen.getByTestId('inventory-add-empty')).not.toBeDisabled();
+  });
 });
 
 jest.mock(

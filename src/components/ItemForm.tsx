@@ -80,6 +80,11 @@ export interface ItemFormProps {
   onSubmit?: () => void;
   onRequestClose?: () => void;
   /**
+   * Delete entry point (U2b): rendered as a bottom destructive zone only
+   * in `edit` mode when provided. The screen confirms before deleting.
+   */
+  onRequestDelete?: () => void;
+  /**
    * Called with the testID of the mounted focus target whenever the
    * component requests error focus (never alters selection). Lets unit
    * tests prove target selection and request routing per state.
@@ -226,6 +231,7 @@ export default function ItemForm({
   onChange,
   onSubmit,
   onRequestClose,
+  onRequestDelete,
   onRequestErrorFocus,
   errors,
   submitting = false,
@@ -373,6 +379,10 @@ export default function ItemForm({
 
   const saveDisabled = pending || onSubmit === undefined;
   const closeDisabled = pending || onRequestClose === undefined;
+  // Destructive zone (DESIGN.md §3.4): edit mode only, explicit request
+  // callback only, never while a write is in flight.
+  const showDelete = mode === 'edit' && onRequestDelete !== undefined;
+  const deleteDisabled = pending;
   const newLocation = values.location?.kind === 'new' ? values.location : null;
   const addCategoryDisabled =
     pending || values.pendingNewCategoryName.trim() === '';
@@ -831,6 +841,42 @@ export default function ItemForm({
             {pending ? t('itemFormSaving') : t('itemFormSave')}
           </Text>
         </Pressable>
+
+        {showDelete ? (
+          <View
+            testID="item-form/delete-zone"
+            accessibilityRole="alert"
+            style={[styles.deleteZone, { borderColor: palette.error }]}
+          >
+            <Pressable
+              testID="item-form/delete"
+              accessibilityRole="button"
+              accessibilityLabel={t('itemFormDelete')}
+              accessibilityState={{ disabled: deleteDisabled }}
+              disabled={deleteDisabled}
+              onPress={() => onRequestDelete?.()}
+              style={[
+                styles.deleteButton,
+                {
+                  backgroundColor: deleteDisabled
+                    ? palette.surface
+                    : 'transparent',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.deleteText,
+                  {
+                    color: deleteDisabled ? palette.secondary : palette.error,
+                  },
+                ]}
+              >
+                {t('itemFormDelete')}
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -1005,6 +1051,22 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   saveText: {
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  deleteZone: {
+    marginTop: 24,
+    borderTopWidth: 1,
+    paddingTop: 8,
+  },
+  deleteButton: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    paddingHorizontal: 20,
+  },
+  deleteText: {
     fontSize: 17,
     fontWeight: '600',
   },

@@ -15,6 +15,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from '@testing-library/react-native';
 import { I18nextProvider } from 'react-i18next';
 import type { ViewProps } from 'react-native';
@@ -31,6 +32,13 @@ const { initializeDatabase } = require('../src/db') as {
 
 jest.mock('../src/db', () => ({
   initializeDatabase: jest.fn(),
+}));
+
+jest.mock('../src/inventory/itemRepository', () => ({
+  getItem: jest.fn(),
+  createItemFromDraft: jest.fn(),
+  updateItemFromDraft: jest.fn(),
+  deleteItem: jest.fn(),
 }));
 
 jest.mock('react-native-safe-area-context', () => {
@@ -479,4 +487,174 @@ test('injected isolated bootstrap serves reads without opening production', asyn
   // The default production open stays untouched when isolated.
   expect(initializeDatabase).not.toHaveBeenCalled();
   expect(isolated.getAllAsync).toHaveBeenCalled();
+});
+
+describe('U2b opt-in mutations (enableMutations)', () => {
+  const repository = require('../src/inventory/itemRepository') as {
+    getItem: jest.Mock;
+    createItemFromDraft: jest.Mock;
+    updateItemFromDraft: jest.Mock;
+    deleteItem: jest.Mock;
+  };
+
+  const riceDetail = {
+    id: 1,
+    name: 'Rice',
+    quantity: 2,
+    locationId: 10,
+    location: {
+      id: 10,
+      name: 'Pantry',
+      address: null,
+      created_at: 'loc-created-10',
+    },
+    categoryIds: [],
+    categories: [],
+    created_at: 'created-1',
+  };
+
+  beforeEach(() => {
+    repository.getItem.mockReset();
+    repository.createItemFromDraft.mockReset();
+    repository.updateItemFromDraft.mockReset();
+    repository.deleteItem.mockReset();
+    repository.getItem.mockResolvedValue({ ...riceDetail });
+    repository.createItemFromDraft.mockResolvedValue({
+      ...riceDetail,
+      id: 3,
+      name: 'Quinoa',
+    });
+    repository.updateItemFromDraft.mockResolvedValue({ ...riceDetail });
+    repository.deleteItem.mockResolvedValue(undefined);
+  });
+
+  async function renderMutations() {
+    return render(
+      <I18nextProvider i18n={i18n}>
+        <InventoryContainer enableMutations />
+      </I18nextProvider>,
+    );
+  }
+
+  async function openCreate(): Promise<void> {
+    await fireEvent.press(screen.getByTestId('inventory-add-header'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+  }
+
+  async function fillValidCreateForm(): Promise<void> {
+    await fireEvent.changeText(screen.getByTestId('item-form/name'), 'Quinoa');
+    await fireEvent.changeText(screen.getByTestId('item-form/quantity'), '1');
+    await fireEvent.press(screen.getByTestId('item-form/location-10'));
+  }
+
+  test('Add opens the create route once the handle is ready', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+    expect(screen.getByTestId('inventory-add-header')).not.toBeDisabled();
+
+    await openCreate();
+    expect(screen.getByText('New item')).toBeTruthy();
+    expect(repository.getItem).not.toHaveBeenCalled();
+    await cleanup();
+  });
+
+  test('a row open opens the edit route prefilled', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-row-1'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+    expect(screen.getByTestId('item-form/name').props.value).toBe('Rice');
+    expect(repository.getItem).toHaveBeenCalledWith(expect.anything(), 1);
+    await cleanup();
+  });
+
+  test('after a save the list re-queries and the screen closes', async () => {
+    const fake = makeFakeDb();
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderMutations();
+    await settle();
+
+    await openCreate();
+    await fillValidCreateForm();
+    const readsBefore = fake.getAllAsync.mock.calls.length;
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+    await settle();
+    expect(fake.getAllAsync.mock.calls.length).toBeGreaterThan(readsBefore);
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '2 of 2',
+    );
+    await cleanup();
+  });
+
+  test('after a delete the list re-queries and the screen closes', async () => {
+    const fake = makeFakeDb();
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-row-1'));
+    await screen.findByTestId('item-form/delete');
+    const readsBefore = fake.getAllAsync.mock.calls.length;
+    await fireEvent.press(screen.getByTestId('item-form/delete'));
+    await screen.findByTestId('item-form-screen/delete-dialog');
+    await fireEvent.press(
+      screen.getByTestId('item-form-screen/delete-confirm'),
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    expect(repository.deleteItem).toHaveBeenCalledWith(expect.anything(), 1);
+    await settle();
+    expect(fake.getAllAsync.mock.calls.length).toBeGreaterThan(readsBefore);
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+    await cleanup();
+  });
+
+  test('post-write refresh keeps the ready list visible without loading', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '2 of 2',
+    );
+
+    await openCreate();
+    await fillValidCreateForm();
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    // The refresh re-read is still in flight: no full-screen loading, and
+    // the previous page stays visible until the new one arrives.
+    expect(screen.queryByTestId('inventory-loading')).toBeNull();
+    expect(screen.getByTestId('inventory-count')).toHaveTextContent('2 of 2');
+    expect(screen.getByTestId('inventory-row-1')).toBeTruthy();
+    await settle();
+    expect(screen.queryByTestId('inventory-loading')).toBeNull();
+    expect(screen.getByTestId('inventory-count')).toHaveTextContent('2 of 2');
+    await cleanup();
+  });
+
+  test('a filter change still renders loading as before', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+
+    await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
+    expect(screen.getByTestId('inventory-loading')).toBeTruthy();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '1 of 2',
+    );
+    await cleanup();
+  });
 });

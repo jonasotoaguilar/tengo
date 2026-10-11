@@ -12,10 +12,13 @@
  * settled by a monotonic request id: earlier rounds and every completion
  * after unmount (bootstrap included) are ignored, and a rejected bootstrap
  * leaves no handle so retry opens fresh. Failures surface only the existing
- * generic translated list error, never raw SQLite text. Add/Open stay
- * genuinely disabled (`undefined`) until P4; this unit performs no writes.
+ * generic translated list error, never raw SQLite text. U2b adds the opt-in
+ * `enableMutations` route state (create/edit over the managed handle via
+ * `ItemFormScreen`) with a post-write background refresh that never blanks
+ * a ready list; the default stays read-only (`onAdd`/`onOpenItem` literally
+ * `undefined`) so the DEV fixture and the recorded M3 proof are unchanged.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import InventoryList, {
   type InventoryListState,
@@ -30,6 +33,8 @@ import type {
   ItemFilter,
   Location,
 } from '../inventory/types';
+import ItemFormScreen from './ItemFormScreen';
+import type { ItemFormRoute } from './useItemFormController';
 
 /**
  * Stable default bootstrap: the single production `tengo.db` open. A
@@ -51,6 +56,14 @@ export interface InventoryContainerProps {
    * Defaults to the stable production bootstrap above.
    */
   bootstrap?: () => Promise<RepositoryDb>;
+  /**
+   * Opt-in U2b writes. Default `false`: Add/Open stay literally
+   * `undefined` (disabled with honest hints) and the DEV read-only
+   * fixture is preserved unchanged. When true, Add/Open arm only once
+   * the managed handle is reactively available, so the modal can never
+   * mount with a null handle.
+   */
+  enableMutations?: boolean;
 }
 
 function isFilterEmpty(filter: ItemFilter): boolean {
@@ -62,14 +75,25 @@ function isFilterEmpty(filter: ItemFilter): boolean {
 
 export default function InventoryContainer({
   bootstrap = defaultBootstrap,
+  enableMutations = false,
 }: InventoryContainerProps = {}) {
   const [filter, setFilter] = useState<ItemFilter>({});
   const [retryToken, setRetryToken] = useState(0);
+  // Post-write refresh trigger (U2b): re-reads list/total/choices without
+  // blanking a ready list. Trigger-only dep, like `retryToken`.
+  const [refreshToken, setRefreshToken] = useState(0);
   const [viewState, setViewState] = useState<InventoryListState>('loading');
   const [items, setItems] = useState<ItemDetail[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [locations, setLocations] = useState<Location[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  // Reactive mirror of the app-lifetime handle below: write affordances
+  // derive from this state (never a ref read during render) so enabling
+  // them cannot race the bootstrap.
+  const [dbHandle, setDbHandle] = useState<RepositoryDb | null>(null);
+  // Open add/edit route. Independent of the read effect below so a
+  // post-write refresh never unmounts the screen before dismissal.
+  const [route, setRoute] = useState<ItemFormRoute | null>(null);
 
   // App-lifetime managed handle: set once by a successful bootstrap and
   // reused by every filter/retry round. Never closed here.
@@ -80,17 +104,53 @@ export default function InventoryContainer({
   // on rejection so retry opens fresh.
   const bootstrapRef = useRef<Promise<RepositoryDb> | null>(null);
   const requestRef = useRef(0);
+  // Armed by a post-write success before bumping `refreshToken`: the next
+  // effect round re-reads in the background, keeping a ready list visible
+  // instead of blanking it into full-screen loading. Consumed (reset) by
+  // exactly one round; a batched filter change shares that round and
+  // still converges to the newest page.
+  const backgroundRefreshRef = useRef(false);
 
-  // `retryToken` below is a trigger-only dep by design: it replays the
-  // current filter after a failure while the handle lives in its ref, so
-  // no dep value is consumed for reading.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: retryToken retriggers the round without being read
+  const handleAdd = useCallback((prefilledName?: string) => {
+    setRoute({ kind: 'create', prefilledName });
+  }, []);
+  const handleOpenItem = useCallback((id: number) => {
+    setRoute({ kind: 'edit', itemId: id });
+  }, []);
+  const handleSaved = useCallback(() => {
+    backgroundRefreshRef.current = true;
+    setRefreshToken((token) => token + 1);
+  }, []);
+  const handleDeleted = useCallback(() => {
+    backgroundRefreshRef.current = true;
+    setRefreshToken((token) => token + 1);
+  }, []);
+  const handleDismiss = useCallback(() => {
+    setRoute(null);
+  }, []);
+
+  // Write affordances arm only when opted in AND the handle is reactively
+  // available. Literally `undefined` otherwise, preserving the disabled
+  // rendering and the DEV read-only fixture.
+  const mutationsReady = enableMutations && dbHandle !== null;
+
+  // `retryToken` and `refreshToken` below are trigger-only deps by
+  // design: they replay the current filter (retry after a failure,
+  // refresh after a write) while the handle lives in its ref, so no dep
+  // value is consumed for reading.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retryToken/refreshToken retrigger the round without being read
   useEffect(() => {
     requestRef.current += 1;
     const requestId = requestRef.current;
     let cancelled = false;
     const isCurrent = () => !cancelled && requestRef.current === requestId;
-    setViewState('loading');
+    // A post-write round keeps the previous page visible; every other
+    // round (mount, filter change, retry) loads exactly as before.
+    const isBackgroundRefresh = backgroundRefreshRef.current;
+    backgroundRefreshRef.current = false;
+    if (!isBackgroundRefresh) {
+      setViewState('loading');
+    }
 
     (async () => {
       try {
@@ -118,8 +178,11 @@ export default function InventoryContainer({
           }
           // Retain the shared handle even for a stale request: it is the
           // app-lifetime connection, not the round's result. Only the
-          // reads below stay gated on the current request.
+          // reads below stay gated on the current request. The reactive
+          // mirror arms the write affordances; the functional guard
+          // bails out when the handle is already set.
           dbRef.current = db;
+          setDbHandle((prev) => (prev === null ? db : prev));
           if (!isCurrent()) return;
         }
         const activeFilter = filter;
@@ -154,20 +217,33 @@ export default function InventoryContainer({
       cancelled = true;
       requestRef.current += 1;
     };
-  }, [filter, retryToken]);
+  }, [filter, retryToken, refreshToken]);
 
   return (
-    <InventoryList
-      state={viewState}
-      items={items}
-      totalCount={totalCount}
-      locations={locations}
-      categories={categories}
-      filter={filter}
-      onFilterChange={setFilter}
-      onRetry={() => setRetryToken((token) => token + 1)}
-      onAdd={undefined}
-      onOpenItem={undefined}
-    />
+    <>
+      <InventoryList
+        state={viewState}
+        items={items}
+        totalCount={totalCount}
+        locations={locations}
+        categories={categories}
+        filter={filter}
+        onFilterChange={setFilter}
+        onRetry={() => setRetryToken((token) => token + 1)}
+        onAdd={mutationsReady ? handleAdd : undefined}
+        onOpenItem={mutationsReady ? handleOpenItem : undefined}
+      />
+      {route !== null && dbHandle !== null ? (
+        <ItemFormScreen
+          db={dbHandle}
+          route={route}
+          locations={locations}
+          categories={categories}
+          onSaved={handleSaved}
+          onDeleted={handleDeleted}
+          onDismiss={handleDismiss}
+        />
+      ) : null}
+    </>
   );
 }

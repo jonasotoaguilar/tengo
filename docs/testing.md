@@ -127,6 +127,60 @@ original hashes. Verification stopped the app and restored debug
 preferences, the cached bundle and reverse-port configuration;
 only the verification-owned Metro on 8082 was stopped.
 
+## CRUD fixture protocol (M4, DEV-only)
+
+The CRUD fixture embeds the real `InventoryContainer` with an injected
+isolated bootstrap **and** `enableMutations`, so the add/edit/delete
+form flows on screen run against the isolated database with real
+persistence — no list or form fakes. Only `m1-fixture-crud-m4.db` is
+ever opened or deleted; anything else, including production
+`tengo.db`, is refused before open and before delete. The database
+starts empty (the first-run screen owns the empty state) and persists
+across relaunches so the flow can prove force-stop/relaunch
+persistence for both creates and deletes.
+
+Launch on a separate Metro port so the normal `tengo.db` session is
+untouched:
+
+```sh
+EXPO_PUBLIC_NATIVE_FIXTURE=1 EXPO_PUBLIC_NATIVE_CRUD=1 npx expo start --port 8083
+```
+
+This gate takes precedence over the query, repository, and M1 fixture
+gates; any other combination keeps its existing screen, and release
+builds stay inert.
+
+Fixture-only controls above the list: a compact header with the
+readiness status plus a reset that closes, deletes, and reopens ONLY
+the allowlisted fixture file, so the flow is repeatable without
+touching any other file. The delete lives behind a module-level
+invariant: the module tracks every handle it opened until its close
+resolves (a rejected close keeps it tracked), and the reset refuses —
+never deleting — while any handle is still tracked, no matter what the
+caller believes. The screen closes every handle through the module,
+keeps its reference until the close resolves, does not retry a rejected
+close from the reset control, and surfaces `error` instead of deleting;
+the unmount cleanup still makes one final best-effort close attempt.
+The reset control is
+disabled until the fixture reaches a terminal state (`ready`/`error`),
+never mid-open. The `.maestro/m4-forms.yaml` flow fail-closes
+on `crud-fixture-screen` first, then taps the reset control so every run
+starts from the empty isolated database. After the tap it waits for
+`crud-fixture-status` to pass through `running` and reach terminal
+`ready` before asserting the empty state: the empty title alone could
+already be visible from a previous empty run, so only the status cycle
+proves the fresh generation is ready. It covers
+empty first-run plus the add call to action, create with inline new
+location/category, relaunch persistence of the create, edit, relaunch
+persistence of the edit, dirty-discard (Cancel keeps the edit,
+Discard keeps the stored values), delete (Cancel keeps the row, confirm
+removes it back to empty), and relaunch persistence of the delete. It
+uses stable testIDs with en/es count regexes and anchored
+`Quantity|Cantidad <n>` quantity assertions.
+
+The flow is authored here, not yet run: no native result is claimed
+until a separate verifier runs it on a device/emulator build.
+
 ## Maestro boundary
 
 The existing `.maestro/smoke.yaml` flow proves one launch reaches
@@ -141,8 +195,10 @@ Run the isolated Android list flow with the guarded query bundle:
 maestro --udid emulator-5554 test .maestro/m3-query.yaml
 ```
 
-Forms, discard/delete dialogs and restart E2E remain pending.
-Maestro runs
+Forms, discard/delete dialogs and restart E2E were pending until the
+M4 form flow above was authored; that flow is still not yet run, so
+until a separate verifier runs it on a device/emulator build those
+areas remain unproven. Maestro runs
 against the installed debug build; responsive Android checks
 (orientation, large font, keyboard, contrast, light/dark) need a
 device pass with actual metrics, still pending.

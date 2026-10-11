@@ -5,6 +5,29 @@ import i18n from './src/i18n';
 import InventoryContainer from './src/screens/InventoryContainer';
 
 export default function App() {
+  // DEV-ONLY CRUD fixture gate (M4 verification infra): enabled only
+  // when `__DEV__` is true AND BOTH `EXPO_PUBLIC_NATIVE_FIXTURE=1` and
+  // `EXPO_PUBLIC_NATIVE_CRUD=1`. Highest precedence: takes priority over
+  // the query, repository, and M1 fixture gates below; bypasses the
+  // default `InventoryContainer` bootstrap entirely, so the normal
+  // `tengo.db` bootstrap never runs here. Release builds ignore both
+  // flags. The harness is required lazily so release bundles never
+  // execute it.
+  const crudLaunch =
+    (globalThis as Record<string, unknown>).__DEV__ === true &&
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE === '1' &&
+    process.env.EXPO_PUBLIC_NATIVE_CRUD === '1';
+  if (crudLaunch) {
+    const CrudScreen = require('./src/dev/NativeCrudFixtureScreen')
+      .default as React.ComponentType;
+    return (
+      <I18nextProvider i18n={i18n}>
+        <SafeAreaProvider>
+          <CrudScreen />
+        </SafeAreaProvider>
+      </I18nextProvider>
+    );
+  }
   // DEV-ONLY query fixture gate (P3b3 verification infra): enabled only
   // when `__DEV__` is true AND BOTH `EXPO_PUBLIC_NATIVE_FIXTURE=1` and
   // `EXPO_PUBLIC_NATIVE_QUERY=1`. Takes precedence over the repository

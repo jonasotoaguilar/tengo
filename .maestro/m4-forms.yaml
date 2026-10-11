@@ -1,0 +1,259 @@
+# Tengo M4 form-fixture flow: DEV-only real-Android CRUD verification.
+# Scope: proves the isolated `m1-fixture-crud-m4.db` add/edit/discard/
+# delete form flows plus force-stop/relaunch persistence in one guarded
+# launch. It does NOT prove production `tengo.db` behavior: the first
+# assertion fail-closes on `crud-fixture-screen`, so this flow can never
+# accidentally pass against production.
+# Run locally against an installed debug build on a separate Metro port:
+#   EXPO_PUBLIC_NATIVE_FIXTURE=1 EXPO_PUBLIC_NATIVE_CRUD=1 npx expo start --port 8083
+#   maestro test .maestro/m4-forms.yaml
+# Deterministic start: the flow taps `crud-fixture-reset` (enabled only
+# once the fixture reports `ready`, never mid-open) so every run begins
+# from the empty isolated database. The reset closes the isolated handle,
+# then deletes, then reopens only the allowlisted fixture file. After the
+tap, the flow
+# waits for `crud-fixture-status` to go through `running` and reach
+# terminal `ready` BEFORE asserting the empty state: `inventory-empty-title`
+# may already be visible from a previous empty run, so waiting on it alone
+# could pass before the delete/reopen completes and row 1 would not be the
+# created row. A missed `running` window fails closed here (timeout)
+# instead of silently proceeding. Because the database is empty at that
+# point, the first created item takes id 1, which makes the
+# `inventory-row-1` selectors below safe instead of accidental.
+# Selectors use stable testIDs verified against the source (see the report);
+# count regexes accept the existing en/es copy, and quantity assertions
+# anchor the full `Quantity|Cantidad <n>` label so `5` never matches `15`.
+# `clearText` replaces field contents before edit inputs so the new value
+# never appends to the old.
+# This flow is authored here, not yet run: it is not native proof until a
+# separate verifier runs it on a device/emulator build; Maestro is never
+# executed in CI here.
+appId: com.tengo.app
+---
+- launchApp
+# Fail-closed gate: never test production by accident.
+- assertVisible:
+    id: 'crud-fixture-screen'
+- extendedWaitUntil:
+    visible:
+      id: 'crud-fixture-status'
+      text: 'ready'
+    timeout: 30000
+- assertVisible:
+    id: 'crud-fixture-status'
+# 0. Reset-first deterministic start: every run begins from the empty
+# isolated database, so `inventory-row-1` below is the created row.
+- tapOn:
+    id: 'crud-fixture-reset'
+- extendedWaitUntil:
+    visible:
+      id: 'crud-fixture-status'
+      text: 'running'
+    timeout: 15000
+- extendedWaitUntil:
+    visible:
+      id: 'crud-fixture-status'
+      text: 'ready'
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-empty-title'
+    timeout: 30000
+- assertVisible:
+    id: 'inventory-empty-title'
+# 1. Empty first-run state on the isolated database, then open the add
+# form from the first-run call to action.
+- assertVisible:
+    id: 'inventory-add-empty'
+- tapOn:
+    id: 'inventory-add-empty'
+- assertVisible:
+    id: 'item-form-screen'
+# 2. Create an item with a name, a quantity via the input, a NEW inline
+# location and a NEW inline category, then save and assert the created
+# row with its location is visible.
+- tapOn:
+    id: 'item-form/name'
+- inputText: 'Maestro Tomato'
+- tapOn:
+    id: 'item-form/quantity'
+- inputText: '3'
+- hideKeyboard
+- tapOn:
+    id: 'item-form/location-new'
+- tapOn:
+    id: 'item-form/location-new/name'
+- inputText: 'Maestro Pantry'
+- hideKeyboard
+- tapOn:
+    id: 'item-form/new-category/name'
+- inputText: 'Maestro Greens'
+- tapOn:
+    id: 'item-form/new-category/add'
+- hideKeyboard
+- tapOn:
+    id: 'item-form/save'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-1-location'
+    text: '.*Maestro Pantry.*'
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+3$'
+- assertVisible:
+    id: 'inventory-count'
+    text: '^1 (of|de) 1$'
+# 3. Force-stop/relaunch persistence against the isolated database.
+- stopApp
+- launchApp
+- assertVisible:
+    id: 'crud-fixture-screen'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 30000
+- assertVisible:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-1-location'
+    text: '.*Maestro Pantry.*'
+# 4. Open the row, edit the name and quantity, save, assert the updated row.
+- tapOn:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'item-form-screen'
+- tapOn:
+    id: 'item-form/name'
+- clearText
+- inputText: 'Maestro Tomato Edited'
+- tapOn:
+    id: 'item-form/quantity'
+- clearText
+- inputText: '5'
+- hideKeyboard
+- tapOn:
+    id: 'item-form/save'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+5$'
+# 5. Edit persistence across a restart: the UPDATED values survive a
+# force-stop/relaunch, not just the created row.
+- stopApp
+- launchApp
+- assertVisible:
+    id: 'crud-fixture-screen'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 30000
+- assertVisible:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+5$'
+- assertVisible:
+    id: 'inventory-row-1-location'
+    text: '.*Maestro Pantry.*'
+# 6. Dirty-discard: change the name, trigger Close, take the Cancel path
+# (edit still on screen), trigger Close again, take the Discard path and
+# assert the stored values are unchanged.
+- tapOn:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'item-form-screen'
+- tapOn:
+    id: 'item-form/name'
+- clearText
+- inputText: 'Unsaved Change'
+- hideKeyboard
+- tapOn:
+    id: 'item-form/close'
+- assertVisible:
+    id: 'item-form-screen/discard-dialog'
+- tapOn:
+    id: 'item-form-screen/discard-cancel'
+- assertVisible:
+    id: 'item-form-screen'
+- tapOn:
+    id: 'item-form/close'
+- assertVisible:
+    id: 'item-form-screen/discard-dialog'
+- tapOn:
+    id: 'item-form-screen/discard-confirm'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+5$'
+- assertNotVisible:
+    text: 'Unsaved Change'
+# 7. Delete: trigger Delete, assert the confirmation names the item, take
+# Cancel (row still exists), then confirm and assert the row is gone and
+# the empty state returns.
+- tapOn:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'item-form-screen'
+- tapOn:
+    id: 'item-form/delete'
+- assertVisible:
+    id: 'item-form-screen/delete-dialog'
+- assertVisible:
+    id: 'item-form-screen/delete-title'
+    text: '.*Maestro Tomato Edited.*'
+- tapOn:
+    id: 'item-form-screen/delete-cancel'
+- assertVisible:
+    id: 'item-form-screen'
+- tapOn:
+    id: 'item-form/close'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-row-1'
+- tapOn:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'item-form-screen'
+- tapOn:
+    id: 'item-form/delete'
+- assertVisible:
+    id: 'item-form-screen/delete-dialog'
+- tapOn:
+    id: 'item-form-screen/delete-confirm'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-empty-title'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-empty-title'
+- assertNotVisible:
+    id: 'inventory-row-1'
+# 8. Force-stop/relaunch: the deletion persisted on the isolated database.
+- stopApp
+- launchApp
+- assertVisible:
+    id: 'crud-fixture-screen'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-empty-title'
+    timeout: 30000
+- assertVisible:
+    id: 'inventory-empty-title'

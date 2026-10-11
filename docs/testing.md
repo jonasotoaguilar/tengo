@@ -311,6 +311,57 @@ why the quantity edit uses the stepper. Not yet proven natively: typing a
 new value into a non-empty numeric quantity field, and any locale other
 than the one the device was set to.
 
+## Recorded M5 contrast measurements (computed, not device-sampled)
+
+The M5 contrast floor is proposed in `DESIGN.md` section 5 and
+`ROADMAP.md` section 7: text at least 4.5:1, interactive controls and
+focus indicators at least 3:1. The values below are computed from the
+palette literals in the four production surfaces with the WCAG relative
+luminance formula. They are arithmetic on the committed token values,
+not a screenshot or device sample, and they do not measure focus
+indicators (which are drawn by the platform).
+
+Text pairs, both schemes — all meet 4.5:1:
+
+| Pair | Light | Dark |
+| --- | --- | --- |
+| primary text on background | 17.16 | 16.58 |
+| primary text on surface | 15.32 | 15.05 |
+| secondary text on background | 6.50 | 8.58 |
+| secondary text on surface | 5.80 | 7.79 |
+| button label (`accentOn` on `accent`) | 6.39 | 7.39 |
+| accent as text on background | 6.39 | 9.35 |
+| error text on background | 6.54 | 11.03 |
+| error text on surface | 5.84 | 10.02 |
+| inverse notice (`noticeText` on `noticeBackground`) | 17.16 | 16.58 |
+
+Control boundaries — the `border` token FAILS the proposed 3:1 floor in
+both schemes: 1.73 against the light background and 1.54 against the
+light surface; 1.60 against the dark background and 1.45 against the
+dark surface.
+
+Disposition, recorded rather than waived:
+
+- Where the `border` token draws a decorative separator (item row
+  separators in `src/components/InventoryList.tsx`, the static draft-tag
+  outline in `src/components/ItemForm.tsx`), WCAG 1.4.11 does not apply
+  and the value is acceptable as-is.
+- Where it is the only cue for the extent of an interactive control —
+  the search field, the name/quantity/location/category inputs, the
+  quantity steppers, and the unselected filter/location/category chips —
+  the proposed 3:1 control floor is not met today.
+- The fix is a token change, not a layout change: add a
+  control-boundary token at or above 3:1 against both the background and
+  the surface, and use it for those controls while the decorative
+  separators keep the current value. That changes the visual weight of
+  every input outline, and `DESIGN.md` marks its token values "proposed
+  values, subject to approval", so the change needs an explicit decision
+  before it is implemented.
+- `src/screens/ItemFormScreen.tsx` defines `border` in both palettes but
+  never uses it; that is dead token surface, not a contrast failure.
+
+
+
 ## Maestro boundary
 
 The existing `.maestro/smoke.yaml` flow proves one launch reaches

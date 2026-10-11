@@ -10,6 +10,7 @@
  * the ItemForm delete button reaches the controller's delete request.
  */
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -274,4 +275,58 @@ test('the ItemForm delete button reaches the controller delete request', async (
   expect(
     screen.getByTestId('item-form/name', { includeHiddenElements: true }),
   ).toBeTruthy();
+});
+
+test('M4: blur on an invalid name shows the inline message without submitting', async () => {
+  await renderScreen({ route: { kind: 'create' } });
+  await screen.findByTestId('item-form/name');
+  await fireEvent.changeText(screen.getByTestId('item-form/name'), '   ');
+  await fireEvent(screen.getByTestId('item-form/name'), 'blur');
+  expect(await screen.findByTestId('item-form/error-name')).toBeTruthy();
+  expect(screen.getByText('Enter a name.')).toBeTruthy();
+  expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+  expect(repository.updateItemFromDraft).not.toHaveBeenCalled();
+});
+
+test('M4-LOAD: edit route shows a loading surface with no editable fields until the load resolves', async () => {
+  let resolveLoad!: (detail: ItemDetail) => void;
+  repository.getItem.mockImplementationOnce(
+    () =>
+      new Promise<ItemDetail>((resolve) => {
+        resolveLoad = resolve;
+      }),
+  );
+  await renderScreen({ route: { kind: 'edit', itemId: 1 } });
+  // Loading surface present; no editable input may be mounted while the
+  // blank reset session is showing, or typed input would be discarded.
+  expect(await screen.findByTestId('item-form/loading')).toBeTruthy();
+  expect(screen.getByText('Loading the item…')).toBeTruthy();
+  expect(screen.queryByTestId('item-form/name')).toBeNull();
+  expect(screen.queryByTestId('item-form/quantity')).toBeNull();
+  expect(screen.getByTestId('item-form/loading-close')).toBeTruthy();
+  await act(async () => {
+    resolveLoad({ ...riceDetail });
+  });
+  expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+  expect(screen.getByTestId('item-form/name').props.value).toBe('Rice');
+  expect(screen.getByTestId('item-form/quantity').props.value).toBe('2');
+  expect(screen.queryByTestId('item-form/loading')).toBeNull();
+});
+
+test('M4-LOAD: close from the loading surface dismisses without loading the form', async () => {
+  const onDismiss = jest.fn();
+  repository.getItem.mockImplementationOnce(
+    () => new Promise<ItemDetail>(() => {}),
+  );
+  await renderScreen({ route: { kind: 'edit', itemId: 1 }, onDismiss });
+  expect(await screen.findByTestId('item-form/loading')).toBeTruthy();
+  await fireEvent.press(screen.getByTestId('item-form/loading-close'));
+  expect(onDismiss).toHaveBeenCalledTimes(1);
+  expect(screen.queryByTestId('item-form/name')).toBeNull();
+});
+
+test('M4-LOAD: create route never shows the loading surface', async () => {
+  await renderScreen({ route: { kind: 'create' } });
+  expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+  expect(screen.queryByTestId('item-form/loading')).toBeNull();
 });

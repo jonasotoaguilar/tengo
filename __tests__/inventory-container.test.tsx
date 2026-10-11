@@ -658,3 +658,246 @@ describe('U2b opt-in mutations (enableMutations)', () => {
     await cleanup();
   });
 });
+
+describe('M4 transient feedback (Gap A)', () => {
+  const repository = require('../src/inventory/itemRepository') as {
+    getItem: jest.Mock;
+    createItemFromDraft: jest.Mock;
+    updateItemFromDraft: jest.Mock;
+    deleteItem: jest.Mock;
+  };
+
+  const riceDetail = {
+    id: 1,
+    name: 'Rice',
+    quantity: 2,
+    locationId: 10,
+    location: {
+      id: 10,
+      name: 'Pantry',
+      address: null,
+      created_at: 'loc-created-10',
+    },
+    categoryIds: [],
+    categories: [],
+    created_at: 'created-1',
+  };
+
+  beforeEach(() => {
+    repository.getItem.mockReset();
+    repository.createItemFromDraft.mockReset();
+    repository.updateItemFromDraft.mockReset();
+    repository.deleteItem.mockReset();
+    repository.getItem.mockResolvedValue({ ...riceDetail });
+    repository.createItemFromDraft.mockResolvedValue({
+      ...riceDetail,
+      id: 3,
+      name: 'Quinoa',
+    });
+    repository.updateItemFromDraft.mockResolvedValue({ ...riceDetail });
+    repository.deleteItem.mockResolvedValue(undefined);
+  });
+
+  // The jest-expo `AccessibilityInfo` mock does not survive `spyOn`
+  // with stable call counts, so the announce tests below swap the
+  // function by direct assignment and restore it here.
+  let realAnnounce: ((message: string) => void) | null = null;
+
+  function stubAnnounce(): jest.Mock {
+    const { AccessibilityInfo } = require('react-native') as {
+      AccessibilityInfo: { announceForAccessibility: (m: string) => void };
+    };
+    if (realAnnounce === null) {
+      realAnnounce =
+        AccessibilityInfo.announceForAccessibility.bind(AccessibilityInfo);
+    }
+    const announce = jest.fn();
+    AccessibilityInfo.announceForAccessibility = announce;
+    return announce;
+  }
+
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+    if (realAnnounce !== null) {
+      const { AccessibilityInfo } = require('react-native') as {
+        AccessibilityInfo: { announceForAccessibility: (m: string) => void };
+      };
+      AccessibilityInfo.announceForAccessibility = realAnnounce;
+      realAnnounce = null;
+    }
+  });
+
+  async function renderMutations() {
+    return render(
+      <I18nextProvider i18n={i18n}>
+        <InventoryContainer enableMutations />
+      </I18nextProvider>,
+    );
+  }
+
+  async function openCreate(): Promise<void> {
+    await fireEvent.press(screen.getByTestId('inventory-add-header'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+  }
+
+  async function fillValidCreateForm(): Promise<void> {
+    await fireEvent.changeText(screen.getByTestId('item-form/name'), 'Quinoa');
+    await fireEvent.changeText(screen.getByTestId('item-form/quantity'), '1');
+    await fireEvent.press(screen.getByTestId('item-form/location-10'));
+  }
+
+  test('no notice surface renders before anything happens', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+    expect(screen.queryByTestId('inventory-notice')).toBeNull();
+    await cleanup();
+  });
+
+  test('a successful save shows the saved message, announces it once, and clears after the timer', async () => {
+    jest.useFakeTimers();
+    const announce = stubAnnounce();
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await openCreate();
+    await fillValidCreateForm();
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    const notice = await screen.findByTestId('inventory-notice');
+    expect(notice).toBeTruthy();
+    expect(notice.props.accessibilityRole).toBe('alert');
+    expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+      'Item saved.',
+    );
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith('Item saved.');
+
+    await act(async () => {
+      jest.advanceTimersByTime(3000);
+    });
+    expect(screen.queryByTestId('inventory-notice')).toBeNull();
+    await cleanup();
+  });
+
+  test('a successful delete shows the deleted message', async () => {
+    jest.useFakeTimers();
+    const announce = stubAnnounce();
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-row-1'));
+    await screen.findByTestId('item-form/delete');
+    await fireEvent.press(screen.getByTestId('item-form/delete'));
+    await screen.findByTestId('item-form-screen/delete-dialog');
+    await fireEvent.press(
+      screen.getByTestId('item-form-screen/delete-confirm'),
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    expect(await screen.findByTestId('inventory-notice')).toBeTruthy();
+    expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+      'Item deleted.',
+    );
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith('Item deleted.');
+    await cleanup();
+  });
+
+  test('a second message replaces the first and restarts the timer', async () => {
+    jest.useFakeTimers();
+    const announce = stubAnnounce();
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await openCreate();
+    await fillValidCreateForm();
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+      'Item saved.',
+    );
+
+    await act(async () => {
+      jest.advanceTimersByTime(2500);
+    });
+    expect(screen.queryByTestId('inventory-notice')).toBeTruthy();
+
+    await openCreate();
+    await fillValidCreateForm();
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+      'Item saved.',
+    );
+    expect(announce).toHaveBeenCalledTimes(2);
+
+    // The first timer would have fired 500ms from now; the restart keeps
+    // the second message visible.
+    await act(async () => {
+      jest.advanceTimersByTime(2500);
+    });
+    expect(screen.queryByTestId('inventory-notice')).toBeTruthy();
+    await act(async () => {
+      jest.advanceTimersByTime(1000);
+    });
+    expect(screen.queryByTestId('inventory-notice')).toBeNull();
+    await cleanup();
+  });
+
+  test('the notice renders in both color schemes with a scheme-matched palette', async () => {
+    // `useColorScheme` is a plain jest mock returning 'light'; drive it
+    // per iteration instead of going through `Appearance`.
+    const { StyleSheet, useColorScheme } = require('react-native') as {
+      StyleSheet: { flatten: (style: unknown) => { backgroundColor?: string } };
+      useColorScheme: jest.Mock;
+    };
+    const backgrounds: (string | undefined)[] = [];
+    try {
+      for (const colorScheme of ['light', 'dark'] as const) {
+        jest.useFakeTimers();
+        const announce = stubAnnounce();
+        useColorScheme.mockReturnValue(colorScheme);
+        initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+        await renderMutations();
+        await settle();
+
+        await openCreate();
+        await fillValidCreateForm();
+        await fireEvent.press(screen.getByTestId('item-form/save'));
+        await waitFor(() =>
+          expect(screen.queryByTestId('item-form/name')).toBeNull(),
+        );
+        const notice = await screen.findByTestId('inventory-notice');
+        expect(notice.props.accessibilityRole).toBe('alert');
+        expect(notice.props.pointerEvents).toBe('none');
+        backgrounds.push(
+          StyleSheet.flatten(notice.props.style).backgroundColor,
+        );
+        expect(announce).toHaveBeenCalledTimes(1);
+        await cleanup();
+        jest.useRealTimers();
+      }
+    } finally {
+      useColorScheme.mockReturnValue('light');
+    }
+    // Both schemes resolve a concrete inverse-surface background, and
+    // the two differ so the toast stays distinct from the list in each.
+    expect(backgrounds).toHaveLength(2);
+    expect(backgrounds[0]).toBeTruthy();
+    expect(backgrounds[1]).toBeTruthy();
+    expect(backgrounds[0]).not.toBe(backgrounds[1]);
+  });
+});

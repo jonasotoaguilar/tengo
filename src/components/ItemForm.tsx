@@ -85,6 +85,14 @@ export interface ItemFormProps {
    */
   onRequestDelete?: () => void;
   /**
+   * Blur validation entry (M4 Gap B): the parent validates a single
+   * field against the current values and merges the inline error.
+   * Wired to the name and quantity inputs only; never fired while
+   * `submitting` (the inputs are non-editable then, and the handler
+   * guards regardless). Absent stays a true no-op.
+   */
+  onFieldBlur?: (field: 'name' | 'quantity') => void;
+  /**
    * Called with the testID of the mounted focus target whenever the
    * component requests error focus (never alters selection). Lets unit
    * tests prove target selection and request routing per state.
@@ -232,6 +240,7 @@ export default function ItemForm({
   onSubmit,
   onRequestClose,
   onRequestDelete,
+  onFieldBlur,
   onRequestErrorFocus,
   errors,
   submitting = false,
@@ -454,6 +463,9 @@ export default function ItemForm({
           onChangeText={(next) => {
             if (!pending) onChange({ ...values, name: next });
           }}
+          onBlur={() => {
+            if (!pending) onFieldBlur?.('name');
+          }}
           editable={!pending}
           autoCorrect={false}
           returnKeyType="next"
@@ -515,6 +527,9 @@ export default function ItemForm({
             value={values.quantityRaw}
             onChangeText={(next) => {
               if (!pending) onChange({ ...values, quantityRaw: next });
+            }}
+            onBlur={() => {
+              if (!pending) onFieldBlur?.('quantity');
             }}
             editable={!pending}
             keyboardType="number-pad"

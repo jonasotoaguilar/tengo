@@ -584,3 +584,33 @@ describe('U2b delete affordance', () => {
     expect(await view.findByText('Eliminar artículo')).toBeTruthy();
   });
 });
+
+describe('M4 blur callback (Gap B)', () => {
+  test('blur events call onFieldBlur with the right field', async () => {
+    const onFieldBlur = jest.fn();
+    const view = await renderForm(baseProps({ onFieldBlur }));
+    await fireEvent(view.getByTestId('item-form/name'), 'blur');
+    expect(onFieldBlur).toHaveBeenCalledWith('name');
+    await fireEvent(view.getByTestId('item-form/quantity'), 'blur');
+    expect(onFieldBlur).toHaveBeenCalledWith('quantity');
+    expect(onFieldBlur).toHaveBeenCalledTimes(2);
+  });
+
+  test('absent callback stays a true no-op on blur', async () => {
+    const view = await renderForm(baseProps({}));
+    await expect(
+      (async () => {
+        await fireEvent(view.getByTestId('item-form/name'), 'blur');
+        await fireEvent(view.getByTestId('item-form/quantity'), 'blur');
+      })(),
+    ).resolves.toBeUndefined();
+  });
+
+  test('blur is not fired while submitting', async () => {
+    const onFieldBlur = jest.fn();
+    const view = await renderForm(baseProps({ onFieldBlur, submitting: true }));
+    await fireEvent(view.getByTestId('item-form/name'), 'blur');
+    await fireEvent(view.getByTestId('item-form/quantity'), 'blur');
+    expect(onFieldBlur).not.toHaveBeenCalled();
+  });
+});

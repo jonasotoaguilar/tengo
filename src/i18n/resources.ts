@@ -78,9 +78,12 @@ export const en = {
   itemFormDeleteConfirm: 'Delete',
   itemFormDeleteCancel: 'Cancel',
   itemFormLoadErrorTitle: 'Could not load the item.',
+  itemFormLoading: 'Loading the item…',
   itemFormErrorNameRequired: 'Enter a name.',
   itemFormErrorQuantityInvalid: 'Enter a whole number of 0 or more.',
   itemFormErrorLocationRequired: 'Choose or create a location.',
+  itemFormSaved: 'Item saved.',
+  itemFormDeleted: 'Item deleted.',
 };
 
 export const es: typeof en = {
@@ -158,7 +161,10 @@ export const es: typeof en = {
   itemFormDeleteConfirm: 'Eliminar',
   itemFormDeleteCancel: 'Cancelar',
   itemFormLoadErrorTitle: 'No se pudo cargar el artículo.',
+  itemFormLoading: 'Cargando el artículo…',
   itemFormErrorNameRequired: 'Escribe un nombre.',
   itemFormErrorQuantityInvalid: 'Escribe un número entero de 0 o más.',
   itemFormErrorLocationRequired: 'Elige o crea una ubicación.',
+  itemFormSaved: 'Artículo guardado.',
+  itemFormDeleted: 'Artículo eliminado.',
 };

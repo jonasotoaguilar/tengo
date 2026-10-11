@@ -114,6 +114,15 @@ export interface ItemFormController {
   confirmDiscard: boolean;
   confirmDelete: boolean;
   onChange: (next: ItemFormValues) => void;
+  /**
+   * M4 Gap B blur validation: validates ONLY the named field against
+   * the current values and merges the result into the errors state
+   * (sets the localized message when invalid, clears it when valid).
+   * Never touches any other field's error; never runs while
+   * `submitting`, while either write guard owns the screen, or on a
+   * mixed route epoch. Reuses the submit-time rules and i18n keys.
+   */
+  onFieldBlur: (field: 'name' | 'quantity') => void;
   /** Persists the latest values; resolves the explicit outcome. */
   onSave: () => Promise<SaveOutcome>;
   onRequestClose: () => void;
@@ -472,6 +481,40 @@ export default function useItemFormController(
     setValues(next);
   }, []);
 
+  const onFieldBlur = useCallback(
+    (field: 'name' | 'quantity') => {
+      // Mixed epoch (route changed before the session reset ran):
+      // refuse rather than publishing a stale blur error.
+      if (!epochMatchesLiveRoute()) return;
+      // A pending write owns the screen: blur validates nothing.
+      if (saveOwner.current !== null || deleteOwner.current !== null) return;
+      if (saving || deleting) return;
+      const ticket = loadTicket.current;
+      const current = valuesRef.current;
+      const message =
+        field === 'name'
+          ? current.name.trim() === ''
+            ? t('itemFormErrorNameRequired')
+            : undefined
+          : parseQuantityRaw(current.quantityRaw) === null
+            ? t('itemFormErrorQuantityInvalid')
+            : undefined;
+      // Route moved mid-blur: drop the stale result.
+      if (ticket !== loadTicket.current || !epochMatchesLiveRoute()) return;
+      setErrors((prev) => {
+        if (message === undefined) {
+          if (prev[field] === undefined) return prev;
+          const next = { ...prev };
+          delete next[field];
+          return next;
+        }
+        if (prev[field] === message) return prev;
+        return { ...prev, [field]: message };
+      });
+    },
+    [epochMatchesLiveRoute, saving, deleting, t],
+  );
+
   const onSave = useCallback((): Promise<SaveOutcome> => {
     // Mixed epoch (route changed before the session reset ran): refuse
     // the write rather than misapplying stale session state to the new
@@ -715,6 +758,7 @@ export default function useItemFormController(
     confirmDiscard,
     confirmDelete,
     onChange,
+    onFieldBlur,
     onSave,
     onRequestClose,
     onConfirmDiscard,

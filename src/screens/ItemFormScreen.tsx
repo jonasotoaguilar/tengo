@@ -141,11 +141,37 @@ export default function ItemFormScreen({
               </Text>
             </Pressable>
           </View>
+        ) : controller.loadState === 'loading' ? (
+          // Edit load window: a dedicated surface with NO editable
+          // inputs, so the user cannot type into the blank reset session
+          // that the resolving load is about to overwrite. Close stays
+          // available so the user is never trapped; a translated line
+          // (never a bare spinner, per DESIGN.md §4) names the state.
+          <View testID="item-form/loading" style={styles.loadError}>
+            <Text
+              testID="item-form/loading-message"
+              style={[styles.dialogTitle, { color: palette.text }]}
+            >
+              {t('itemFormLoading')}
+            </Text>
+            <Pressable
+              testID="item-form/loading-close"
+              accessibilityRole="button"
+              accessibilityLabel={t('itemFormClose')}
+              onPress={controller.onRequestClose}
+              style={styles.textButton}
+            >
+              <Text style={[styles.textButtonText, { color: palette.accent }]}>
+                {t('itemFormClose')}
+              </Text>
+            </Pressable>
+          </View>
         ) : (
           <ItemForm
             mode={controller.mode}
             values={controller.values}
             onChange={controller.onChange}
+            onFieldBlur={controller.onFieldBlur}
             onSubmit={() => {
               void controller.onSave();
             }}

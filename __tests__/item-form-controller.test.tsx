@@ -1489,3 +1489,211 @@ test('failed edit load codes the error and retry reloads latest', async () => {
   expect(result.current.values.name).toBe('Retry');
   expect(result.current.errors.form).toBeUndefined();
 });
+
+describe('M4 blur validation (Gap B)', () => {
+  test('blur on an empty name sets only the name error', async () => {
+    const { result } = await renderController(baseOptions());
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: '   ',
+        quantityRaw: '2',
+        location: { kind: 'existing', locationId: 10 },
+      });
+    });
+    await act(async () => {
+      await (
+        result.current as unknown as {
+          onFieldBlur: (f: 'name' | 'quantity') => void;
+        }
+      ).onFieldBlur('name');
+    });
+    expect(result.current.errors.name).toBe('Enter a name.');
+    expect(result.current.errors.quantity).toBeUndefined();
+    expect(result.current.errors.location).toBeUndefined();
+  });
+
+  test('blur on a valid name clears a previous name error and leaves a quantity error intact', async () => {
+    const { result } = await renderController(baseOptions());
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: '   ',
+        quantityRaw: 'abc',
+        location: { kind: 'existing', locationId: 10 },
+      });
+    });
+    const blur = (
+      result.current as unknown as {
+        onFieldBlur: (f: 'name' | 'quantity') => void;
+      }
+    ).onFieldBlur;
+    await act(async () => {
+      await blur('quantity');
+    });
+    expect(result.current.errors.quantity).toBe(
+      'Enter a whole number of 0 or more.',
+    );
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+      });
+    });
+    // Seed a stale name error as a prior submit would have left it.
+    await act(async () => {
+      await result.current.onSave();
+    });
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        quantityRaw: 'abc',
+      });
+    });
+    await act(async () => {
+      await (
+        result.current as unknown as {
+          onFieldBlur: (f: 'name' | 'quantity') => void;
+        }
+      ).onFieldBlur('name');
+    });
+    expect(result.current.errors.name).toBeUndefined();
+    expect(result.current.errors.quantity).toBe(
+      'Enter a whole number of 0 or more.',
+    );
+  });
+
+  test('blur on an invalid quantity sets only the quantity error', async () => {
+    const { result } = await renderController(baseOptions());
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        quantityRaw: 'abc',
+        location: { kind: 'existing', locationId: 10 },
+      });
+    });
+    await act(async () => {
+      await (
+        result.current as unknown as {
+          onFieldBlur: (f: 'name' | 'quantity') => void;
+        }
+      ).onFieldBlur('quantity');
+    });
+    expect(result.current.errors.quantity).toBe(
+      'Enter a whole number of 0 or more.',
+    );
+    expect(result.current.errors.name).toBeUndefined();
+  });
+
+  test('blur on a valid quantity clears a previous quantity error', async () => {
+    const { result } = await renderController(baseOptions());
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        quantityRaw: 'abc',
+        location: { kind: 'existing', locationId: 10 },
+      });
+    });
+    await act(async () => {
+      await (
+        result.current as unknown as {
+          onFieldBlur: (f: 'name' | 'quantity') => void;
+        }
+      ).onFieldBlur('quantity');
+    });
+    expect(result.current.errors.quantity).toBeTruthy();
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        quantityRaw: '3',
+      });
+    });
+    await act(async () => {
+      await (
+        result.current as unknown as {
+          onFieldBlur: (f: 'name' | 'quantity') => void;
+        }
+      ).onFieldBlur('quantity');
+    });
+    expect(result.current.errors.quantity).toBeUndefined();
+  });
+
+  test('blur while submitting does nothing', async () => {
+    const gate = deferred<ItemDetail>();
+    const repository = makeRepository();
+    repository.createItemFromDraft.mockReturnValueOnce(gate.promise);
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        quantityRaw: '1',
+        location: { kind: 'existing', locationId: 10 },
+      });
+    });
+    await act(async () => {
+      void result.current.onSave();
+    });
+    expect(result.current.submitting).toBe(true);
+    // Invalidate the name mid-flight, then blur: the pending write owns
+    // the screen, so no error may publish.
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: '   ',
+      });
+    });
+    await act(async () => {
+      await (
+        result.current as unknown as {
+          onFieldBlur: (f: 'name' | 'quantity') => void;
+        }
+      ).onFieldBlur('name');
+    });
+    expect(result.current.errors.name).toBeUndefined();
+    await act(async () => {
+      gate.resolve(makeDetail());
+    });
+  });
+
+  test('blur in the commit window after a route change publishes no stale error', async () => {
+    const repository = makeRepository();
+    repository.getItem.mockImplementation(async () =>
+      makeDetail({ name: 'Eight' }),
+    );
+    const optionsFor = (itemId: number) =>
+      baseOptions({ repository, route: { kind: 'edit', itemId } });
+    let fire = false;
+    const onWindow = (controller: ProbeController) => {
+      if (fire) {
+        fire = false;
+        (
+          controller as unknown as {
+            onFieldBlur: (f: 'name' | 'quantity') => void;
+          }
+        ).onFieldBlur('name');
+      }
+    };
+    const view = await render(
+      <WindowProbe options={optionsFor(7)} onWindow={onWindow} />,
+    );
+    await act(async () => {});
+    await act(async () => {
+      latestProbedController?.onChange({
+        ...(latestProbedController?.values as object),
+        name: '   ',
+        quantityRaw: '2',
+      });
+    });
+    fire = true;
+    await view.rerender(
+      <WindowProbe options={optionsFor(8)} onWindow={onWindow} />,
+    );
+    await act(async () => {});
+    expect(latestProbedController?.errors).toEqual({});
+    await view.unmount();
+  });
+});

@@ -19,6 +19,15 @@
  * `undefined`) so the DEV fixture and the recorded M3 proof are unchanged.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import {
+  AccessibilityInfo,
+  StyleSheet,
+  Text,
+  useColorScheme,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import InventoryList, {
   type InventoryListState,
@@ -35,6 +44,25 @@ import type {
 } from '../inventory/types';
 import ItemFormScreen from './ItemFormScreen';
 import type { ItemFormRoute } from './useItemFormController';
+
+interface Palette {
+  noticeBackground: string;
+  noticeText: string;
+}
+
+// Inverse-surface pair (DESIGN.md §5 roles): dark toast on the light
+// list background, light toast on the dark list background. Values
+// mirror the sibling `text`/`background` roles so the pair stays
+// legible and distinct from the list in both schemes.
+const LIGHT: Palette = {
+  noticeBackground: '#1A1C19',
+  noticeText: '#FFFFFF',
+};
+
+const DARK: Palette = {
+  noticeBackground: '#F2F1ED',
+  noticeText: '#121212',
+};
 
 /**
  * Stable default bootstrap: the single production `tengo.db` open. A
@@ -77,6 +105,10 @@ export default function InventoryContainer({
   bootstrap = defaultBootstrap,
   enableMutations = false,
 }: InventoryContainerProps = {}) {
+  const { t } = useTranslation();
+  const scheme = useColorScheme();
+  const palette = scheme === 'dark' ? DARK : LIGHT;
+  const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState<ItemFilter>({});
   const [retryToken, setRetryToken] = useState(0);
   // Post-write refresh trigger (U2b): re-reads list/total/choices without
@@ -94,6 +126,14 @@ export default function InventoryContainer({
   // Open add/edit route. Independent of the read effect below so a
   // post-write refresh never unmounts the screen before dismissal.
   const [route, setRoute] = useState<ItemFormRoute | null>(null);
+  // M4 Gap A transient confirmation: a small non-blocking notice near
+  // the bottom of the container, rendered OUTSIDE the form modal so it
+  // stays visible after the modal dismisses. The token lets a newer
+  // message replace an older one and restart the auto-clear timer.
+  const [notice, setNotice] = useState<{
+    kind: 'saved' | 'deleted';
+    token: number;
+  } | null>(null);
 
   // App-lifetime managed handle: set once by a successful bootstrap and
   // reused by every filter/retry round. Never closed here.
@@ -120,10 +160,12 @@ export default function InventoryContainer({
   const handleSaved = useCallback(() => {
     backgroundRefreshRef.current = true;
     setRefreshToken((token) => token + 1);
+    setNotice((prev) => ({ kind: 'saved', token: (prev?.token ?? 0) + 1 }));
   }, []);
   const handleDeleted = useCallback(() => {
     backgroundRefreshRef.current = true;
     setRefreshToken((token) => token + 1);
+    setNotice((prev) => ({ kind: 'deleted', token: (prev?.token ?? 0) + 1 }));
   }, []);
   const handleDismiss = useCallback(() => {
     setRoute(null);
@@ -133,6 +175,32 @@ export default function InventoryContainer({
   // available. Literally `undefined` otherwise, preserving the disabled
   // rendering and the DEV read-only fixture.
   const mutationsReady = enableMutations && dbHandle !== null;
+
+  // Transient-notice lifecycle: announce once per new message, then
+  // auto-clear after about 3 seconds. The cleanup clears the pending
+  // timer on unmount and whenever a newer message replaces the older
+  // one (the effect re-runs, restarting the countdown). Keyed on the
+  // notice token ONLY: `t` is not referentially stable across the
+  // background-refresh renders, and re-running here would both
+  // re-announce and restart the countdown on every list render.
+  const noticeToken = notice?.token ?? null;
+  const noticeMessage =
+    notice === null
+      ? null
+      : notice.kind === 'saved'
+        ? t('itemFormSaved')
+        : t('itemFormDeleted');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: token-keyed announce+timer by design (see above)
+  useEffect(() => {
+    if (noticeToken === null || noticeMessage === null) return;
+    AccessibilityInfo.announceForAccessibility(noticeMessage);
+    const timer = setTimeout(() => {
+      setNotice(null);
+    }, 3000);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [noticeToken]);
 
   // `retryToken` and `refreshToken` below are trigger-only deps by
   // design: they replay the current filter (retry after a failure,
@@ -220,7 +288,7 @@ export default function InventoryContainer({
   }, [filter, retryToken, refreshToken]);
 
   return (
-    <>
+    <View style={styles.root}>
       <InventoryList
         state={viewState}
         items={items}
@@ -244,6 +312,56 @@ export default function InventoryContainer({
           onDismiss={handleDismiss}
         />
       ) : null}
-    </>
+      {notice !== null ? (
+        <View
+          testID="inventory-notice"
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+          pointerEvents="none"
+          style={[
+            styles.notice,
+            {
+              backgroundColor: palette.noticeBackground,
+              bottom: insets.bottom + 24,
+            },
+          ]}
+        >
+          <Text
+            testID="inventory-notice-text"
+            style={[styles.noticeText, { color: palette.noticeText }]}
+          >
+            {notice.kind === 'saved'
+              ? t('itemFormSaved')
+              : t('itemFormDeleted')}
+          </Text>
+        </View>
+      ) : null}
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+  // Transient confirmation (DESIGN.md §3.4/§4): small, non-blocking,
+  // never focusable, never intercepts touches (`pointerEvents="none"`)
+  // so the list stays fully interactive underneath. Colors come from
+  // the semantic palette above (never inline hex); `bottom` is applied
+  // inline so the toast clears the bottom safe area instead of hiding
+  // behind the Android navigation bar, like the list FAB.
+  notice: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  noticeText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+});

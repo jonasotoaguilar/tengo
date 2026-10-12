@@ -36,8 +36,9 @@ integrity rules.
 Success for the approved MVP means the user can create, edit, delete,
 and search items entirely on-device, in English or Spanish. Search by
 name is the approved baseline; multi-category selection filters with
-OR semantics and deduplicated results. Other location/category text
-matching is proposed and undecided (see open decision 3).
+OR semantics and deduplicated results. Location/category text matching
+and accent folding were adopted and implemented on 2026-10-12 (open
+decision 3).
 
 ## Positioning
 
@@ -69,7 +70,8 @@ Confirmed foundation (implemented foundation, see Evidence and ROADMAP.md baseli
 
 - App shell with translated readiness screen and DB bootstrap
   (`App.tsx`).
-- Versioned SQLite migrations, currently schema version 2:
+- Versioned SQLite migrations, currently schema version 3 (v3 adds
+  the unique indexes on the folded entity name):
   `locations`, `categories`, `items` (required `location_id`
   reference plus `quantity`), and the `item_categories` join.
   See `src/db/migrations.ts`. The M1/M2 native gates passed on
@@ -126,25 +128,33 @@ Open decisions (explicitly undecided; DESIGN.md recommends defaults
 without claiming approval):
 
 1. Quantity bounds and units: zero is approved as exhausted with UI
-   treatment deferred; units, negatives, and numeric/string bounds
-   (such as 120/80/999999) remain proposals.
+   treatment deferred; units stay out of MVP scope. Numeric/string
+   bounds were adopted and implemented on 2026-10-12 (name 1–120,
+   quantity 0–999999, location 1–80, category 80), and negatives are
+   rejected by that same bound.
 2. Locations: the mandatory location entity (name required, address
-   optional, free entry) is approved; name/address uniqueness and any
-   managed-location UI remain proposals.
+   optional, free entry) is approved; name uniqueness was adopted and
+   implemented on 2026-10-12. Address uniqueness and any
+   managed-location UI remain unimplemented.
 3. Categories: independent entities, zero or many per item, with
-   OR-plus-dedup multi-select filtering, are approved; category
-   management UI and any further text matching remain proposals.
+   OR-plus-dedup multi-select filtering, are approved; location and
+   category text matching was adopted and implemented on 2026-10-12.
+   The category management UI remains unimplemented.
 4. Backup/recovery: deletion posture is approved (always confirm, no
-   trash); anything beyond that is undecided. Field limits, accent
-   handling, and contrast/placeholder semantics in DESIGN.md remain
-   proposals, not approvals.
+   trash); anything beyond that is undecided. Accent handling was
+   adopted and implemented on 2026-10-12, and the contrast and
+   placeholder semantics in DESIGN.md are implemented and guarded by
+   `__tests__/contrast-floor.test.tsx`. The one item in this area still
+   awaiting a user decision is the managed-entity screen.
 
 ## Brand Commitments
 
 The product name is Tengo. No visual identity, palette, typeface,
 icon set, voice-and-tone guide, or marketing claim has been confirmed.
-DESIGN.md proposes a direction; nothing there is a brand commitment
-until the user approves it.
+DESIGN.md proposes a direction; the token values and contrast floors it
+records are approved and implemented (its section 5, guarded by
+`__tests__/contrast-floor.test.tsx`), while no other element of it is a
+brand commitment until the user approves it.
 
 ## Evidence on Hand
 

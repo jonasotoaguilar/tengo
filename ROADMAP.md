@@ -7,14 +7,14 @@ observed and recorded (contrast floor, device metrics, locale, dark mode, large
 text, keyboard/safe area, accessibility tree, extended Maestro flows).
 "Current" below means read against the working tree (read-only
 review; no tests, builds, or installs were run for this document). Companion docs: [PRODUCT.md](PRODUCT.md) (confirmed
-product record) and [DESIGN.md](DESIGN.md) (proposed UX, not implemented).
+product record) and [DESIGN.md](DESIGN.md) (design contract; its section 3 describes built behavior).
 
 ## 1. Current baseline (with file evidence)
 
 | Area | State | Evidence |
 | ---- | ----- | -------- |
 | App shell | Implemented: readiness screen with translated title, subtitle, DB state | `App.tsx` |
-| Database | Implemented: `tengo.db`, versioned migrations, schema v2 (locations, categories, items with required location reference and quantity, item-category join) | `src/db/index.ts`, `src/db/migrations.ts` |
+| Database | Implemented: `tengo.db`, versioned migrations, schema v3 (locations, categories, items with required location reference and quantity, item-category join, unique indexes on the folded entity name) | `src/db/index.ts`, `src/db/migrations.ts` |
 | i18n | Implemented: `en`/`es`, device-locale detection, English fallback, type-locked keys | `src/i18n/index.ts`, `src/i18n/resources.ts` |
 | Unit tests | Implemented scaffolding: native boundary mocked, never touches a real DB | `jest.setup.ts`, `__tests__/`, `jest.config.js` |
 | Native smoke | Minimal: one launch reaches readiness; no restart-persistence or locale proof | `.maestro/smoke.yaml`, [Maestro boundary](docs/testing.md#maestro-boundary) |
@@ -35,8 +35,8 @@ Goals (approved MVP "Inventory by location"):
    (zero means exhausted), a required location-entity reference,
    and zero or more categories; search items with name search
    as the approved baseline plus multi-category OR filtering with
-dedup (further location/category text matching proposed,
-   see section 9). Deletion always confirms with no trash; domain
+dedup, extended by the adopted location/category text matching
+   (section 9). Deletion always confirms with no trash; domain
    and database both enforce integrity.
 2. Browse and search organized around location.
 3. Fully offline, on-device, in English and Spanish.
@@ -60,14 +60,15 @@ reorder without re-checking the "depends on" chain.
 
 ### G0 — UX/product gates and wireframe review (before M1, no schema work first)
 
-Proposed surfaces: [DESIGN.md](DESIGN.md) sections 3–4 wireframes
+Surfaces reviewed at this gate: [DESIGN.md](DESIGN.md) sections 3–4 wireframes
 and section 5 tokens; this document's section 9 gate table.
 
 - Review the list, search, add, edit, and location wireframes plus
   the recommended defaults (field limits, backfill values,
   quantity, locations, categories, deletion) and record a user
   decision per gate; the section 9 contract decisions below already
-  govern M1/M2, and full wireframe review still gates M3/M4 UI work.
+  govern M1/M2, and the wireframe/defaults review recorded in
+  section 9 closed this gate before the M3/M4 UI work.
 - Acceptance: every gate in section 9 has an explicit user decision
   (adopt, amend, or defer with a named owner); DESIGN.md wireframes
   reviewed with no open layout or state contradiction before UI
@@ -99,9 +100,12 @@ and validation.
   item-category pair, no duplicates) so an item has zero or many
   categories. Integrity is enforced by both domain validation and
   database constraints (foreign keys, required fields, join
-  uniqueness). Still proposals, not approvals: numeric/string
-  bounds (such as 120/80/999999), name/address uniqueness, index
-  choices, and accent-folding semantics.
+  uniqueness). Adopted and implemented on 2026-10-12 (section 9):
+  numeric/string bounds (name 1–120, quantity 0–999999, location
+  1–80, category 80), name uniqueness, accent-folding semantics,
+  and the index choices that carry them (the v3 unique indexes on
+  the folded name). Address uniqueness was never adopted and is not
+  implemented: only entity names are unique.
 - Migration policy (approved): v1 rows carry only
   `id`/`name`/`created_at` with no location, and no production v1
   rows have been observed on any device (fixture rows are throwaway). Fixture migration must never silently
@@ -159,15 +163,15 @@ Surfaces: list screen, search field, empty/first-run states,
 loading/error states. Design contract: [DESIGN.md](DESIGN.md)
 sections 3–4 (list, search, states, tokens).
 
-- List grouped or filterable by location entities; search matches name
-  plus approved multi-category OR filtering with dedup (further
-  location/category text matching stays a proposal deferred to the user,
-  see section 9).
+- List grouped or filterable by location entities; search matches the
+  item name, its location name or any of its category names (adopted and
+  implemented on 2026-10-12, section 9) plus the approved multi-category
+  OR filtering with dedup.
 - Acceptance: empty DB teaches the user how to add the first item
-  (not a bare "nothing here"); search is case-insensitive for
-  `en`/`es` by Unicode-lowercase substring matching, and accent folding
-  stays a proposal deferred to the user (section 9); loading shows
-  skeletons, not a bare spinner; DB error shows retry.
+  (not a bare "nothing here"); search is case- and accent-insensitive
+  for `en`/`es` by Unicode-lowercase substring matching with NFD accent
+  folding (adopted and implemented on 2026-10-12, section 9); loading
+  shows skeletons, not a bare spinner; DB error shows retry.
 - Test-first (for the pending App integration): RED with
   integration tests for empty, populated, and error states (the
   presentational component cases already exist host-side); GREEN with the screen; TRIANGULATE no-match search
@@ -286,27 +290,29 @@ them. Fixed runners (already in `package.json`): `npm test`,
 Fixture/native rows above are verified (see section 1 and
 [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
 device metrics, locale detection, accessibility (device accessibility tree),
-responsive layout and performance budgets are recorded there as well. What
-stays proposed is the product-default list in section 9, not the verification.
-Sections 3–5 record what is proposed.
+responsive layout and performance budgets are recorded there as well. Section 9
+records the adopted decisions and the one item still deferred (the
+managed-entity screen); DESIGN.md sections 3–5 describe built behavior and the
+approved tokens.
 
 ## 7. Cross-cutting requirements (MVP must meet all)
 
 - Search: name matching is the approved baseline; multi-category
   selection filters with OR semantics and deduplicated results;
-  further location/category text matching follows the adopted
-  decision (section 9); case- and
-  accent-insensitive in both languages (accent folding stays a
-  proposal until adopted); no-match state names the
-  query and offers a clear path.
+  location/category text matching was adopted and implemented on
+  2026-10-12 (section 9); case- and accent-insensitive in both
+  languages with NFD accent folding (adopted and implemented, section
+  9); no-match state names the query and offers a clear path.
 - Validation (approved): every item references a valid location
   entity (name required, address optional); zero or more categories
   per item with no duplicate associations; quantity zero accepted
   as exhausted; invalid quantity and missing/invalid references
   rejected with inline errors in the current language, next to the
-  field. Still proposals, not approvals: trimmed length/numeric
-  bounds (such as name 1–120, quantity 0–999999, location 1–80,
-  category max 80), name/address uniqueness, and index choices.
+  field. Adopted and implemented on 2026-10-12 (section 9): trimmed
+  length/numeric bounds (name 1–120, quantity 0–999999, location
+  1–80, category 80) and name uniqueness, enforced in the domain and
+  backed by the v3 unique indexes. Address uniqueness was never
+  adopted and is not implemented.
 - Errors: typed domain errors mapped to translated UI copy; DB
   failure shows retry, never raw SQLite text or a blank screen.
 - Empty: first-run teaches adding the first item; location groups
@@ -321,12 +327,15 @@ Sections 3–5 record what is proposed.
 - i18n: every user-visible string in `src/i18n/resources.ts` with
   `es` parity; device locale detected at launch with English
   fallback; no hardcoded UI text.
-- Performance (proposed budgets, unmeasured until a device pass):
+- Performance (budgets, measured on a device pass):
   no blocking queries on the UI thread path; a list of up to 500
   items renders its first viewport in under 1s on a mid-range
   device; search filters within 200ms per keystroke; single-row
-  writes complete within 100ms. Images are out of scope, so no
-  image budget applies.
+  writes complete within 100ms. Measured on emulator-5554 with 500
+  seeded items: first-viewport data readiness 162.6ms, search per
+  keystroke 174.6ms (an earlier run missed the budget at 200.8ms
+  before the read-shape change), single-row write 32.7ms. Images
+  are out of scope, so no image budget applies.
 
 ## 8. Distribution stage (no store release proposed)
 
@@ -342,15 +351,15 @@ come from emulator or hardware. None of these is decided.
 
 | Gate | Closes in | Status |
 | ---- | --------- | ------ |
-| Wireframes + gate defaults reviewed | G0 (before M1) | Recorded 2026-10-12: the boards and DESIGN.md sections 3–5 were reviewed against the built screens, and the entries below are the approved contract. The remaining defaults — trimmed bounds (name 1–120, quantity 0–999999, location 1–80, category 80), name/address uniqueness, a managed-entity screen, and accent folding — are DEFERRED to the user as the named owner and stay proposals, never implemented behavior |
-| Quantity semantics | M1 | Approved: zero allowed meaning exhausted, distinct UI deferred; bounds/units/negatives remain proposed |
-| Locations | M1/M4 | Approved: mandatory location entity, name required, address optional, free entry; uniqueness and managed-location UI remain proposed |
-| Categories | M1/M4 | Approved: independent entities, zero or many per item, multi-select OR filter with dedup; management UI and further text matching remain proposed |
+| Wireframes + gate defaults reviewed | G0 (before M1) | Recorded 2026-10-12: the boards and DESIGN.md sections 3–5 were reviewed against the built screens, and the entries below are the approved contract. The defaults deferred here were then adopted by the user as the named owner and implemented on 2026-10-12: trimmed bounds, name uniqueness, accent folding, and location/category text matching, each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen stays deferred and unimplemented, and address uniqueness was never adopted |
+| Quantity semantics | M1 | Approved: zero allowed meaning exhausted, distinct UI deferred. Bounds adopted and implemented (0–999999, typed `out-of-range`); negatives are rejected by that same bound; units stay out of MVP scope |
+| Locations | M1/M4 | Approved: mandatory location entity, name required, address optional, free entry. Name uniqueness adopted and implemented (accent-aware domain check plus the v3 unique index); the managed-location UI stays deferred and unimplemented |
+| Categories | M1/M4 | Approved: independent entities, zero or many per item, multi-select OR filter with dedup. Location/category text matching adopted and implemented; the management UI stays deferred and unimplemented |
 | Deletion/backup | M4 | Approved: confirm every delete, no trash/undo in MVP, irreversibility stated in the dialog; anything beyond that undecided |
 
 No milestone is complete while its gate decision is unrecorded.
 
-## 10. Proposed reviewable slices (no commit authorized)
+## 10. Delivered reviewable slices
 
 1. M1 migration + validation + tests.
 2. M2 repository + tests.
@@ -359,7 +368,12 @@ No milestone is complete while its gate decision is unrecorded.
 5. M5 hardening evidence (strings, a11y, matrix results).
 
 Each slice keeps tests and strings with the code and stays small
-enough to review in one pass.
+enough to review in one pass. All five were delivered on branch
+`feat/inventory-model-v2` under the user's standing order; the
+executable slices carry native review lineages and independent
+verification receipts recorded in `odd/tasks/inventory-mvp.md`.
+The review candidates were kept to exact work units rather than the
+accumulated branch.
 
 ## 11. MVP completion checklist
 
@@ -382,6 +396,6 @@ enough to review in one pass.
   isolated fixture database (no production data touched); see
   [verified native evidence](docs/testing.md#verified-native-evidence-android-only).
 - [x] M5: `en`/`es` audit (guard), accessibility-tree pass with 48dp targets, contrast floor implemented and guarded, performance budgets observed on a device pass, and extended Maestro flows (1.0x 97/97, 2.0x 78/78) observed on a debug build. TalkBack speech is a stated boundary, not claimed.
-- [x] Section 9 recorded: the approved quantity/location/category/deletion entries stay approved, while bounds, uniqueness, a managed-entity screen and accent semantics stay proposed and deferred to the user as the named owner.
+- [x] Section 9 recorded and then closed by adoption: the approved quantity/location/category/deletion entries stay approved, and the defaults deferred to the user as the named owner were adopted on 2026-10-12 and implemented — trimmed bounds, name uniqueness, accent folding, and location/category text matching — each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen is the one deferred item still unimplemented.
 - [x] No backend/accounts/sync introduced; `npm run web` still fails fast
   (`node -e` exits 1) and releases stay source-only (`release.yml` on tag `v*`).

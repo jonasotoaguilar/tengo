@@ -8,12 +8,14 @@ Tengo helps one household record what it owns, how much, and where
 it is — organized by location, in English or Spanish. The app works
 fully offline against on-device SQLite (`tengo.db`).
 
-Current state is honest: the default app screen is the wired read-only
-inventory list (search, location/category filters, loading/empty/no-results
-with retry) backed by the on-device database. Add/Edit product UI is not
-available until M4. M2 native persistence is verified on Android; M3
-native UI proof, M4 forms, M5 hardening, and full Maestro E2E are still
-pending.
+Current state is honest: the default app screen is the wired inventory
+list (search over item, location and category names, location/category
+filters, loading/empty/no-results with retry) backed by the on-device
+database, with add, edit and delete wired through the same container
+(`enableMutations`). M1–M5 are implemented and their native gates were
+observed on Android; the recorded boundaries live in
+[docs/testing.md](docs/testing.md) — screen-reader speech is not claimed
+and the device figures are single-sample.
 
 ## Quick Start
 
@@ -38,22 +40,25 @@ fast: native only. `npm run check` runs `typecheck` + `lint` +
 1. Install and start the dev server (`npm ci`, `npm start`).
 2. Open the app on Android and confirm the inventory list loads
    (count, rows, or the first-run empty state).
-3. Browse, search, and filter items by location and category — adding
-   and editing items lands with M4.
+3. Browse, search (by name, location or category) and filter by
+   location and category; add, edit and delete items from the list.
 
 ## Key Features You Should Know About
 
 - Wired inventory list (the App default) with versioned SQLite bootstrap
-  (schema v2: locations, categories, items with a required
-  location reference and quantity, plus an item-category join).
+  (schema v3: locations, categories, items with a required
+  location reference and quantity, an item-category join, and unique
+  indexes on the folded entity name).
 - English/Spanish from day one with device-locale detection.
 - Domain validation and parameterized location/category/item
   repositories with typed errors that never surface raw SQLite
   text.
-- Bounded `queryItems` read-model filter and a read-only container with
-  stale-safe filter/retry (host-verified only, no native UI proof yet).
-- DEV-only native fixtures plus a single-session Maestro smoke
-  flow; details and limits in [docs/testing.md](docs/testing.md).
+- Bounded `queryItems` read-model filter (three batched reads) and a
+  container with stale-safe filter/retry, verified on Android.
+- DEV-only native fixtures plus guarded Maestro flows (smoke,
+  list/search, forms at 1.0x and 2.0x) run through
+  `scripts/run-maestro.sh`, which keeps artifacts in `.maestro/runs/`;
+  details and limits in [docs/testing.md](docs/testing.md).
 
 ## Documentation
 

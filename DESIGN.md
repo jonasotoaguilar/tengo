@@ -4,10 +4,11 @@ Design contract. The inventory UI is implemented and verified on Android:
 the list with search, location and category filters, the add/edit form with
 inline location/category creation, and the discard and delete
 confirmations. Section 3 therefore describes built behavior, and section 5
-carries the approved token values through `src/theme/tokens.ts`. Anything
-still marked proposed (trimmed bounds, name/address uniqueness, a
-managed-entity screen, accent folding) is a proposal, not implemented
-behavior. Product truth lives in
+carries the approved token values through `src/theme/tokens.ts`. The
+defaults that were deferred — trimmed bounds, name uniqueness, accent
+folding, and location/category text matching — were adopted and implemented
+on 2026-10-12; the managed-entity screen is the one deferred item still
+unimplemented, and address uniqueness was never adopted. Product truth lives in
 [PRODUCT.md](PRODUCT.md); build order and acceptance live in
 [ROADMAP.md](ROADMAP.md) (M1–M5, gates, checklist).
 
@@ -66,8 +67,8 @@ Reading notes:
   slice. Approved contract now governs over those sketches: quantity
   zero means exhausted, locations are mandatory entities, categories
   are zero-or-many entities, deletion always confirms with no trash.
-  Each remaining default still needs its ROADMAP.md §9 gate before
-  build (§10).
+  The remaining defaults were adopted at the ROADMAP.md §9 gate on
+  2026-10-12; §10 lists what is still open.
 
 
 Mode: Operate. The visitor completes a task (find it, record it,
@@ -146,12 +147,14 @@ PANTRY                            8 items
 
 ### 3.2 Search
 
-- Typing filters the visible list; name matching is the approved
-  baseline and multi-category selection filters with OR semantics
-  and deduplicated results. Broader location/category text matching
-  follows the adopted gate decision (ROADMAP.md section 9).
-- Matching is case-insensitive; accent-insensitive folding (`cafe`
-  finds `café`) stays a proposal until adopted.
+- Typing filters the visible list; an item matches when the folded
+  query is a substring of its name, its location name, or any of its
+  category names (adopted and implemented 2026-10-12, ROADMAP.md
+  section 9), and multi-category selection filters with OR semantics
+  and deduplicated results; an item matching several ways appears once.
+- Matching is case- and accent-insensitive in both directions (`cafe`
+  finds `café`, `CAFÉ` finds stored `cafe`); stored text is returned
+  verbatim.
 - No-match state: names the query ("No results for 'quinoa'"),
   offers clearing the search or adding it as a new item.
 - Search state survives rotation; clearing restores the full list.
@@ -171,13 +174,16 @@ Category    [ Grains (optional)]
 - Save stays enabled except while submitting; validation runs on
   submit and on blur, with inline errors in the current language.
   On a submit with invalid fields, focus moves to the first error.
-- Quantity defaults to 1 (proposed); zero is approved and means
-  exhausted, with distinct exhausted UI deferred to UI milestones.
+- Quantity starts empty, never defaulted to 1 (implemented:
+  `blankItemFormValues` in `src/screens/useItemFormController.ts`), so the
+  user types or steps a value; zero is approved and means exhausted, with
+  distinct exhausted UI deferred to UI milestones.
 - Location is a required entity: name required, address optional,
   free-entry names such as Casa/Bodega. Categories are zero or many
   per item via multi-select (selecting several filters with OR and
-  dedup). Bounds, uniqueness, and category-management UI remain
-  proposals.
+  dedup). Bounds (name 1–120, quantity 0–999999, location 1–80,
+  category 80) and name uniqueness are adopted and implemented; the
+  category-management UI remains deferred.
 - Cancel/Back with unsaved changes asks to discard (no silent loss).
 
 ### 3.4 Edit item (the "detail" surface)
@@ -198,9 +204,11 @@ confirm in section 4. Save confirms with transient feedback
 - Categories are independent entities joined to items: zero or many
   per item, no duplicate associations. Multi-select filters with OR
   semantics and deduplicated results.
-- Normalization beyond trim, name/address uniqueness, recency or
-  suggestion behavior, and any managed-list/category admin UI remain
-  proposals. Because locations are entities, an empty place can exist
+- Name uniqueness is adopted and implemented: an accent-aware domain
+  check produces the typed conflict error and the v3 unique index is
+  the backstop. Normalization beyond trim, address uniqueness, recency
+  or suggestion behavior, and any managed-list/category admin UI remain
+  unimplemented. Because locations are entities, an empty place can exist
   without items only if a future gate approves it; until then, a
   location filter with zero matches shows the contextual zero-match
   state in section 4.
@@ -318,30 +326,33 @@ resolve per theme:
   sections 3–4 on Android.
 - Touch targets, type scaling, screen reader, dark scheme, keyboard
   behavior, and safe-area handling meet sections 5–7.
-- Search matches names (approved baseline) plus multi-category OR
-  filtering with dedup; accent-insensitive folding (stored text
-  verbatim) stays a proposal. Delete always confirms and dismissing
-  a dirty form never silently loses input; quantity zero is accepted
-  as exhausted with distinct UI deferred.
-- Text contrast meets the 4.5:1 floor and controls the 3:1 floor
-  (proposed); ROADMAP.md section 7 performance budgets observed on
-  a device pass.
+- Search matches the item name, its location name or any category name
+  with accent folding (adopted and implemented; stored text verbatim)
+  plus multi-category OR filtering with dedup. Delete always confirms
+  and dismissing a dirty form never silently loses input; quantity zero
+  is accepted as exhausted with distinct UI deferred.
+- Text contrast meets the 4.5:1 floor and control boundaries the 3:1
+  floor, implemented in `src/theme/tokens.ts` and guarded by
+  `__tests__/contrast-floor.test.tsx`; ROADMAP.md section 7 performance
+  budgets were measured on a device pass (search 174.6ms against the
+  200ms per-keystroke budget).
 
 ## 10. Roadmap cross-links and unknowns
 
-- Milestones: list/search states → ROADMAP.md M3 (query and
-  controlled component host-verified; App integration pending);
-  add/edit/delete → M4 (pending); strings/a11y/performance/matrix
-  → M5 (pending); schema/validation gates → M1–M2 (done; see
+- Milestones: list/search states → ROADMAP.md M3 (done; App
+  integration verified on Android); add/edit/delete → M4 (done);
+  strings/a11y/performance/matrix → M5 (done, with TalkBack speech a
+  stated boundary); schema/validation gates → M1–M2 (done; see
   [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
 - Approved contract (overrides the single-text sketches above):
   mandatory location entities (name required, address optional,
   free entry), independent category entities with zero or many per
   item and OR-plus-dedup multi-select filtering, quantity zero
   meaning exhausted with UI deferred, and confirmed deletion with no
-  trash. Unknowns still needing gates: numeric/string bounds (such
-  as 120/80/999999), name/address uniqueness, category management
-  and suggestion behavior, accent-folding semantics, and v1 backfill
-  values — never fabricate a location; nonempty v1 rows lacking a
-  location preserve rows and stop with a migration-required error
-  per ROADMAP.md.
+  trash. Closed by adoption on 2026-10-12: numeric/string bounds, name
+  uniqueness, accent-folding semantics, and location/category text
+  matching. Still needing a gate: the managed-entity screen, address
+  uniqueness, category management and suggestion behavior, and v1
+  backfill values — never fabricate a location; nonempty v1 rows
+  lacking a location preserve rows and stop with a migration-required
+  error per ROADMAP.md.

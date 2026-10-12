@@ -36,8 +36,10 @@ atomicity). That is host evidence only: it does not prove
   `BEGIN IMMEDIATE`.
 
 M3 query checks passed 9/9 on Android using the isolated fixture:
-schema v2, FK enforcement, Unicode case matching without accent
-folding, literal search, location AND category OR, deduplication,
+the schema version as it stood then (v2; v3 added the unique indexes),
+FK enforcement, Unicode case matching without accent
+folding (the folding realignment below supersedes that part), literal
+search, location AND category OR, deduplication,
 and zero-quantity/category mapping. The Unicode query measured
 3.8 ms in that diagnostic run; no performance budget was asserted.
 
@@ -315,6 +317,34 @@ single-sample numbers from one emulator — no percentile, repetition or
 second device — and the search figure is still the data-layer cost
 only, with UI render on top not separately instrumented. The seed figure
 is unbudgeted setup and varies run to run.
+
+#### Recorded device pass after the adopted cross-entity search change
+
+Search now matches the item name, its location name or any of its
+category names, so the name-only short circuit is gone: a selective
+keystroke must read the page, the category links for the whole page and
+the locations for the category survivors before the text predicate can
+be decided. The read bound is still three batched reads, and the cost
+rose accordingly. Same emulator, same AVD, same isolated database, same
+query, driven by `.maestro/p5b-measure.yaml` through
+`scripts/run-maestro.sh` (artifacts in `.maestro/runs/`):
+
+- `first list layout: 129.1ms (diagnostic, no budget)`
+- `seed 500 items (diagnostic setup, no budget): 24929.2ms — PASS`
+- `first-viewport data readiness (budget 1000ms): 162.6ms vs budget
+  1000ms: PASS`
+- `search per keystroke, data layer only (budget 200ms): 174.6ms vs
+  budget 200ms: PASS`
+- `single-row write (budget 100ms): 32.7ms vs budget 100ms: PASS`
+
+The search figure rose from 114.3 ms to 174.6 ms and still meets the
+200 ms budget, which is the number the change was allowed to spend. The
+headroom is thinner than it was, so any further per-keystroke work needs
+its own measurement instead of an estimate. These are again
+single-sample numbers from one emulator — no percentile, repetition or
+second device — and the search figure is the data-layer cost only, with
+UI render on top not separately instrumented. The seed figure is
+unbudgeted setup and varies run to run.
 
 #### Recorded M5 manual-device passes (emulator-5554, dark / large text / keyboard / locale)
 

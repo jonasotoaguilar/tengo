@@ -11,7 +11,7 @@
 #   maestro test .maestro/m3-query.yaml
 # Stable numeric IDs below assume the fixture-verified fresh-seed order:
 # locations Küche=1, Garage=2; categories Tools=1, Kitchen=2, 100%_stock=3;
-# items 1=Cafe Grinder, 2=CAFE filter, 3=100%_literal\blend, 4=Hammer,
+# items 1=Café Grinder, 2=CAFÉ filter, 3=100%_literal\blend, 4=Hammer,
 # 5=Cafe Napkin.
 # Selectors use stable testIDs; count regexes accept the existing en/es copy.
 # Disabled states (FAB, empty CTA) are visible-only here; disabled itself

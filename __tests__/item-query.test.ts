@@ -1,8 +1,8 @@
 /**
  * P3a bounded item query (host fake only, not real SQLite proof).
  *
- * Covers JS Unicode-lowercase substring search (ASCII + CAFÉ/café + Α/α,
- * trim, cafe≠café, literal %_\\), location all/existing/unknown/invalid,
+ * Covers JS accent-folded substring search (ASCII + CAFÉ/café/cafe fold both
+ * directions + Α/α, trim, literal %_\\), location all/existing/unknown/invalid,
  * category []/single/OR/overlap/dedup/duplicate/unknown/invalid, AND
  * cross-filters, zero/many categories, stable id order, validation before
  * SQL, generic storage errors, and the 3-read bound at N=101. Real
@@ -154,11 +154,13 @@ test('normalize helper is pure: trim/dedup, null-all, rejects bad runtime input'
   }
 });
 
-test('search: ASCII/non-ASCII case, trim, cafe≠café, literal %_\\ preserved verbatim', async () => {
+test('search: ASCII/non-ASCII case, trim, accent-folded cafe=café, literal %_\\ preserved verbatim', async () => {
   const f = makeQueryFake();
   const l = f.loc();
   const rice = f.item('Rice', 1, l);
   const cafeUpper = f.item('CAFÉ latte', 2, l);
+  const cafePlain = f.item('cafe noir', 1, l);
+  const melange = f.item('CAFÉ 100%_\\mélange', 1, l);
   const greek = f.item('Αθήνα honey', 0, l);
   f.item('100% cotton_\\weave', 1, l);
   f.item("x'); DROP TABLE items; --", 1, l);
@@ -170,19 +172,36 @@ test('search: ASCII/non-ASCII case, trim, cafe≠café, literal %_\\ preserved v
   ).toEqual([rice]);
   expect((await queryItems(f.db, { query: 'café' })).map((i) => i.id)).toEqual([
     cafeUpper,
+    cafePlain,
+    melange,
   ]);
   expect((await queryItems(f.db, { query: 'CAFÉ' })).map((i) => i.id)).toEqual([
     cafeUpper,
+    cafePlain,
+    melange,
   ]);
-  // No accent folding: plain cafe matches nothing stored as café.
-  expect(await queryItems(f.db, { query: 'cafe' })).toEqual([]);
+  // Accent folding both directions: plain cafe matches stored café,
+  // and accented CAFÉ matches stored plain cafe.
+  expect((await queryItems(f.db, { query: 'cafe' })).map((i) => i.id)).toEqual([
+    cafeUpper,
+    cafePlain,
+    melange,
+  ]);
+  expect(
+    (await queryItems(f.db, { query: 'melange' })).map((i) => i.id),
+  ).toEqual([melange]);
+  expect(
+    (await queryItems(f.db, { query: 'mélange' })).map((i) => i.id),
+  ).toEqual([melange]);
+  // Genuinely non-matching query still returns nothing.
+  expect(await queryItems(f.db, { query: 'no-such-taste' })).toEqual([]);
   expect((await queryItems(f.db, { query: 'αθήνα' })).map((i) => i.id)).toEqual(
     [greek],
   );
   // LIKE wildcards are literal data, not patterns.
-  expect(await queryItems(f.db, { query: '%' })).toHaveLength(1);
-  expect(await queryItems(f.db, { query: '_' })).toHaveLength(1);
-  expect(await queryItems(f.db, { query: '\\' })).toHaveLength(1);
+  expect(await queryItems(f.db, { query: '%' })).toHaveLength(2);
+  expect(await queryItems(f.db, { query: '_' })).toHaveLength(2);
+  expect(await queryItems(f.db, { query: '\\' })).toHaveLength(2);
   expect(await queryItems(f.db, { query: 'DROP TABLE' })).toHaveLength(1);
   // Zero quantity preserved through the query path.
   expect((await queryItems(f.db, { query: 'αθήνα' }))[0].quantity).toBe(0);

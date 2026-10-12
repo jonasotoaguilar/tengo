@@ -24,13 +24,16 @@
  * missing from the batched location read is dropped, because the previous
  * `JOIN locations` shape excluded it.
  *
- * Name matching is a verbatim-preserving JS substring:
- * `name.toLowerCase().includes(query.trim().toLowerCase())`. That keeps
- * ordinary Unicode case (`CAFÉ` matches `café`, `Α` matches `α`) with no
- * accent folding (`cafe` never matches `café`), no Unicode normalization,
- * and literal `%`/`_`/`\` handling (no LIKE wildcards). SQL `LIKE`/`NOCASE`
+ * Name matching is a verbatim-preserving JS substring with accent folding:
+ * both the trimmed query and each stored name are normalized with Unicode
+ * NFD, combining marks (`\\p{Diacritic}`) are stripped, then the folded
+ * text is lowercased and compared with literal `includes`. That keeps
+ * ordinary Unicode case (`CAFÉ` matches `café`) and folds accents both
+ * directions (`cafe` matches `café`, `CAFÉ` matches stored `cafe`,
+ * `melange` matches `mélange`), with literal `%`/`_`/`\` handling
+ * (no LIKE wildcards). SQL `LIKE`/`NOCASE`
  * is deliberately unused: SQLite case-folds ASCII only and cannot promise
- * the Unicode behavior above. Stored names are returned verbatim.
+ * Stored names are returned verbatim.
  *
  * Filters validate before any SQL via `ValidationError`/`validateId`:
  * non-string `query` and non-positive-integer location/category ids reject
@@ -182,10 +185,22 @@ function inPlaceholders(count: number): string {
 }
 
 /**
+ * Fold text for search comparison only: NFD, strip combining marks, then
+ * lowercase. Stored names and the returned read model stay verbatim.
+ */
+function foldSearchText(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase();
+}
+
+/**
  * Query items with bounded reads (max three `getAllAsync` calls): the
  * unjoined item page, one batched category-link read for the name-surviving
  * ids, and one batched location read for the distinct surviving location
- * ids. JS name-substring (Unicode lowercase, literal `%_\\`) runs on the
+ * ids. JS accent-folded name-substring (NFD + strip Diacritic + lowercase,
+ * literal `%_\\`) runs on the
  * raw item rows and the category-OR runs on the raw link id pairs, both
  * before any entity allocation. Item order is stable `id ASC`; categories
  * are `id ASC` with `categoryIds` matching the entity list. Quantity zero
@@ -217,12 +232,14 @@ export async function queryItems(
   if (itemRows.length === 0) return [];
 
   // Name predicate on raw rows only — no Location/Category/ItemDetail yet.
-  const queryLower = normalized.query?.toLowerCase() ?? null;
+  // Accent-folded literal substring: fold both the query and each name.
+  const foldedQuery =
+    normalized.query === null ? null : foldSearchText(normalized.query);
   const nameSurvivors =
-    queryLower === null
+    foldedQuery === null
       ? itemRows
       : itemRows.filter((row) =>
-          row.item_name.toLowerCase().includes(queryLower),
+          foldSearchText(row.item_name).includes(foldedQuery),
         );
   if (nameSurvivors.length === 0) return [];
 

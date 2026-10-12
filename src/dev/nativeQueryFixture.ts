@@ -210,7 +210,7 @@ async function seedExactDataset(
     categoryIds: [tools.id, kitchen.id],
   });
   await repos.createItem(db, {
-    name: 'Nail',
+    name: 'Cafe Napkin',
     quantity: 0,
     locationId: garage.id,
     categoryIds: [],
@@ -273,7 +273,7 @@ function isExactDataset(snapshot: DatasetSnapshot): boolean {
     !byName.has('CAFÉ filter') ||
     !byName.has('100%_literal\\blend') ||
     !byName.has('Hammer') ||
-    !byName.has('Nail')
+    !byName.has('Cafe Napkin')
   ) {
     return false;
   }
@@ -286,8 +286,8 @@ function isExactDataset(snapshot: DatasetSnapshot): boolean {
     quantityOf('CAFÉ filter') === '0' &&
     quantityOf('100%_literal\\blend') === '1' &&
     quantityOf('Hammer') === '5' &&
-    quantityOf('Nail') === '0' &&
-    categoriesOf('Nail') === '' &&
+    quantityOf('Cafe Napkin') === '0' &&
+    categoriesOf('Cafe Napkin') === '' &&
     categoriesOf('Hammer').split('+').length === 2
   );
 }
@@ -399,25 +399,28 @@ export async function runNativeQueryFixture(
     const lower = await timed('unicode query', () =>
       deps.queryItems(db, { query: 'café' }),
     );
-    if (lower.length !== 2) {
-      throw new Error(`unicode café matched ${lower.length} items, want 2`);
+    if (lower.length !== 3) {
+      throw new Error(`unicode café matched ${lower.length} items, want 3`);
     }
     const upper = await deps.queryItems(db, { query: 'CAFÉ' });
-    if (upper.length !== 2) {
-      throw new Error(`unicode CAFÉ matched ${upper.length} items, want 2`);
+    if (upper.length !== 3) {
+      throw new Error(`unicode CAFÉ matched ${upper.length} items, want 3`);
     }
     pass(
-      'unicode café matches 2 items',
+      'accent folding: café matches 3 items including unaccented Cafe Napkin',
       `${lower.map((item) => item.name).join(' + ')}`,
     );
 
     const folded = await deps.queryItems(db, { query: 'cafe' });
-    if (folded.length !== 0) {
+    if (folded.length !== 3) {
       throw new Error(
-        `no-accent-folding violated: cafe matched ${folded.length} items`,
+        `accent folding violated: cafe matched ${folded.length} items, want 3`,
       );
     }
-    pass('no accent folding: cafe matches 0', 'verbatim substring only');
+    pass(
+      'accent folding: cafe matches 3 items including accented Café names',
+      `${folded.map((item) => item.name).join(' + ')}`,
+    );
 
     const literal = await deps.queryItems(db, { query: '100%' });
     if (literal.length !== 1) {
@@ -483,14 +486,16 @@ export async function runNativeQueryFixture(
       .filter((item) => item.quantity === 0)
       .map((item) => item.name)
       .sort();
-    if (exhausted.join('\u0000') !== ['CAFÉ filter', 'Nail'].join('\u0000')) {
+    if (
+      exhausted.join('\u0000') !== ['CAFÉ filter', 'Cafe Napkin'].join('\u0000')
+    ) {
       throw new Error(
-        `exhausted=[${exhausted.join(', ')}], want CAFÉ filter + Nail`,
+        `exhausted=[${exhausted.join(', ')}], want CAFÉ filter + Cafe Napkin`,
       );
     }
-    const nail = all.find((item) => item.name === 'Nail');
-    if (nail?.categoryIds.length !== 0) {
-      throw new Error('zero-many mapping broken for Nail');
+    const napkin = all.find((item) => item.name === 'Cafe Napkin');
+    if (napkin?.categoryIds.length !== 0) {
+      throw new Error('zero-many mapping broken for Cafe Napkin');
     }
     const kueche = locations.find((loc) => loc.name === LOC_KUECHE);
     if (!kueche) throw new Error('Küche location missing for group counts');
@@ -503,7 +508,7 @@ export async function runNativeQueryFixture(
     }
     pass(
       'exhausted zero quantities map with group counts',
-      'exhausted=CAFÉ filter+Nail zero-many Nail=[] groups Küche=2 Garage=3',
+      'exhausted=CAFÉ filter+Cafe Napkin zero-many Cafe Napkin=[] groups Küche=2 Garage=3',
     );
 
     return { database, status: 'pass', checks, db };

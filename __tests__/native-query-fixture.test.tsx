@@ -341,13 +341,19 @@ describe('query fixture behavior checks (mocked, real query model)', () => {
     return store;
   }
 
-  test('unicode café hits 2 with no accent folding', async () => {
+  test('accent folding matches both directions', async () => {
     const store = await seededStore();
     const deps = makeDeps(store, []);
     const handle = await deps.openDatabaseAsync(QUERY_FIXTURE_SEEDED_DB);
-    expect(await realQueryItems(handle, { query: 'café' })).toHaveLength(2);
-    expect(await realQueryItems(handle, { query: 'CAFÉ' })).toHaveLength(2);
-    expect(await realQueryItems(handle, { query: 'cafe' })).toHaveLength(0);
+    const accented = await realQueryItems(handle, { query: 'café' });
+    expect(accented).toHaveLength(3);
+    expect(accented.map((item) => item.name)).toContain('Cafe Napkin');
+    expect(await realQueryItems(handle, { query: 'CAFÉ' })).toHaveLength(3);
+    const folded = await realQueryItems(handle, { query: 'cafe' });
+    expect(folded).toHaveLength(3);
+    expect(folded.map((item) => item.name)).toEqual(
+      expect.arrayContaining(['Café Grinder', 'CAFÉ filter']),
+    );
   });
 
   test('literal 100% and backslash match verbatim', async () => {
@@ -393,11 +399,11 @@ describe('query fixture behavior checks (mocked, real query model)', () => {
         .filter((item) => item.quantity === 0)
         .map((item) => item.name)
         .sort(),
-    ).toEqual(['CAFÉ filter', 'Nail']);
-    const nail = all.find((item) => item.name === 'Nail') as {
+    ).toEqual(['CAFÉ filter', 'Cafe Napkin']);
+    const napkin = all.find((item) => item.name === 'Cafe Napkin') as {
       categoryIds: number[];
     };
-    expect(nail.categoryIds).toEqual([]);
+    expect(napkin.categoryIds).toEqual([]);
     const kueche = (await realListLocations(handle)).find(
       (loc) => loc.name === 'Küche',
     ) as { id: number };

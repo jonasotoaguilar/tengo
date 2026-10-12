@@ -16,11 +16,7 @@ import {
   type RepositoryFixtureDeps,
   runNativeRepositoryFixture,
 } from '../src/dev/nativeRepositoryFixture';
-import {
-  EntityNotFoundError,
-  LocationInUseError,
-  StorageError,
-} from '../src/inventory/errors';
+import { EntityNotFoundError, StorageError } from '../src/inventory/errors';
 
 const DEV = globalThis as Record<string, unknown>;
 const ENV = process.env;
@@ -37,11 +33,15 @@ function setRepoEnv(
   else ENV.EXPO_PUBLIC_NATIVE_REPOSITORY = repo;
 }
 
+interface StockEntry {
+  locationId: number;
+  quantity: number;
+}
+
 interface Row {
   id: number;
   name: string;
-  quantity?: number;
-  locationId?: number;
+  stock?: StockEntry[];
   address?: string | null;
 }
 
@@ -73,19 +73,25 @@ function freshStore(): FakeStore {
 }
 
 function toDetail(store: FakeStore, item: Row) {
-  const loc = store.locs.get(item.locationId as number) as Row;
   const catIds = store.joins.get(item.id) ?? [];
+  const stock = (item.stock ?? []).map((entry) => {
+    const loc = store.locs.get(entry.locationId) as Row;
+    return {
+      locationId: entry.locationId,
+      location: {
+        id: loc.id,
+        name: loc.name,
+        address: loc.address ?? null,
+        created_at: 't',
+      },
+      quantity: entry.quantity,
+    };
+  });
   return {
     id: item.id,
     name: item.name,
-    quantity: item.quantity as number,
-    locationId: item.locationId as number,
-    location: {
-      id: loc.id,
-      name: loc.name,
-      address: loc.address ?? null,
-      created_at: 't',
-    },
+    stock,
+    totalQuantity: stock.reduce((sum, level) => sum + level.quantity, 0),
     categoryIds: [...catIds],
     categories: catIds.map((id) => ({
       id,
@@ -118,6 +124,7 @@ function makeDeps(store: FakeStore): RepositoryFixtureDeps {
         return { lastInsertRowId: 1, changes: 1 };
       }
       if (/INSERT INTO items/.test(sql)) throw fkError();
+      if (/INSERT INTO stock/.test(sql)) throw fkError();
       if (/INSERT INTO item_categories/.test(sql)) throw fkError();
       if (/DELETE FROM items WHERE location_id/.test(sql))
         return { lastInsertRowId: 0, changes: 0 };
@@ -134,6 +141,11 @@ function makeDeps(store: FakeStore): RepositoryFixtureDeps {
       if (/COUNT.*item_categories/.test(sql)) {
         return { count: (store.joins.get(params?.[0] as number) ?? []).length };
       }
+      if (/FROM stock/.test(sql)) {
+        const itemId = params?.[0] as number;
+        const item = store.items.get(itemId);
+        return { count: (item?.stock ?? []).length };
+      }
       if (/COUNT.*items WHERE name/.test(sql)) {
         const name = params?.[0] as string;
         return {
@@ -149,7 +161,7 @@ function makeDeps(store: FakeStore): RepositoryFixtureDeps {
       }
       if (/COUNT.*items/.test(sql)) return { count: store.items.size };
       if (/PRAGMA foreign_keys/.test(sql)) return { foreign_keys: 1 };
-      if (/user_version/.test(sql)) return { user_version: 3 };
+      if (/user_version/.test(sql)) return { user_version: 4 };
       return null;
     }),
     getAllAsync: jest.fn(async (sql: string) => {
@@ -157,9 +169,16 @@ function makeDeps(store: FakeStore): RepositoryFixtureDeps {
         return [...store.items.values()].map((i) => ({
           id: i.id,
           name: i.name,
-          quantity: i.quantity,
-          location_id: i.locationId,
         }));
+      }
+      if (/FROM stock/.test(sql)) {
+        const rows: { item_id: number; quantity: number }[] = [];
+        for (const item of store.items.values()) {
+          for (const entry of item.stock ?? []) {
+            rows.push({ item_id: item.id, quantity: entry.quantity });
+          }
+        }
+        return rows;
       }
       return [];
     }),
@@ -206,13 +225,14 @@ function makeDeps(store: FakeStore): RepositoryFixtureDeps {
         _db: unknown,
         input: {
           name: string;
-          quantity: number;
-          locationId: number;
+          stock?: { locationId: number; quantity: number }[];
           categoryIds?: number[];
         },
       ) => {
-        if (!store.locs.has(input.locationId))
-          throw new EntityNotFoundError('location', input.locationId);
+        for (const row of input.stock ?? []) {
+          if (!store.locs.has(row.locationId))
+            throw new EntityNotFoundError('location', row.locationId);
+        }
         for (const cid of input.categoryIds ?? []) {
           if (!store.cats.has(cid))
             throw new EntityNotFoundError('category', cid);
@@ -221,8 +241,7 @@ function makeDeps(store: FakeStore): RepositoryFixtureDeps {
         store.items.set(id, {
           id,
           name: input.name,
-          quantity: input.quantity,
-          locationId: input.locationId,
+          stock: [...(input.stock ?? [])],
         });
         store.joins.set(id, [...(input.categoryIds ?? [])]);
         return toDetail(store, store.items.get(id) as Row);
@@ -239,16 +258,14 @@ function makeDeps(store: FakeStore): RepositoryFixtureDeps {
         id: number,
         input: {
           name: string;
-          quantity: number;
-          locationId: number;
+          stock?: { locationId: number; quantity: number }[];
           categoryIds?: number[];
         },
       ) => {
         const item = store.items.get(id);
         if (!item) throw new EntityNotFoundError('item', id);
         item.name = input.name;
-        item.quantity = input.quantity;
-        item.locationId = input.locationId;
+        item.stock = [...(input.stock ?? [])];
         store.joins.set(id, [...(input.categoryIds ?? [])]);
         return toDetail(store, item);
       },
@@ -259,8 +276,10 @@ function makeDeps(store: FakeStore): RepositoryFixtureDeps {
       store.joins.delete(id);
     }),
     deleteLocation: jest.fn(async (_db: unknown, id: number) => {
-      if ([...store.items.values()].some((i) => i.locationId === id))
-        throw new LocationInUseError(id);
+      // v4 CASCADE: stock rows at the location go, catalog items survive.
+      for (const item of store.items.values()) {
+        item.stock = (item.stock ?? []).filter((row) => row.locationId !== id);
+      }
       store.locs.delete(id);
     }),
     listItems: jest.fn(async () =>

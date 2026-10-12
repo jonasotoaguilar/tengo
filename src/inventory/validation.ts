@@ -9,27 +9,35 @@
  *   `café` stays `café`.
  * - The optional address normalizes every blank form (`undefined`, `null`,
  *   `''`, whitespace-only) consistently to `null`.
- * - Quantity zero is valid (exhausted). Anything that is not a nonnegative
- *   safe integer — negatives, fractions, NaN/Infinity, non-numbers — is
- *   rejected with the unchanged `invalid` rule. The adopted product bound
- *   is 0–999999 inclusive: values above it are rejected with a new
- *   `out-of-range` error.
+ * - Quantity zero is valid (exhausted/sin stock). Anything that is not a
+ *   nonnegative safe integer — negatives, fractions, NaN/Infinity,
+ *   non-numbers — is rejected with the unchanged `invalid` rule. The
+ *   adopted product bound is 0–999999 inclusive: values above it are
+ *   rejected with a new `out-of-range` error.
  * - Split: `MAX_QUANTITY` is `Number.MAX_SAFE_INTEGER`, a technical
- *   JavaScript-integer guard (mirrored in the v2 SQL `CHECK`), not the
+ *   JavaScript-integer guard (mirrored in the v2/v4 SQL `CHECK`), not the
  *   product bound. The product bound (`PRODUCT_MAX_QUANTITY`) is enforced
  *   here in the domain layer, which is the only writer, so no SQL change
  *   or migration was needed.
  * - Ids must be positive safe integers: valid referential values only.
  *   Existence against the database is enforced by SQLite foreign keys (M2
  *   surfaces those as typed errors); this layer rejects malformed ids.
- * - An item must reference a location id; duplicate category ids are
- *   rejected (the join's composite primary key rejects them too).
+ * - An item carries zero or more stock rows (location + quantity each).
+ *   Every row needs a valid location id and an S10 quantity; a 0-quantity
+ *   row is dropped rather than stored; duplicate location ids in one
+ *   payload are rejected (the stock composite primary key rejects them
+ *   too). Duplicate category ids are likewise rejected.
  */
-import type { NewCategoryInput, NewItemInput, NewLocationInput } from './types';
+import type {
+  NewCategoryInput,
+  NewItemInput,
+  NewItemStockInput,
+  NewLocationInput,
+} from './types';
 
 /**
  * Technical JavaScript-integer guard for quantities, not the product bound.
- * The v2 SQL `CHECK` mirrors this technical guard; the product bound
+ * The v2/v4 SQL `CHECK` mirrors this technical guard; the product bound
  * below is enforced in the domain layer, which is the only writer.
  */
 export const MAX_QUANTITY = Number.MAX_SAFE_INTEGER;
@@ -197,11 +205,36 @@ export function validateCategoryInput(
   return { name: normalizeName(input.name, 'name', CATEGORY_NAME_MAX_LENGTH) };
 }
 
+export interface NormalizedItemStockInput {
+  locationId: number;
+  quantity: number;
+}
+
 export interface NormalizedItemInput {
   name: string;
-  quantity: number;
-  locationId: number;
+  /** Only rows with quantity > 0: zero rows are dropped, never stored. */
+  stock: NormalizedItemStockInput[];
   categoryIds: number[];
+}
+
+/**
+ * Validate one stock row: a valid location id plus an S10 quantity.
+ * Zero stays valid here (the caller drops it); negatives, fractions,
+ * and out-of-range values reject.
+ */
+export function validateStockInput(
+  entry: NewItemStockInput,
+): NormalizedItemStockInput {
+  if (entry === null || typeof entry !== 'object') {
+    throw new ValidationError(
+      'stock',
+      'invalid',
+      'each stock row must be an object with a locationId and quantity.',
+    );
+  }
+  const locationId = validateId(entry.locationId, 'locationId');
+  const quantity = normalizeQuantity(entry.quantity);
+  return { locationId, quantity };
 }
 
 export function validateItemInput(input: NewItemInput): NormalizedItemInput {
@@ -209,19 +242,30 @@ export function validateItemInput(input: NewItemInput): NormalizedItemInput {
     throw new ValidationError(
       'item',
       'invalid',
-      'item must be an object with a name, quantity, and locationId.',
+      'item must be an object with a name and stock rows.',
     );
   }
   const name = normalizeName(input.name, 'name', ITEM_NAME_MAX_LENGTH);
-  const quantity = normalizeQuantity(input.quantity);
-  if (input.locationId === undefined || input.locationId === null) {
+  const rawStock = input.stock === undefined ? [] : input.stock;
+  if (!Array.isArray(rawStock)) {
     throw new ValidationError(
-      'locationId',
-      'missing',
-      'every item must reference a valid location.',
+      'stock',
+      'invalid',
+      'stock must be an array of location/quantity rows.',
     );
   }
-  const locationId = validateId(input.locationId, 'locationId');
+  const validated = rawStock.map((entry) => validateStockInput(entry));
+  // Duplicate location ids reject even when one row is a dropped zero:
+  // the payload contradicts itself about that location.
+  const locationIds = validated.map((row) => row.locationId);
+  if (new Set(locationIds).size !== locationIds.length) {
+    throw new ValidationError(
+      'stock',
+      'duplicate',
+      'stock must not contain the same location twice.',
+    );
+  }
+  const stock = validated.filter((row) => row.quantity > 0);
   const rawIds = input.categoryIds ?? [];
   if (!Array.isArray(rawIds)) {
     throw new ValidationError(
@@ -238,5 +282,5 @@ export function validateItemInput(input: NewItemInput): NormalizedItemInput {
       'categoryIds must not contain duplicates.',
     );
   }
-  return { name, quantity, locationId, categoryIds };
+  return { name, stock, categoryIds };
 }

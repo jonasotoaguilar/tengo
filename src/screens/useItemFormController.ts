@@ -2,10 +2,9 @@
  * U2a controlled item-form controller hook (no navigation, no DB open).
  *
  * Owns the `ItemForm` contract for one add/edit session: blank create
- * values (verbatim prefill, never a default quantity), latest-detail edit
+ * values (verbatim prefill, zero stock rows), latest-detail edit
  * loads with stale-round guards, explicit `ItemDraftInput` conversion that
- * ignores UI-only fields (`pendingNewCategoryName` until Add,
- * `stashedNewLocation` until new is selected), localized client errors via
+ * ignores the UI-only field (`pendingNewCategoryName` until Add), localized client errors via
  * the existing `itemFormError*` keys, coded persistence failures (never raw
  * SQL), immediate single-flight save/delete guards, dirty discard
  * confirmation, and confirmed-only delete. Never opens, reopens, or closes
@@ -26,7 +25,12 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { ItemFormErrors, ItemFormValues } from '../components/ItemForm';
+import type {
+  ItemFormErrors,
+  ItemFormValues,
+  ItemStockRowErrors,
+  ItemStockRowValues,
+} from '../components/ItemForm';
 import {
   isQuantityAboveProductMax,
   parseQuantityRaw,
@@ -35,7 +39,6 @@ import type { RepositoryDb } from '../inventory/database';
 import {
   EntityConflictError,
   EntityNotFoundError,
-  LocationInUseError,
   ValidationError,
 } from '../inventory/errors';
 import {
@@ -48,7 +51,7 @@ import type {
   ItemCategoryDraft,
   ItemDetail,
   ItemDraftInput,
-  ItemLocationDraft,
+  ItemStockDraft,
 } from '../inventory/types';
 import {
   CATEGORY_NAME_MAX_LENGTH,
@@ -124,14 +127,15 @@ export interface ItemFormController {
   confirmDelete: boolean;
   onChange: (next: ItemFormValues) => void;
   /**
-   * M4 Gap B blur validation: validates ONLY the named field against
-   * the current values and merges the result into the errors state
-   * (sets the localized message when invalid, clears it when valid).
-   * Never touches any other field's error; never runs while
+   * M4 Gap B blur validation: `name` validates only the name; `quantity`
+   * with a row index validates only that row's quantity side (blank and
+   * zero are droppable, so they clear the row's quantity error while
+   * leaving its location error intact). Merges the result into the errors
+   * state. Never touches any other field's error; never runs while
    * `submitting`, while either write guard owns the screen, or on a
    * mixed route epoch. Reuses the submit-time rules and i18n keys.
    */
-  onFieldBlur: (field: 'name' | 'quantity') => void;
+  onFieldBlur: (field: 'name' | 'quantity', index?: number) => void;
   /** Persists the latest values; resolves the explicit outcome. */
   onSave: () => Promise<SaveOutcome>;
   onRequestClose: () => void;
@@ -143,29 +147,28 @@ export interface ItemFormController {
   onRetry: () => void;
 }
 
-/** Blank controlled values: empty raw quantity, never a default of 1. */
+/** Blank controlled values: a name plus zero stock rows (sin stock). */
 export function blankItemFormValues(prefilledName = ''): ItemFormValues {
   return {
     name: prefilledName,
-    quantityRaw: '',
-    location: null,
+    stock: [],
     categories: [],
     pendingNewCategoryName: '',
-    stashedNewLocation: null,
   };
 }
 
 function detailToValues(detail: ItemDetail): ItemFormValues {
   return {
     name: detail.name,
-    quantityRaw: String(detail.quantity),
-    location: { kind: 'existing', locationId: detail.locationId },
+    stock: detail.stock.map((level) => ({
+      location: { kind: 'existing', locationId: level.locationId },
+      quantityRaw: String(level.quantity),
+    })),
     categories: detail.categoryIds.map((categoryId) => ({
       kind: 'existing' as const,
       categoryId,
     })),
     pendingNewCategoryName: '',
-    stashedNewLocation: null,
   };
 }
 
@@ -271,7 +274,26 @@ export default function useItemFormController(
   }, []);
 
   const mapFailure = useCallback(
-    (error: unknown): { errors: ItemFormErrors; code: string | null } => {
+    (
+      error: unknown,
+      stockRows?: ItemStockRowValues[],
+    ): { errors: ItemFormErrors; code: string | null } => {
+      // Row-scoped backend errors land on one mounted row when rows
+      // exist; with no rows (a backend rejection of a stockless payload)
+      // the message falls back to the form level, never to a ghost row.
+      const rowError = (
+        index: number,
+        side: 'location' | 'quantity',
+        message: string,
+      ): { errors: ItemFormErrors; code: string | null } => {
+        if (!stockRows || stockRows.length === 0) {
+          return { errors: { form: message }, code: null };
+        }
+        const at = Math.min(Math.max(index, 0), stockRows.length - 1);
+        const stock: (ItemStockRowErrors | undefined)[] = [];
+        stock[at] = { [side]: message };
+        return { errors: { stock }, code: null };
+      };
       if (error instanceof ValidationError) {
         if (error.field === 'name') {
           if (error.code === 'too-long') {
@@ -287,21 +309,30 @@ export default function useItemFormController(
         }
         if (error.field === 'quantity') {
           if (error.code === 'out-of-range') {
-            return {
-              errors: { quantity: t('itemFormErrorQuantityTooLarge') },
-              code: null,
-            };
+            return rowError(0, 'quantity', t('itemFormErrorQuantityTooLarge'));
           }
-          return {
-            errors: { quantity: t('itemFormErrorQuantityInvalid') },
-            code: null,
-          };
+          return rowError(0, 'quantity', t('itemFormErrorQuantityInvalid'));
         }
-        if (error.field === 'location' || error.field === 'locationId') {
-          return {
-            errors: { location: t('itemFormErrorLocationRequired') },
-            code: null,
-          };
+        if (
+          error.field === 'location' ||
+          error.field === 'locationId' ||
+          error.field === 'stock'
+        ) {
+          if (error.code === 'too-long') {
+            return rowError(
+              0,
+              'location',
+              t('itemFormErrorLocationNameTooLong'),
+            );
+          }
+          if (error.code === 'duplicate') {
+            return rowError(
+              0,
+              'location',
+              t('itemFormErrorStockDuplicateLocation'),
+            );
+          }
+          return rowError(0, 'location', t('itemFormErrorLocationRequired'));
         }
         return { errors: { form: error.code }, code: error.code };
       }
@@ -310,18 +341,16 @@ export default function useItemFormController(
       }
       if (error instanceof EntityConflictError) {
         if (error.entity === 'location') {
-          return {
-            errors: { location: t('itemFormErrorLocationNameConflict') },
-            code: null,
-          };
+          const message = t('itemFormErrorLocationNameConflict');
+          const firstNew = (stockRows ?? []).findIndex(
+            (row) => row.location.kind === 'new',
+          );
+          return rowError(firstNew >= 0 ? firstNew : 0, 'location', message);
         }
         return {
           errors: { categories: t('itemFormErrorCategoryNameConflict') },
           code: null,
         };
-      }
-      if (error instanceof LocationInUseError) {
-        return { errors: { form: 'in-use' }, code: 'in-use' };
       }
       return { errors: { form: 'storage' }, code: 'storage' };
     },
@@ -349,7 +378,7 @@ export default function useItemFormController(
           setLoadState('ready');
         } catch (error) {
           if (unmounted.current || ticket !== loadTicket.current) return;
-          const mapped = mapFailure(error);
+          const mapped = mapFailure(error, []);
           setErrors(mapped.errors);
           setFormErrorCode(mapped.code);
           setLoadState('error');
@@ -423,49 +452,76 @@ export default function useItemFormController(
       } else if (trimmedName.length > ITEM_NAME_MAX_LENGTH) {
         fieldErrors.name = t('itemFormErrorNameTooLong');
       }
-      const quantity = parseQuantityRaw(current.quantityRaw);
-      if (quantity === null) {
-        fieldErrors.quantity = isQuantityAboveProductMax(current.quantityRaw)
-          ? t('itemFormErrorQuantityTooLarge')
-          : t('itemFormErrorQuantityInvalid');
-      }
-      let location: ItemLocationDraft | null = null;
-      const selector = current.location;
-      if (selector?.kind === 'existing') {
-        if (
-          !Number.isSafeInteger(selector.locationId) ||
-          selector.locationId <= 0
-        ) {
-          fieldErrors.location = t('itemFormErrorLocationRequired');
+      // Per-row stock validation, index-aligned with `current.stock`. A
+      // blank or zero quantity means "no stock there" and drops the row
+      // (never an error); anything else unparsable reports the row's
+      // quantity copy. Duplicate existing locations reject on the later
+      // rows, mirroring the domain (which rejects even when one side is
+      // a dropped zero row).
+      const rows = current.stock ?? [];
+      const rowErrors: (ItemStockRowErrors | undefined)[] = rows.map(
+        () => undefined,
+      );
+      const seenLocationIds = new Set<number>();
+      const duplicateRows = new Set<number>();
+      rows.forEach((row, index) => {
+        const selector = row.location;
+        if (selector?.kind === 'existing') {
+          if (
+            !Number.isSafeInteger(selector.locationId) ||
+            selector.locationId <= 0
+          ) {
+            rowErrors[index] = {
+              ...rowErrors[index],
+              location: t('itemFormErrorLocationRequired'),
+            };
+          } else if (seenLocationIds.has(selector.locationId)) {
+            duplicateRows.add(index);
+          } else {
+            seenLocationIds.add(selector.locationId);
+          }
+        } else if (selector?.kind === 'new') {
+          const newLocationName = selector.location.name;
+          if (
+            typeof newLocationName !== 'string' ||
+            newLocationName.trim() === ''
+          ) {
+            rowErrors[index] = {
+              ...rowErrors[index],
+              location: t('itemFormErrorLocationRequired'),
+            };
+          } else if (newLocationName.trim().length > LOCATION_NAME_MAX_LENGTH) {
+            rowErrors[index] = {
+              ...rowErrors[index],
+              location: t('itemFormErrorLocationNameTooLong'),
+            };
+          }
         } else {
-          location = {
-            kind: 'existing',
-            locationId: selector.locationId,
+          rowErrors[index] = {
+            ...rowErrors[index],
+            location: t('itemFormErrorLocationRequired'),
           };
         }
-      } else if (selector?.kind === 'new') {
-        const newLocationName = selector.location.name;
-        if (
-          typeof newLocationName !== 'string' ||
-          newLocationName.trim() === ''
-        ) {
-          fieldErrors.location = t('itemFormErrorLocationRequired');
-        } else if (newLocationName.trim().length > LOCATION_NAME_MAX_LENGTH) {
-          fieldErrors.location = t('itemFormErrorLocationNameTooLong');
-        } else {
-          location = {
-            kind: 'new',
-            location: {
-              name: selector.location.name,
-              address: selector.location.address ?? null,
-            },
+        const raw = row.quantityRaw ?? '';
+        if (raw.trim() === '') return;
+        const quantity = parseQuantityRaw(raw);
+        if (quantity === null) {
+          rowErrors[index] = {
+            ...rowErrors[index],
+            quantity: isQuantityAboveProductMax(raw)
+              ? t('itemFormErrorQuantityTooLarge')
+              : t('itemFormErrorQuantityInvalid'),
           };
         }
-      } else {
-        fieldErrors.location = t('itemFormErrorLocationRequired');
+      });
+      for (const index of duplicateRows) {
+        rowErrors[index] = {
+          ...rowErrors[index],
+          location: t('itemFormErrorStockDuplicateLocation'),
+        };
       }
       // Zero-to-many by distinct existing id (never by name); new drafts
-      // carry verbatim names. UI-only pending/stash text stays out.
+      // carry verbatim names. UI-only pending text stays out.
       const seen = new Set<number>();
       const categories: ItemCategoryDraft[] = [];
       for (const entry of current.categories ?? []) {
@@ -501,19 +557,32 @@ export default function useItemFormController(
           break;
         }
       }
+      const hasRowErrors = rowErrors.some(
+        (entry) =>
+          entry?.location !== undefined || entry?.quantity !== undefined,
+      );
       if (
         fieldErrors.name !== undefined ||
-        fieldErrors.quantity !== undefined ||
-        fieldErrors.location !== undefined ||
+        hasRowErrors ||
         fieldErrors.categories !== undefined
       ) {
-        return { errors: fieldErrors };
+        return {
+          errors: {
+            ...fieldErrors,
+            ...(hasRowErrors ? { stock: rowErrors } : {}),
+          },
+        };
+      }
+      const stock: ItemStockDraft[] = [];
+      for (const row of rows) {
+        const quantity = parseQuantityRaw(row.quantityRaw ?? '');
+        if (quantity === null || quantity === 0) continue;
+        stock.push({ location: row.location, quantity });
       }
       return {
         draft: {
           name: current.name,
-          quantity: quantity as number,
-          location: location as ItemLocationDraft,
+          stock,
           categories,
         },
       };
@@ -527,7 +596,7 @@ export default function useItemFormController(
   }, []);
 
   const onFieldBlur = useCallback(
-    (field: 'name' | 'quantity') => {
+    (field: 'name' | 'quantity', index?: number) => {
       // Mixed epoch (route changed before the session reset ran):
       // refuse rather than publishing a stale blur error.
       if (!epochMatchesLiveRoute()) return;
@@ -536,30 +605,61 @@ export default function useItemFormController(
       if (saving || deleting) return;
       const ticket = loadTicket.current;
       const current = valuesRef.current;
-      const trimmedBlurName = current.name.trim();
-      const message =
-        field === 'name'
-          ? trimmedBlurName === ''
+      if (field === 'name') {
+        const trimmedBlurName = current.name.trim();
+        const message =
+          trimmedBlurName === ''
             ? t('itemFormErrorNameRequired')
             : trimmedBlurName.length > ITEM_NAME_MAX_LENGTH
               ? t('itemFormErrorNameTooLong')
-              : undefined
-          : parseQuantityRaw(current.quantityRaw) === null
-            ? isQuantityAboveProductMax(current.quantityRaw)
-              ? t('itemFormErrorQuantityTooLarge')
-              : t('itemFormErrorQuantityInvalid')
-            : undefined;
+              : undefined;
+        // Route moved mid-blur: drop the stale result.
+        if (ticket !== loadTicket.current || !epochMatchesLiveRoute()) return;
+        setErrors((prev) => {
+          if (message === undefined) {
+            if (prev.name === undefined) return prev;
+            const next = { ...prev };
+            delete next.name;
+            return next;
+          }
+          if (prev.name === message) return prev;
+          return { ...prev, name: message };
+        });
+        return;
+      }
+      // Row quantity blur: quantity side only, so a row location error
+      // survives a quantity blur and vice versa. Blank and zero are
+      // droppable, so they clear the row's quantity error.
+      if (index === undefined || !Number.isSafeInteger(index) || index < 0) {
+        return;
+      }
+      const row = (current.stock ?? [])[index];
+      if (!row) return;
+      const raw = row.quantityRaw ?? '';
+      const message =
+        raw.trim() !== '' && parseQuantityRaw(raw) === null
+          ? isQuantityAboveProductMax(raw)
+            ? t('itemFormErrorQuantityTooLarge')
+            : t('itemFormErrorQuantityInvalid')
+          : undefined;
       // Route moved mid-blur: drop the stale result.
       if (ticket !== loadTicket.current || !epochMatchesLiveRoute()) return;
       setErrors((prev) => {
+        const prevRows = prev.stock ?? [];
+        const prevMessage = prevRows[index]?.quantity;
         if (message === undefined) {
-          if (prev[field] === undefined) return prev;
-          const next = { ...prev };
-          delete next[field];
-          return next;
+          if (prevMessage === undefined) return prev;
+          const nextRows = prevRows.slice();
+          const nextRow = { ...nextRows[index] };
+          delete nextRow.quantity;
+          nextRows[index] =
+            nextRow.location === undefined ? undefined : nextRow;
+          return { ...prev, stock: nextRows };
         }
-        if (prev[field] === message) return prev;
-        return { ...prev, [field]: message };
+        if (prevMessage === message) return prev;
+        const nextRows = prevRows.slice();
+        nextRows[index] = { ...nextRows[index], quantity: message };
+        return { ...prev, stock: nextRows };
       });
     },
     [epochMatchesLiveRoute, saving, deleting, t],
@@ -658,7 +758,7 @@ export default function useItemFormController(
         if (ticket !== loadTicket.current) {
           return { persisted: false };
         }
-        const mapped = mapFailure(error);
+        const mapped = mapFailure(error, valuesRef.current.stock);
         setErrors(mapped.errors);
         setFormErrorCode(mapped.code);
         return { persisted: false };
@@ -782,7 +882,7 @@ export default function useItemFormController(
         }
         confirmDeleteArmed.current = false;
         setConfirmDelete(false);
-        const mapped = mapFailure(error);
+        const mapped = mapFailure(error, []);
         setErrors(mapped.errors);
         setFormErrorCode(mapped.code);
         return { deleted: false };

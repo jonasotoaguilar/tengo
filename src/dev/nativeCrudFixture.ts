@@ -248,8 +248,9 @@ export async function resetNativeCrudFixture(
  *
  * Seeding semantics (idempotent reseed): every measurement row carries the
  * stable `Perf p5b ` name prefix and dedicated locations and categories, so
- * the pass deletes exactly its own prior rows (items first for the location
- * RESTRICT FK, then locations, then categories) before seeding. The 500
+ * the pass deletes exactly its own prior rows (items first — the delete
+ * cascades their stock and join rows — then locations, then categories)
+ * before seeding. The 500
  * inserts run sequentially through the real repository, one atomic exclusive
  * transaction per insert. The seed is deliberately NOT wrapped in the
  * handle's batch transaction (`withTransactionAsync`): the repository's
@@ -352,7 +353,8 @@ export async function runCrudMeasurePass(
   };
   try {
     // Cleanup-first reseed: remove exactly this battery's prior rows.
-    // Items go first (location RESTRICT), then locations, then categories.
+    // Items go first (their delete cascades stock and join rows), then
+    // locations, then categories.
     const like = `${CRUD_MEASURE_NAME_PREFIX}%`;
     await db.runAsync('DELETE FROM items WHERE name LIKE ?', [like]);
     await db.runAsync('DELETE FROM locations WHERE name LIKE ?', [like]);
@@ -391,8 +393,12 @@ export async function runCrudMeasurePass(
         const padded = String(index).padStart(3, '0');
         await deps.createItem(db, {
           name: `${CRUD_MEASURE_NAME_PREFIX}item ${padded}`,
-          quantity: index % 7,
-          locationId: locations[index % locations.length].id,
+          stock: [
+            {
+              locationId: locations[index % locations.length].id,
+              quantity: (index % 7) + 1,
+            },
+          ],
           categoryIds: [categories[index % categories.length].id],
         });
       }
@@ -433,8 +439,7 @@ export async function runCrudMeasurePass(
     const write = await timed(() =>
       deps.createItem(db, {
         name: `${CRUD_MEASURE_NAME_PREFIX}single-write`,
-        quantity: 1,
-        locationId: probeLocation.id,
+        stock: [{ locationId: probeLocation.id, quantity: 1 }],
         categoryIds: [],
       }),
     );

@@ -49,13 +49,13 @@ const CONTROL_FLOOR = 3;
 /** Documented control inventory; the walk must keep finding these. */
 const EXPECTED_CONTROLS = [
   'item-form/name',
-  'item-form/quantity',
-  'item-form/decrement',
-  'item-form/increment',
+  'item-form/stock-0/quantity',
+  'item-form/stock-0/decrement',
+  'item-form/stock-0/increment',
   'item-form/location-10',
   'item-form/location-new',
-  'item-form/location-new/name',
-  'item-form/location-new/address',
+  'item-form/stock-0/location-new/name',
+  'item-form/stock-0/location-new/address',
   'item-form/category-20',
   'item-form/new-category/name',
   'inventory-search',
@@ -148,9 +148,8 @@ const bulk: Category = { id: 20, name: 'Bulk', created_at: 'ts-20' };
 const item: ItemDetail = {
   id: 1,
   name: 'Rice',
-  quantity: 2,
-  locationId: pantry.id,
-  location: pantry,
+  stock: [{ locationId: pantry.id, location: pantry, quantity: 2 }],
+  totalQuantity: 2,
   categoryIds: [bulk.id],
   categories: [bulk],
   created_at: 'created-1',
@@ -159,11 +158,14 @@ const item: ItemDetail = {
 function formProps(): ItemFormProps {
   const values: ItemFormValues = {
     name: '',
-    quantityRaw: '',
-    location: { kind: 'new', location: { name: '', address: null } },
+    stock: [
+      {
+        location: { kind: 'new', location: { name: '', address: null } },
+        quantityRaw: '',
+      },
+    ],
     categories: [],
     pendingNewCategoryName: '',
-    stashedNewLocation: null,
   };
   return {
     mode: 'add',

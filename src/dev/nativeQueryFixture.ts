@@ -171,8 +171,12 @@ async function writeMarker(db: QueryFixtureDb, value: string): Promise<void> {
 }
 
 /**
- * Seed the exact M3 dataset via the real repositories: 2 locations, 3
- * categories, 5 items. Runs inside the adapter's own transactional repo
+ * Seed the exact dataset via the real repositories: 2 locations, 3
+ * categories, 5 items. Same names and counts as the M3 dataset, on the
+ * v4 shape: quantities live on stock rows, one item is stocked in two
+ * locations (the R2 one-answer breakdown), and two items are
+ * catalog-only (R6 sin stock — the old model stored these as quantity
+ * 0 on the item row). Runs inside the adapter's own transactional repo
  * APIs — never nested exclusive transactions from the harness.
  */
 async function seedExactDataset(
@@ -187,32 +191,30 @@ async function seedExactDataset(
   const stock = await repos.createCategory(db, { name: CAT_STOCK });
   await repos.createItem(db, {
     name: 'Café Grinder',
-    quantity: 2,
-    locationId: kueche.id,
+    stock: [{ locationId: kueche.id, quantity: 2 }],
     categoryIds: [kitchen.id],
   });
   await repos.createItem(db, {
     name: 'CAFÉ filter',
-    quantity: 0,
-    locationId: kueche.id,
+    stock: [],
     categoryIds: [tools.id],
   });
   await repos.createItem(db, {
     name: '100%_literal\\blend',
-    quantity: 1,
-    locationId: garage.id,
+    stock: [{ locationId: garage.id, quantity: 1 }],
     categoryIds: [stock.id],
   });
   await repos.createItem(db, {
     name: 'Hammer',
-    quantity: 5,
-    locationId: garage.id,
+    stock: [
+      { locationId: garage.id, quantity: 5 },
+      { locationId: kueche.id, quantity: 1 },
+    ],
     categoryIds: [tools.id, kitchen.id],
   });
   await repos.createItem(db, {
     name: 'Cafe Napkin',
-    quantity: 0,
-    locationId: garage.id,
+    stock: [],
     categoryIds: [],
   });
   await writeMarker(
@@ -231,7 +233,7 @@ interface DatasetSnapshot {
   itemSummaries: string[];
 }
 
-/** Exact-dataset verification: names, quantities, and relations verbatim. */
+/** Exact-dataset verification: names, totals, stock sites, relations. */
 async function snapshotDataset(
   deps: QueryFixtureDeps,
   db: QueryFixtureDb,
@@ -245,7 +247,12 @@ async function snapshotDataset(
     itemSummaries: items
       .map(
         (item) =>
-          `${item.name}|${item.quantity}|${item.location.name}|${[...item.categoryIds].sort((a, b) => a - b).join('+')}`,
+          `${item.name}|${item.totalQuantity}|${item.stock
+            .map((s) => s.location.name)
+            .sort()
+            .join(
+              '+',
+            )}|${[...item.categoryIds].sort((a, b) => a - b).join('+')}`,
       )
       .sort(),
   };
@@ -277,16 +284,23 @@ function isExactDataset(snapshot: DatasetSnapshot): boolean {
   ) {
     return false;
   }
-  const quantityOf = (name: string): string =>
+  const totalOf = (name: string): string =>
     (byName.get(name) ?? '').split('|')[1] ?? '';
+  const sitesOf = (name: string): string =>
+    (byName.get(name) ?? '').split('|')[2] ?? 'missing';
   const categoriesOf = (name: string): string =>
     (byName.get(name) ?? '').split('|')[3] ?? 'missing';
   return (
-    quantityOf('Café Grinder') === '2' &&
-    quantityOf('CAFÉ filter') === '0' &&
-    quantityOf('100%_literal\\blend') === '1' &&
-    quantityOf('Hammer') === '5' &&
-    quantityOf('Cafe Napkin') === '0' &&
+    totalOf('Café Grinder') === '2' &&
+    sitesOf('Café Grinder') === 'Küche' &&
+    totalOf('CAFÉ filter') === '0' &&
+    sitesOf('CAFÉ filter') === '' &&
+    totalOf('100%_literal\\blend') === '1' &&
+    sitesOf('100%_literal\\blend') === 'Garage' &&
+    totalOf('Hammer') === '6' &&
+    sitesOf('Hammer') === 'Garage+Küche' &&
+    totalOf('Cafe Napkin') === '0' &&
+    sitesOf('Cafe Napkin') === '' &&
     categoriesOf('Cafe Napkin') === '' &&
     categoriesOf('Hammer').split('+').length === 2
   );
@@ -327,12 +341,12 @@ export async function runNativeQueryFixture(
       'CREATE TABLE IF NOT EXISTS fixture_state (key TEXT PRIMARY KEY, value TEXT)',
     );
     const version = await readPragmaNumber(db, 'user_version');
-    if (version !== 3) throw new Error(`user_version=${version}, want 3`);
+    if (version !== 4) throw new Error(`user_version=${version}, want 4`);
     const fk = await readPragmaNumber(db, 'foreign_keys');
     if (fk !== 1) throw new Error(`PRAGMA foreign_keys=${fk}, want 1`);
     pass(
-      'fixture database initialized to v3 with FK ON',
-      `user_version=3 foreign_keys=1 ${database}`,
+      'fixture database initialized to v4 with FK ON',
+      `user_version=4 foreign_keys=1 ${database}`,
     );
 
     if (database === QUERY_FIXTURE_EMPTY_DB) {
@@ -437,35 +451,36 @@ export async function runNativeQueryFixture(
       `${literal[0].name}: no LIKE wildcards`,
     );
 
-    // S9 cross-entity proof: 'garage' names no item and no category, so all
-    // three Garage rows match through the location name only; 'kuche'
-    // proves accent folding on location names ('Küche' holds the two cafés).
+    // S9 cross-entity proof: 'garage' names no item and no category, so
+    // both Garage-stocked rows match through the stocked location name
+    // only (the sin-stock Napkin never matches a location name); 'kuche'
+    // proves accent folding on stocked location names (Grinder plus the
+    // two-site Hammer via Küche).
     const garageQuery = await deps.queryItems(db, { query: 'garage' });
     const garageNames = garageQuery.map((item) => item.name).sort();
     if (
       garageNames.join('\u0000') !==
-      ['100%_literal\\blend', 'Cafe Napkin', 'Hammer'].join('\u0000')
+      ['100%_literal\\blend', 'Hammer'].join('\u0000')
     ) {
       throw new Error(
-        `location-name garage matched [${garageNames.join(', ')}], want 100%-item + Cafe Napkin + Hammer`,
+        `location-name garage matched [${garageNames.join(', ')}], want 100%-item + Hammer`,
       );
     }
-    if (new Set(garageQuery.map((item) => item.id)).size !== 3) {
+    if (new Set(garageQuery.map((item) => item.id)).size !== 2) {
       throw new Error('location-name garage matched duplicate rows');
     }
     const kucheQuery = await deps.queryItems(db, { query: 'kuche' });
     const kucheNames = kucheQuery.map((item) => item.name).sort();
     if (
-      kucheNames.join('\u0000') !==
-      ['CAFÉ filter', 'Café Grinder'].join('\u0000')
+      kucheNames.join('\u0000') !== ['Café Grinder', 'Hammer'].join('\u0000')
     ) {
       throw new Error(
-        `folded location-name kuche matched [${kucheNames.join(', ')}], want CAFÉ filter + Café Grinder`,
+        `folded location-name kuche matched [${kucheNames.join(', ')}], want Café Grinder + Hammer`,
       );
     }
     pass(
       'search matches location names only, with accent folding',
-      `garage=3 (none named garage) kuche=2 via Küche`,
+      `garage=2 (none named garage) kuche=2 via Küche`,
     );
 
     // S9 cross-entity proof: 'kitchen' names no item and no location, so
@@ -539,33 +554,40 @@ export async function runNativeQueryFixture(
       '5 rows, 5 distinct ids, Hammer once with 2 categories',
     );
 
-    const exhausted = all
-      .filter((item) => item.quantity === 0)
+    // R6: the two catalog-only items stay listed with total 0 (sin
+    // stock); membership filters exclude them while the unfiltered list
+    // keeps them. Hammer shows one row with its two-site breakdown.
+    const sinStock = all
+      .filter((item) => item.totalQuantity === 0)
       .map((item) => item.name)
       .sort();
     if (
-      exhausted.join('\u0000') !== ['CAFÉ filter', 'Cafe Napkin'].join('\u0000')
+      sinStock.join('\u0000') !== ['CAFÉ filter', 'Cafe Napkin'].join('\u0000')
     ) {
       throw new Error(
-        `exhausted=[${exhausted.join(', ')}], want CAFÉ filter + Cafe Napkin`,
+        `sin-stock=[${sinStock.join(', ')}], want CAFÉ filter + Cafe Napkin`,
       );
     }
     const napkin = all.find((item) => item.name === 'Cafe Napkin');
     if (napkin?.categoryIds.length !== 0) {
       throw new Error('zero-many mapping broken for Cafe Napkin');
     }
+    const hammerAll = all.find((item) => item.name === 'Hammer');
+    if (hammerAll?.stock.length !== 2 || hammerAll.totalQuantity !== 6) {
+      throw new Error('two-site Hammer duplicated, split, or mistotaled');
+    }
     const kueche = locations.find((loc) => loc.name === LOC_KUECHE);
     if (!kueche) throw new Error('Küche location missing for group counts');
     const kuecheItems = await deps.queryItems(db, { locationId: kueche.id });
     const garageItems = await deps.queryItems(db, { locationId: garage.id });
-    if (kuecheItems.length !== 2 || garageItems.length !== 3) {
+    if (kuecheItems.length !== 2 || garageItems.length !== 2) {
       throw new Error(
-        `group counts Küche=${kuecheItems.length} Garage=${garageItems.length}, want 2/3`,
+        `group counts Küche=${kuecheItems.length} Garage=${garageItems.length}, want 2/2`,
       );
     }
     pass(
-      'exhausted zero quantities map with group counts',
-      'exhausted=CAFÉ filter+Cafe Napkin zero-many Cafe Napkin=[] groups Küche=2 Garage=3',
+      'sin-stock totals map with group counts and one two-site row',
+      'sin-stock=CAFÉ filter+Cafe Napkin zero-many Cafe Napkin=[] Hammer=1 row total 6 groups Küche=2 Garage=2',
     );
 
     return { database, status: 'pass', checks, db };

@@ -108,93 +108,156 @@ describe('inventory domain validation (M1, no persistence)', () => {
     expect(() => validateCategoryInput({ name: '' })).toThrow(ValidationError);
   });
 
-  test('item input requires a valid location reference (missing or null rejected)', () => {
+  test('item input carries a stock array: location + quantity per row', () => {
     const valid = validateItemInput({
       name: 'Rice',
-      quantity: 2,
-      locationId: 1,
+      stock: [
+        { locationId: 1, quantity: 2 },
+        { locationId: 3, quantity: 5 },
+      ],
     });
     expect(valid).toEqual({
       name: 'Rice',
-      quantity: 2,
-      locationId: 1,
+      stock: [
+        { locationId: 1, quantity: 2 },
+        { locationId: 3, quantity: 5 },
+      ],
       categoryIds: [],
     });
-    expect(() =>
-      validateItemInput({ name: 'Rice', quantity: 1, locationId: 0 }),
-    ).toThrow(ValidationError);
+  });
+
+  test('item input with no stock rows is a valid catalog-only (sin stock) item', () => {
+    expect(validateItemInput({ name: 'Rice', stock: [] })).toEqual({
+      name: 'Rice',
+      stock: [],
+      categoryIds: [],
+    });
+    expect(validateItemInput({ name: 'Rice' })).toEqual({
+      name: 'Rice',
+      stock: [],
+      categoryIds: [],
+    });
+  });
+
+  test('zero-quantity rows are dropped rather than stored', () => {
+    expect(
+      validateItemInput({
+        name: 'Rice',
+        stock: [
+          { locationId: 1, quantity: 0 },
+          { locationId: 2, quantity: 3 },
+        ],
+      }).stock,
+    ).toEqual([{ locationId: 2, quantity: 3 }]);
+    expect(
+      validateItemInput({
+        name: 'Rice',
+        stock: [{ locationId: 1, quantity: 0 }],
+      }).stock,
+    ).toEqual([]);
+  });
+
+  test('duplicate location ids in one payload are rejected', () => {
     expect(() =>
       validateItemInput({
         name: 'Rice',
-        quantity: 1,
-        locationId: null as unknown as number,
+        stock: [
+          { locationId: 1, quantity: 2 },
+          { locationId: 1, quantity: 3 },
+        ],
       }),
     ).toThrow(ValidationError);
+    // Duplicates reject even when one row is a dropped zero.
     expect(() =>
       validateItemInput({
         name: 'Rice',
-        quantity: 1,
-      } as unknown as { name: string; quantity: number; locationId: number }),
+        stock: [
+          { locationId: 1, quantity: 0 },
+          { locationId: 1, quantity: 3 },
+        ],
+      }),
     ).toThrow(ValidationError);
+  });
+
+  test('each stock row needs a valid location id and an S10 quantity', () => {
+    for (const bad of [
+      { stock: [{ locationId: 0, quantity: 1 }] },
+      { stock: [{ locationId: -2, quantity: 1 }] },
+      { stock: [{ locationId: 1.5, quantity: 1 }] },
+      { stock: [{ locationId: 1, quantity: -1 }] },
+      { stock: [{ locationId: 1, quantity: 1.5 }] },
+      { stock: [{ locationId: 1, quantity: 1000000 }] },
+      { stock: [{ locationId: 1, quantity: '2' }] },
+      { stock: [{ quantity: 1 }] },
+      { stock: [{ locationId: 1 }] },
+      { stock: 'nope' },
+    ]) {
+      expect(() =>
+        validateItemInput(Object.assign({ name: 'Rice' }, bad) as never),
+      ).toThrow(ValidationError);
+    }
+    // S10 bounds apply per row: 999999 accepted, zero dropped.
+    expect(
+      validateItemInput({
+        name: 'Rice',
+        stock: [{ locationId: 1, quantity: 999999 }],
+      }).stock,
+    ).toEqual([{ locationId: 1, quantity: 999999 }]);
   });
 
   test('item input accepts zero or many categories but rejects duplicates', () => {
     expect(
       validateItemInput({
         name: 'Rice',
-        quantity: 0,
-        locationId: 1,
+        stock: [{ locationId: 1, quantity: 2 }],
         categoryIds: [2, 3],
       }),
     ).toEqual({
       name: 'Rice',
-      quantity: 0,
-      locationId: 1,
+      stock: [{ locationId: 1, quantity: 2 }],
       categoryIds: [2, 3],
     });
     expect(() =>
       validateItemInput({
         name: 'Rice',
-        quantity: 1,
-        locationId: 1,
+        stock: [],
         categoryIds: [2, 2],
       }),
     ).toThrow(ValidationError);
     expect(() =>
       validateItemInput({
         name: 'Rice',
-        quantity: 1,
-        locationId: 1,
+        stock: [],
         categoryIds: [0],
       }),
     ).toThrow(ValidationError);
   });
 
-  test('item input rejects blank names and invalid quantities', () => {
+  test('item input rejects blank names', () => {
     expect(() =>
-      validateItemInput({ name: '  ', quantity: 1, locationId: 1 }),
-    ).toThrow(ValidationError);
-    expect(() =>
-      validateItemInput({ name: 'Rice', quantity: -1, locationId: 1 }),
-    ).toThrow(ValidationError);
-    expect(() =>
-      validateItemInput({ name: 'Rice', quantity: 0.5, locationId: 1 }),
+      validateItemInput({
+        name: '  ',
+        stock: [{ locationId: 1, quantity: 1 }],
+      }),
     ).toThrow(ValidationError);
   });
 
   test('S10 RED: item name over 120 after trim is rejected; exactly 120 accepted', () => {
     const max = 'a'.repeat(120);
     expect(
-      validateItemInput({ name: max, quantity: 1, locationId: 1 }).name,
+      validateItemInput({ name: max, stock: [{ locationId: 1, quantity: 1 }] })
+        .name,
     ).toBe(max);
     expect(() =>
-      validateItemInput({ name: 'a'.repeat(121), quantity: 1, locationId: 1 }),
+      validateItemInput({
+        name: 'a'.repeat(121),
+        stock: [{ locationId: 1, quantity: 1 }],
+      }),
     ).toThrow(ValidationError);
     expect(() =>
       validateItemInput({
         name: `  ${'a'.repeat(121)}  `,
-        quantity: 1,
-        locationId: 1,
+        stock: [{ locationId: 1, quantity: 1 }],
       }),
     ).toThrow(ValidationError);
   });
@@ -204,11 +267,16 @@ describe('inventory domain validation (M1, no persistence)', () => {
     expect(normalizeQuantity(999999)).toBe(999999);
     expect(() => normalizeQuantity(1000000)).toThrow(ValidationError);
     expect(
-      validateItemInput({ name: 'Rice', quantity: 999999, locationId: 1 })
-        .quantity,
-    ).toBe(999999);
+      validateItemInput({
+        name: 'Rice',
+        stock: [{ locationId: 1, quantity: 999999 }],
+      }).stock,
+    ).toEqual([{ locationId: 1, quantity: 999999 }]);
     expect(() =>
-      validateItemInput({ name: 'Rice', quantity: 1000000, locationId: 1 }),
+      validateItemInput({
+        name: 'Rice',
+        stock: [{ locationId: 1, quantity: 1000000 }],
+      }),
     ).toThrow(ValidationError);
   });
 
@@ -233,7 +301,10 @@ describe('inventory domain validation (M1, no persistence)', () => {
 
   test('S10 RED: out-of-range errors carry field and code', () => {
     try {
-      validateItemInput({ name: 'a'.repeat(121), quantity: 1, locationId: 1 });
+      validateItemInput({
+        name: 'a'.repeat(121),
+        stock: [{ locationId: 1, quantity: 1 }],
+      });
       throw new Error('expected ValidationError');
     } catch (error) {
       expect(error).toBeInstanceOf(ValidationError);
@@ -252,7 +323,10 @@ describe('inventory domain validation (M1, no persistence)', () => {
 
   test('validation errors carry field and code for translated UI copy', () => {
     try {
-      validateItemInput({ name: '  ', quantity: 1, locationId: 1 });
+      validateItemInput({
+        name: '  ',
+        stock: [{ locationId: 1, quantity: 1 }],
+      });
       throw new Error('expected ValidationError');
     } catch (error) {
       expect(error).toBeInstanceOf(ValidationError);

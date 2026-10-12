@@ -1,15 +1,17 @@
 /**
- * M2 item persistence (mocked native boundary).
+ * Item persistence over catalog + stock (mocked native boundary).
  *
  * Runs against an in-memory fake `RepositoryDb` with snapshot/rollback
  * exclusive transactions — no native module, no `.db` file. Proves
- * parameterized item CRUD, the location-plus-categories read model, M1
- * validation, typed errors (`validation`/`not-found`/`storage` with the
- * `item` kind, never raw SQLite text), atomic category-set replacement,
- * atomic draft saves (new location/categories with the item, no orphans
- * on failure), fail-closed behavior without the exclusive hook, and that
- * every in-transaction query runs on the scoped handle. Real driver
- * behavior is P2b native proof (isolated test DBs).
+ * parameterized item CRUD over the v4 shape, the `ItemDetail` read model
+ * (per-location breakdown plus total), M1 validation (zero rows dropped,
+ * duplicate locations rejected, S10 bounds per row), typed errors
+ * (`validation`/`not-found`/`storage` with the `item` kind, never raw
+ * SQLite text), atomic stock-set replacement, atomic draft saves (every
+ * stock row's location resolved in one transaction, all-or-nothing),
+ * fail-closed behavior without the exclusive hook, and that every
+ * in-transaction query runs on the scoped handle. Real driver behavior is
+ * native proof (isolated test DBs).
  */
 
 import type {
@@ -30,7 +32,7 @@ import {
   updateItem,
   updateItemFromDraft,
 } from '../src/inventory/itemRepository';
-import type { ItemDraftInput } from '../src/inventory/types';
+import type { ItemDraftInput, NewItemInput } from '../src/inventory/types';
 import { ValidationError } from '../src/inventory/validation';
 
 interface LocRow {
@@ -47,18 +49,22 @@ interface CatRow {
 interface ItemRow {
   id: number;
   name: string;
-  quantity: number;
-  location_id: number;
   created_at: string;
 }
+interface StockRow {
+  itemId: number;
+  locationId: number;
+  quantity: number;
+}
 
-/** In-memory fake with FK enforcement, join cascade, and rollback. */
+/** In-memory fake with FK enforcement, stock cascade, and rollback. */
 function makeFakeDb(options: { exclusive?: boolean } = {}) {
   const outerCalls: { source: string; params: unknown[] }[] = [];
   const txnCalls: { source: string; params: unknown[] }[] = [];
   const locations = new Map<number, LocRow>();
   const categories = new Map<number, CatRow>();
   const items = new Map<number, ItemRow>();
+  const stock: StockRow[] = [];
   const joins = new Set<string>();
   let nextId = 1;
   let failNext: unknown = null;
@@ -80,6 +86,10 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
     new Error(
       'SQLite error: FOREIGN KEY constraint failed (code 787 SQLITE_CONSTRAINT_FOREIGNKEY)',
     );
+  const uniqueError = (table: string) =>
+    new Error(
+      `SQLite error: UNIQUE constraint failed: ${table}.name (code 2067 SQLITE_CONSTRAINT_UNIQUE)`,
+    );
 
   const runImpl = async (
     source: string,
@@ -88,28 +98,53 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
     maybeFail(source);
     if (/INSERT INTO locations/i.test(source)) {
       const [name, address] = params as [string, string | null];
+      for (const row of locations.values()) {
+        if (
+          row.name.trim().toLowerCase() ===
+          (name as string).trim().toLowerCase()
+        ) {
+          throw uniqueError('locations');
+        }
+      }
       const id = nextId++;
       locations.set(id, { id, name, address, created_at: `ts-${id}` });
       return { lastInsertRowId: id, changes: 1 };
     }
     if (/INSERT INTO categories/i.test(source)) {
       const [name] = params as [string];
+      for (const row of categories.values()) {
+        if (
+          row.name.trim().toLowerCase() ===
+          (name as string).trim().toLowerCase()
+        ) {
+          throw uniqueError('categories');
+        }
+      }
       const id = nextId++;
       categories.set(id, { id, name, created_at: `ts-${id}` });
       return { lastInsertRowId: id, changes: 1 };
     }
     if (/INSERT INTO items/i.test(source)) {
-      const [name, quantity, locationId] = params as [string, number, number];
-      if (!locations.has(locationId)) throw fkError();
+      const [name] = params as [string];
       const id = nextId++;
-      items.set(id, {
-        id,
-        name,
-        quantity,
-        location_id: locationId,
-        created_at: `ts-${id}`,
-      });
+      items.set(id, { id, name, created_at: `ts-${id}` });
       return { lastInsertRowId: id, changes: 1 };
+    }
+    if (/INSERT INTO stock/i.test(source)) {
+      const [itemId, locationId, quantity] = params as [number, number, number];
+      if (!items.has(itemId) || !locations.has(locationId)) throw fkError();
+      if (quantity <= 0) {
+        throw new Error('CHECK constraint failed: quantity > 0');
+      }
+      if (
+        stock.some((s) => s.itemId === itemId && s.locationId === locationId)
+      ) {
+        throw new Error(
+          'UNIQUE constraint failed: stock.item_id, stock.location_id',
+        );
+      }
+      stock.push({ itemId, locationId, quantity });
+      return { lastInsertRowId: 0, changes: 1 };
     }
     if (/INSERT INTO item_categories/i.test(source)) {
       const [itemId, categoryId] = params as [number, number];
@@ -118,17 +153,18 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
       return { lastInsertRowId: 0, changes: 1 };
     }
     if (/UPDATE items/i.test(source)) {
-      const [name, quantity, locationId, id] = params as [
-        string,
-        number,
-        number,
-        number,
-      ];
+      const [name, id] = params as [string, number];
       const row = items.get(id);
       if (!row) return { lastInsertRowId: 0, changes: 0 };
-      if (!locations.has(locationId)) throw fkError();
-      items.set(id, { ...row, name, quantity, location_id: locationId });
+      items.set(id, { ...row, name });
       return { lastInsertRowId: id, changes: 1 };
+    }
+    if (/DELETE FROM stock/i.test(source)) {
+      const [id] = params as [number];
+      for (let i = stock.length - 1; i >= 0; i -= 1) {
+        if (stock[i].itemId === id) stock.splice(i, 1);
+      }
+      return { lastInsertRowId: 0, changes: 1 };
     }
     if (/DELETE FROM item_categories/i.test(source)) {
       const [id] = params as [number];
@@ -141,6 +177,9 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
       const [id] = params as [number];
       const deleted = items.delete(id);
       if (deleted) {
+        for (let i = stock.length - 1; i >= 0; i -= 1) {
+          if (stock[i].itemId === id) stock.splice(i, 1);
+        }
         for (const key of [...joins]) {
           if (key.startsWith(`${id}:`)) joins.delete(key);
         }
@@ -166,6 +205,23 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
 
   const getAllImpl = async (source: string, params: unknown[] = []) => {
     maybeFail(source);
+    if (/FROM stock/i.test(source)) {
+      const itemId = params[0] as number;
+      return stock
+        .filter((s) => s.itemId === itemId)
+        .sort((a, b) => a.locationId - b.locationId)
+        .map((s) => {
+          const loc = locations.get(s.locationId);
+          if (!loc) throw new Error('fake: dangling stock location');
+          return {
+            quantity: s.quantity,
+            location_id: loc.id,
+            location_name: loc.name,
+            location_address: loc.address,
+            location_created_at: loc.created_at,
+          };
+        });
+    }
     if (/JOIN item_categories/i.test(source)) {
       const itemId = params[0] as number;
       return [...joins]
@@ -222,6 +278,7 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
           locations: new Map(locations),
           categories: new Map(categories),
           items: new Map(items),
+          stock: stock.map((s) => ({ ...s })),
           joins: new Set(joins),
           nextId,
         };
@@ -234,6 +291,8 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
           for (const [k, v] of snap.categories) categories.set(k, v);
           items.clear();
           for (const [k, v] of snap.items) items.set(k, v);
+          stock.length = 0;
+          for (const s of snap.stock) stock.push(s);
           joins.clear();
           for (const k of snap.joins) joins.add(k);
           nextId = snap.nextId;
@@ -261,6 +320,7 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
     locations,
     categories,
     items,
+    stock,
     joins,
     seedLocation,
     seedCategory,
@@ -278,74 +338,117 @@ type Fake = ReturnType<typeof makeFakeDb>;
 async function seedItem(
   f: Fake,
   locId: number,
-  catIds: number[] = [],
-  name = 'Rice',
+  input: Partial<NewItemInput> = {},
 ) {
   return createItem(f.db, {
-    name,
-    quantity: 2,
-    locationId: locId,
-    categoryIds: catIds,
+    name: 'Rice',
+    stock: [{ locationId: locId, quantity: 2 }],
+    ...input,
   });
 }
 
-describe('item CRUD read model', () => {
-  test('create/get/list round-trip with location entity, categories, zero qty', async () => {
+describe('item CRUD read model (catalog + stock)', () => {
+  test('create/get/list round-trip with breakdown, total, and categories', async () => {
     const f = makeFakeDb();
-    const loc = f.seedLocation('Pantry', 'Aisle 1');
+    const pantry = f.seedLocation('Pantry', 'Aisle 1');
+    const garage = f.seedLocation('Garage');
     const catA = f.seedCategory('Bulk');
     const catB = f.seedCategory('lácteos ñ');
     const created = await createItem(f.db, {
       name: '  Rice — integral  ',
-      quantity: 0,
-      locationId: loc,
+      stock: [
+        { locationId: pantry, quantity: 2 },
+        { locationId: garage, quantity: 5 },
+      ],
       categoryIds: [catA, catB],
     });
     expect(created).toMatchObject({
       name: 'Rice — integral',
-      quantity: 0,
-      locationId: loc,
-      categoryIds: [catA, catB],
+      totalQuantity: 7,
     });
-    expect(created.location).toMatchObject({ id: loc, name: 'Pantry' });
+    expect(created.stock).toHaveLength(2);
+    expect(created.stock[0]).toMatchObject({
+      locationId: pantry,
+      quantity: 2,
+      location: { id: pantry, name: 'Pantry', address: 'Aisle 1' },
+    });
+    expect(created.stock[1]).toMatchObject({
+      locationId: garage,
+      quantity: 5,
+    });
+    expect(created.categoryIds).toEqual([catA, catB]);
     expect(created.categories.map((c) => c.name)).toEqual([
       'Bulk',
       'lácteos ñ',
     ]);
+    // One answer per product: a single row with the breakdown.
     expect(await getItem(f.db, created.id)).toEqual(created);
     expect(await listItems(f.db)).toEqual([created]);
 
-    const bare = await createItem(f.db, {
-      name: 'Salt',
-      quantity: 1,
-      locationId: loc,
-    });
+    const bare = await createItem(f.db, { name: 'Salt' });
+    expect(bare.stock).toEqual([]);
+    expect(bare.totalQuantity).toBe(0);
     expect(bare.categoryIds).toEqual([]);
-    expect(bare.categories).toEqual([]);
     expect((await listItems(f.db)).map((i) => i.id)).toEqual([
       created.id,
       bare.id,
     ]);
   });
 
-  test('invalid inputs throw validation before touching the database', async () => {
+  test('zero-quantity rows are dropped: the item stays catalog-only (sin stock)', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    const created = await createItem(f.db, {
+      name: 'Beans',
+      stock: [{ locationId: loc, quantity: 0 }],
+    });
+    expect(created.stock).toEqual([]);
+    expect(created.totalQuantity).toBe(0);
+    expect(f.stock).toEqual([]);
+    expect(await getItem(f.db, created.id)).toEqual(created);
+  });
+
+  test('duplicate locations and bad rows reject before touching the database', async () => {
     const f = makeFakeDb();
     const loc = f.seedLocation();
     const callsBefore = f.outerCalls.length + f.txnCalls.length;
     await expect(
-      createItem(f.db, { name: '   ', quantity: 1, locationId: loc }),
-    ).rejects.toBeInstanceOf(ValidationError);
-    await expect(
-      createItem(f.db, { name: 'x', quantity: -1, locationId: loc }),
-    ).rejects.toBeInstanceOf(ValidationError);
-    await expect(
-      createItem(f.db, { name: 'x', quantity: 1.5, locationId: loc }),
+      createItem(f.db, {
+        name: '   ',
+        stock: [{ locationId: loc, quantity: 1 }],
+      }),
     ).rejects.toBeInstanceOf(ValidationError);
     await expect(
       createItem(f.db, {
         name: 'x',
-        quantity: 1,
-        locationId: loc,
+        stock: [
+          { locationId: loc, quantity: 1 },
+          { locationId: loc, quantity: 2 },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      createItem(f.db, {
+        name: 'x',
+        stock: [{ locationId: loc, quantity: -1 }],
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      createItem(f.db, {
+        name: 'x',
+        stock: [{ locationId: loc, quantity: 1.5 }],
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      createItem(f.db, {
+        name: 'x',
+        stock: [{ locationId: loc, quantity: 1000000 }],
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      createItem(f.db, {
+        name: 'x',
+        stock: [{ locationId: loc, quantity: 1 }],
         categoryIds: [1, 1],
       }),
     ).rejects.toBeInstanceOf(ValidationError);
@@ -362,28 +465,30 @@ describe('item CRUD read model', () => {
       code: 'not-found',
     });
     await expect(
-      updateItem(f.db, 99, { name: 'x', quantity: 1, locationId: loc }),
+      updateItem(f.db, 99, {
+        name: 'x',
+        stock: [{ locationId: loc, quantity: 1 }],
+      }),
     ).rejects.toBeInstanceOf(EntityNotFoundError);
     await expect(deleteItem(f.db, 99)).rejects.toMatchObject({
       code: 'not-found',
     });
     const missingLoc = (await createItem(f.db, {
       name: 'x',
-      quantity: 1,
-      locationId: 999,
+      stock: [{ locationId: 999, quantity: 1 }],
     }).catch((e: unknown) => e)) as Error;
     expect(missingLoc).toBeInstanceOf(EntityNotFoundError);
     expect(missingLoc).toMatchObject({ entity: 'location', id: 999 });
     const missingCat = (await createItem(f.db, {
       name: 'x',
-      quantity: 1,
-      locationId: loc,
+      stock: [{ locationId: loc, quantity: 1 }],
       categoryIds: [888],
     }).catch((e: unknown) => e)) as Error;
     expect(missingCat).toBeInstanceOf(EntityNotFoundError);
     expect(missingCat).toMatchObject({ entity: 'category', id: 888 });
     // No partial rows from the rejected creates.
     expect(f.items.size).toBe(0);
+    expect(f.stock).toEqual([]);
 
     f.failNextWith(new Error('disk I/O error on sqlite3_step'));
     const failure = (await listItems(f.db).catch((e: unknown) => e)) as Error;
@@ -392,46 +497,51 @@ describe('item CRUD read model', () => {
     expect(failure.message).not.toContain('disk I/O');
   });
 
-  test('update replaces fields and category set atomically, keeps created_at', async () => {
+  test('update replaces name, stock set, and categories atomically, keeps created_at', async () => {
     const f = makeFakeDb();
     const locA = f.seedLocation('Pantry');
     const locB = f.seedLocation('Fridge');
     const catA = f.seedCategory('Bulk');
     const catB = f.seedCategory('Cold');
     const catC = f.seedCategory('Fresh');
-    const created = await seedItem(f, locA, [catA]);
+    const created = await seedItem(f, locA, { categoryIds: [catA] });
+    expect(created.totalQuantity).toBe(2);
     const updated = await updateItem(f.db, created.id, {
       name: 'Brown rice',
-      quantity: 0,
-      locationId: locB,
+      stock: [
+        { locationId: locA, quantity: 1 },
+        { locationId: locB, quantity: 4 },
+      ],
       categoryIds: [catB, catC],
     });
     expect(updated).toMatchObject({
       id: created.id,
       name: 'Brown rice',
-      quantity: 0,
-      locationId: locB,
+      totalQuantity: 5,
       categoryIds: [catB, catC],
       created_at: created.created_at,
     });
-    expect(updated.location).toMatchObject({ id: locB, name: 'Fridge' });
+    expect(updated.stock.map((s) => s.locationId)).toEqual([locA, locB]);
     expect(await getItem(f.db, created.id)).toEqual(updated);
 
+    // Replacing with an empty stock set leaves a sin-stock catalog item.
     const cleared = await updateItem(f.db, created.id, {
       name: 'Brown rice',
-      quantity: 3,
-      locationId: locB,
+      stock: [],
       categoryIds: [],
     });
+    expect(cleared.stock).toEqual([]);
+    expect(cleared.totalQuantity).toBe(0);
     expect(cleared.categoryIds).toEqual([]);
+    expect(f.stock).toEqual([]);
     expect(f.joins.size).toBe(0);
   });
 
-  test('delete removes the item and its joins but keeps entities', async () => {
+  test('delete removes the item, its stock, and its joins but keeps entities', async () => {
     const f = makeFakeDb();
     const loc = f.seedLocation();
     const cat = f.seedCategory();
-    const created = await seedItem(f, loc, [cat]);
+    const created = await seedItem(f, loc, { categoryIds: [cat] });
     await deleteItem(f.db, created.id);
     await expect(getItem(f.db, created.id)).rejects.toBeInstanceOf(
       EntityNotFoundError,
@@ -439,6 +549,7 @@ describe('item CRUD read model', () => {
     expect(await listItems(f.db)).toEqual([]);
     expect(f.locations.has(loc)).toBe(true);
     expect(f.categories.has(cat)).toBe(true);
+    expect(f.stock).toEqual([]);
     expect(f.joins.size).toBe(0);
   });
 
@@ -448,8 +559,7 @@ describe('item CRUD read model', () => {
     const evil = "x'); DROP TABLE items; --";
     const created = await createItem(f.db, {
       name: evil,
-      quantity: 1,
-      locationId: loc,
+      stock: [{ locationId: loc, quantity: 1 }],
     });
     expect(created.name).toBe(evil);
     expect(f.items.size).toBe(1);
@@ -461,13 +571,24 @@ describe('item CRUD read model', () => {
 });
 
 describe('item drafts (form atomic saves)', () => {
-  test('draft create with new location plus existing/new categories', async () => {
+  test('draft create with new locations per stock row plus existing/new categories', async () => {
     const f = makeFakeDb();
     const existingCat = f.seedCategory('Bulk');
     const draft: ItemDraftInput = {
       name: 'Oats',
-      quantity: 4,
-      location: { kind: 'new', location: { name: '  Cellar  ', address: ' ' } },
+      stock: [
+        {
+          location: {
+            kind: 'new',
+            location: { name: '  Cellar  ', address: ' ' },
+          },
+          quantity: 4,
+        },
+        {
+          location: { kind: 'new', location: { name: 'Attic' } },
+          quantity: 2,
+        },
+      ],
       categories: [
         { kind: 'existing', categoryId: existingCat },
         { kind: 'new', category: { name: 'Desayuno' } },
@@ -475,7 +596,16 @@ describe('item drafts (form atomic saves)', () => {
     };
     const created = await createItemFromDraft(f.db, draft);
     expect(created.name).toBe('Oats');
-    expect(created.location).toMatchObject({ name: 'Cellar', address: null });
+    expect(created.totalQuantity).toBe(6);
+    expect(created.stock).toHaveLength(2);
+    expect(created.stock[0].location).toMatchObject({
+      name: 'Cellar',
+      address: null,
+    });
+    expect(created.stock.map((s) => s.location.name).sort()).toEqual([
+      'Attic',
+      'Cellar',
+    ]);
     expect(created.categoryIds).toHaveLength(2);
     expect(created.categories.map((c) => c.name).sort()).toEqual([
       'Bulk',
@@ -485,31 +615,47 @@ describe('item drafts (form atomic saves)', () => {
 
     const plain = await createItemFromDraft(f.db, {
       name: 'Salt',
-      quantity: 0,
-      location: { kind: 'existing', locationId: created.locationId },
+      stock: [
+        {
+          location: {
+            kind: 'existing',
+            locationId: created.stock[0].locationId,
+          },
+          quantity: 0,
+        },
+      ],
     });
+    // The zero row is dropped: nothing stored, no new location.
+    expect(plain.stock).toEqual([]);
+    expect(plain.totalQuantity).toBe(0);
     expect(plain.categoryIds).toEqual([]);
-    expect(plain.locationId).toBe(created.locationId);
   });
 
-  test('draft update creates new related rows atomically, keeps created_at', async () => {
+  test('draft update resolves every stock row atomically, keeps created_at', async () => {
     const f = makeFakeDb();
     const loc = f.seedLocation();
     const created = await seedItem(f, loc);
     const updated = await updateItemFromDraft(f.db, created.id, {
       name: 'Rice+',
-      quantity: 9,
-      location: { kind: 'new', location: { name: 'Attic' } },
+      stock: [
+        { location: { kind: 'existing', locationId: loc }, quantity: 3 },
+        { location: { kind: 'new', location: { name: 'Attic' } }, quantity: 1 },
+      ],
       categories: [{ kind: 'new', category: { name: 'Reserva' } }],
     });
     expect(updated.created_at).toBe(created.created_at);
-    expect(updated.location).toMatchObject({ name: 'Attic' });
+    expect(updated.totalQuantity).toBe(4);
+    expect(updated.stock.map((s) => s.location.name).sort()).toEqual([
+      'Attic',
+      'Pantry',
+    ]);
     expect(updated.categories.map((c) => c.name)).toEqual(['Reserva']);
     await expect(
       updateItemFromDraft(f.db, 999, {
         name: 'x',
-        quantity: 1,
-        location: { kind: 'existing', locationId: loc },
+        stock: [
+          { location: { kind: 'existing', locationId: loc }, quantity: 1 },
+        ],
       }),
     ).rejects.toBeInstanceOf(EntityNotFoundError);
   });
@@ -519,16 +665,29 @@ describe('item drafts (form atomic saves)', () => {
     const loc = f.seedLocation();
     const cat = f.seedCategory();
     const bad: ItemDraftInput[] = [
-      { name: 'x', quantity: 1, location: null as never },
+      { name: 'x', stock: null as never },
       {
         name: 'x',
-        quantity: 1,
-        location: { kind: 'bogus', locationId: loc } as never,
+        stock: [
+          {
+            location: { kind: 'bogus', locationId: loc } as never,
+            quantity: 1,
+          },
+        ],
+      },
+      // Duplicate existing locations in one payload reject.
+      {
+        name: 'x',
+        stock: [
+          { location: { kind: 'existing', locationId: loc }, quantity: 1 },
+          { location: { kind: 'existing', locationId: loc }, quantity: 2 },
+        ],
       },
       {
         name: 'x',
-        quantity: 1,
-        location: { kind: 'existing', locationId: loc },
+        stock: [
+          { location: { kind: 'existing', locationId: loc }, quantity: 1 },
+        ],
         categories: [
           { kind: 'existing', categoryId: cat },
           { kind: 'existing', categoryId: cat },
@@ -536,8 +695,18 @@ describe('item drafts (form atomic saves)', () => {
       },
       {
         name: 'x',
-        quantity: 1,
-        location: { kind: 'new', location: { name: '   ' } },
+        stock: [
+          { location: { kind: 'new', location: { name: '   ' } }, quantity: 1 },
+        ],
+      },
+      {
+        name: 'x',
+        stock: [
+          {
+            location: { kind: 'existing', locationId: loc },
+            quantity: 1000000,
+          },
+        ],
       },
     ];
     for (const draft of bad) {
@@ -547,6 +716,7 @@ describe('item drafts (form atomic saves)', () => {
     }
     expect(f.db.withExclusiveTransactionAsync).not.toHaveBeenCalled();
     expect(f.items.size).toBe(0);
+    expect(f.stock).toEqual([]);
     expect(f.locations.size).toBe(1);
     expect(f.categories.size).toBe(1);
   });
@@ -556,8 +726,12 @@ describe('item drafts (form atomic saves)', () => {
     const cat = f.seedCategory();
     const missing = (await createItemFromDraft(f.db, {
       name: 'Ghost',
-      quantity: 1,
-      location: { kind: 'new', location: { name: 'Nowhere' } },
+      stock: [
+        {
+          location: { kind: 'new', location: { name: 'Nowhere' } },
+          quantity: 1,
+        },
+      ],
       categories: [{ kind: 'existing', categoryId: 4242 }],
     }).catch((e: unknown) => e)) as Error;
     expect(missing).toBeInstanceOf(EntityNotFoundError);
@@ -565,23 +739,61 @@ describe('item drafts (form atomic saves)', () => {
     // The new location rolled back with the failed item.
     expect(f.locations.size).toBe(0);
     expect(f.items.size).toBe(0);
+    expect(f.stock).toEqual([]);
 
-    // Late failure at the join insert: new location + new category roll back.
+    // Late failure at the stock insert: new location + new category roll back.
     f.failMatchingWith(
-      /INSERT INTO item_categories/i,
+      /INSERT INTO stock/i,
       new Error('disk I/O error on sqlite3_step'),
     );
     const late = (await createItemFromDraft(f.db, {
       name: 'Late',
-      quantity: 1,
-      location: { kind: 'new', location: { name: 'Cellar' } },
+      stock: [
+        {
+          location: { kind: 'new', location: { name: 'Cellar' } },
+          quantity: 1,
+        },
+      ],
       categories: [{ kind: 'existing', categoryId: cat }],
     }).catch((e: unknown) => e)) as Error;
     expect(late).toBeInstanceOf(StorageError);
     expect(late.message).not.toContain('disk I/O');
     expect(f.items.size).toBe(0);
+    expect(f.stock).toEqual([]);
     expect(f.locations.size).toBe(0);
     expect(f.categories.size).toBe(1);
+  });
+
+  test('three new locations either commit all three or none', async () => {
+    const f = makeFakeDb();
+    const created = await createItemFromDraft(f.db, {
+      name: 'Spread',
+      stock: [
+        { location: { kind: 'new', location: { name: 'L1' } }, quantity: 1 },
+        { location: { kind: 'new', location: { name: 'L2' } }, quantity: 2 },
+        { location: { kind: 'new', location: { name: 'L3' } }, quantity: 3 },
+      ],
+    });
+    expect(created.totalQuantity).toBe(6);
+    expect(created.stock).toHaveLength(3);
+
+    f.failMatchingWith(
+      /INSERT INTO stock/i,
+      new Error('disk I/O error on sqlite3_step'),
+    );
+    const failure = (await createItemFromDraft(f.db, {
+      name: 'Spread2',
+      stock: [
+        { location: { kind: 'new', location: { name: 'M1' } }, quantity: 1 },
+        { location: { kind: 'new', location: { name: 'M2' } }, quantity: 2 },
+      ],
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(StorageError);
+    // None of the new locations survived the rollback.
+    expect(
+      [...f.locations.values()].filter((l) => l.name.startsWith('M')).length,
+    ).toBe(0);
+    expect(f.items.size).toBe(1);
   });
 });
 
@@ -592,13 +804,18 @@ describe('draft entity-name conflicts (S11)', () => {
     const before = f.items.size;
     const failure = (await createItemFromDraft(f.db, {
       name: 'Rice',
-      quantity: 1,
-      location: { kind: 'new', location: { name: ' pantry ' } },
+      stock: [
+        {
+          location: { kind: 'new', location: { name: ' pantry ' } },
+          quantity: 1,
+        },
+      ],
     }).catch((e: unknown) => e)) as Error;
     expect(failure).toBeInstanceOf(EntityConflictError);
     expect(failure).toMatchObject({ code: 'conflict', entity: 'location' });
     expect(f.locations.size).toBe(1);
     expect(f.items.size).toBe(before);
+    expect(f.stock).toEqual([]);
   });
 
   test('S11 RED: draft with a duplicate new category name fails typed conflict', async () => {
@@ -607,14 +824,14 @@ describe('draft entity-name conflicts (S11)', () => {
     f.seedCategory('café');
     const failure = (await createItemFromDraft(f.db, {
       name: 'Rice',
-      quantity: 1,
-      location: { kind: 'existing', locationId: loc },
+      stock: [{ location: { kind: 'existing', locationId: loc }, quantity: 1 }],
       categories: [{ kind: 'new', category: { name: 'CAFÉ' } }],
     }).catch((e: unknown) => e)) as Error;
     expect(failure).toBeInstanceOf(EntityConflictError);
     expect(failure).toMatchObject({ code: 'conflict', entity: 'category' });
     expect(f.categories.size).toBe(1);
     expect(f.items.size).toBe(0);
+    expect(f.stock).toEqual([]);
   });
 
   test('S11 RED: two colliding new categories in one draft fail typed conflict', async () => {
@@ -623,8 +840,9 @@ describe('draft entity-name conflicts (S11)', () => {
     await expect(
       createItemFromDraft(f.db, {
         name: 'Rice',
-        quantity: 1,
-        location: { kind: 'existing', locationId: loc },
+        stock: [
+          { location: { kind: 'existing', locationId: loc }, quantity: 1 },
+        ],
         categories: [
           { kind: 'new', category: { name: 'Bulk' } },
           { kind: 'new', category: { name: ' bulk ' } },
@@ -650,8 +868,7 @@ describe('draft entity-name conflicts (S11)', () => {
     );
     const failure = (await createItemFromDraft(f.db, {
       name: 'Rice',
-      quantity: 1,
-      location: { kind: 'existing', locationId: loc },
+      stock: [{ location: { kind: 'existing', locationId: loc }, quantity: 1 }],
       categories: [{ kind: 'new', category: { name: 'Bulk' } }],
     }).catch((e: unknown) => e)) as Error;
     expect(failure).toBeInstanceOf(EntityConflictError);
@@ -666,7 +883,7 @@ describe('transaction boundary', () => {
     const f = makeFakeDb();
     const loc = f.seedLocation();
     const cat = f.seedCategory();
-    await seedItem(f, loc, [cat]);
+    await seedItem(f, loc, { categoryIds: [cat] });
     expect(f.db.withExclusiveTransactionAsync).toHaveBeenCalledTimes(1);
     // Reads/writes inside the transaction bypass the outer spies entirely.
     for (const spy of [
@@ -687,12 +904,19 @@ describe('transaction boundary', () => {
     const loc = f.seedLocation();
     const draft: ItemDraftInput = {
       name: 'x',
-      quantity: 1,
-      location: { kind: 'existing', locationId: loc },
+      stock: [{ location: { kind: 'existing', locationId: loc }, quantity: 1 }],
     };
     for (const op of [
-      () => createItem(f.db, { name: 'x', quantity: 1, locationId: loc }),
-      () => updateItem(f.db, 1, { name: 'x', quantity: 1, locationId: loc }),
+      () =>
+        createItem(f.db, {
+          name: 'x',
+          stock: [{ locationId: loc, quantity: 1 }],
+        }),
+      () =>
+        updateItem(f.db, 1, {
+          name: 'x',
+          stock: [{ locationId: loc, quantity: 1 }],
+        }),
       () => deleteItem(f.db, 1),
       () => createItemFromDraft(f.db, draft),
       () => updateItemFromDraft(f.db, 1, draft),
@@ -705,7 +929,10 @@ describe('transaction boundary', () => {
     // Reads stay available without the hook; validation still runs first.
     await expect(listItems(f.db)).resolves.toEqual([]);
     await expect(
-      createItem(f.db, { name: '   ', quantity: 1, locationId: loc }),
+      createItem(f.db, {
+        name: '   ',
+        stock: [{ locationId: loc, quantity: 1 }],
+      }),
     ).rejects.toBeInstanceOf(ValidationError);
   });
 });

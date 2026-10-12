@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Host SQLite verification for the Tengo M1 (schema v2) migration SQL.
+"""Host SQLite verification for the Tengo v4 (catalog + stock) migration SQL.
 
 Reads the REAL migration SQL from src/db/migrations.ts and executes it
-against host SQLite (python3 sqlite3 module) to prove constraints,
-foreign-key behavior, and rollback atomicity with a real engine.
+against host SQLite (python3 sqlite3 module) to prove the rebuild mapping,
+the preserve-and-stop guard, the FK-off envelope requirement, and the new
+constraint behavior with a real engine.
 
 This is HOST evidence only. It is NOT Expo/device proof: Jest fakes never
 touch SQLite, this script never touches expo-sqlite or a device, and the
-real native gate (v2 migration on a native emulator/device build) stays
-pending before M2. Do not cite this script as native verification.
+real native gate (v4 migration on a native emulator/device build) stays
+pending. Do not cite this script as native verification.
 
 Exit code is 0 only when every check passes.
 """
@@ -69,266 +70,262 @@ def expect_error(con: sqlite3.Connection, sql: str, params=()) -> str | None:
     return None
 
 
+def apply_v3(con: sqlite3.Connection) -> None:
+    """Bring a fresh DB to v3 (empty): the v4 starting point."""
+    con.executescript(extract_migration_sql(1))
+    con.executescript(extract_migration_sql(2))
+    con.executescript(extract_migration_sql(3))
+    con.execute("PRAGMA user_version = 3")
+
+
+def apply_v4_envelope(con: sqlite3.Connection, v4_sql: str) -> None:
+    """Apply v4 the way the runner does: FK OFF outside, rebuild + bump
+    in one transaction with an empty foreign_key_check, then FK ON."""
+    con.execute("PRAGMA foreign_keys = OFF")
+    try:
+        # One script: BEGIN + rebuild + version bump + COMMIT. (executescript
+        # in autocommit mode commits any pending transaction first, so the
+        # BEGIN/COMMIT must live inside the script itself.)
+        con.executescript(f"BEGIN;\n{v4_sql}\nPRAGMA user_version = 4;\nCOMMIT;")
+    except sqlite3.Error:
+        try:
+            con.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        raise
+    violations = con.execute(
+        "SELECT COUNT(*) FROM pragma_foreign_key_check"
+    ).fetchone()[0]
+    assert violations == 0, f"foreign_key_check: {violations}"
+    con.execute("PRAGMA foreign_keys = ON")
+
+
 def main() -> int:
     print(f"host sqlite version: {sqlite3.sqlite_version}")
-    v1_sql = extract_migration_sql(1)
-    v2_sql = extract_migration_sql(2)
-    check("extracted MIGRATIONS[1] SQL", "CREATE TABLE" in v1_sql.upper())
-    check("extracted MIGRATIONS[2] SQL", "CREATE TABLE" in v2_sql.upper())
-
-    # --- A. fresh database: v1 then v2 (empty) applies cleanly -------------
-    con = fresh_db()
-    con.executescript(v1_sql)
-    con.execute("PRAGMA user_version = 1")
-    con.executescript(v2_sql)
-    con.execute("PRAGMA user_version = 2")
+    v4_sql = extract_migration_sql(4)
+    check("extracted MIGRATIONS[4] SQL", "CREATE TABLE" in v4_sql.upper())
     check(
-        "fresh DB has all v2 tables",
-        tables(con) == {"locations", "categories", "items", "item_categories"},
+        "SCHEMA_VERSION is 4",
+        re.search(r"export const SCHEMA_VERSION\s*=\s*4", MIGRATIONS_TS.read_text()) is not None,
+    )
+
+    # --- A. empty v3 migrates cleanly to v4 with the new shape -------------
+    con = fresh_db()
+    apply_v3(con)
+    apply_v4_envelope(con, v4_sql)
+    check(
+        "empty v3 has all v4 tables",
+        tables(con)
+        == {"locations", "categories", "items", "item_categories", "stock"},
         str(sorted(tables(con))),
     )
-    fk_items = con.execute("PRAGMA foreign_key_list(items)").fetchall()
+    item_cols = [row[1] for row in con.execute("PRAGMA table_info(items)").fetchall()]
+    check("catalog items holds id/name/created_at only", item_cols == ["id", "name", "created_at"], str(item_cols))
+    stock_cols = [row[1] for row in con.execute("PRAGMA table_info(stock)").fetchall()]
     check(
-        "items.location_id references locations(id)",
-        any(row[2] == "locations" and row[3] == "location_id" for row in fk_items),
-        str(fk_items),
+        "stock holds item_id/location_id/quantity",
+        stock_cols == ["item_id", "location_id", "quantity"],
+        str(stock_cols),
     )
-    fk_join = con.execute("PRAGMA foreign_key_list(item_categories)").fetchall()
+    stock_pk = con.execute("PRAGMA table_info(stock)").fetchall()
     check(
-        "item_categories references items and categories",
-        {row[2] for row in fk_join} == {"items", "categories"},
-        str(fk_join),
+        "stock has the composite primary key",
+        sorted(row[5] for row in stock_pk if row[5] > 0) == [1, 2],
+        str(stock_pk),
     )
-    join_pk = con.execute("PRAGMA table_info(item_categories)").fetchall()
+    fk_stock = con.execute("PRAGMA foreign_key_list(stock)").fetchall()
     check(
-        "item_categories has composite primary key",
-        sorted(row[5] for row in join_pk if row[5] > 0) == [1, 2],
-        str(join_pk),
+        "stock references items and locations, both CASCADE",
+        {(row[2], row[6]) for row in fk_stock} == {("items", "CASCADE"), ("locations", "CASCADE")},
+        str(fk_stock),
     )
-    items_ddl = con.execute(
-        "SELECT sql FROM sqlite_master WHERE name = 'items'"
-    ).fetchone()[0]
-    check("items DDL carries RESTRICT", "RESTRICT" in items_ddl.upper())
+    stock_ddl = con.execute("SELECT sql FROM sqlite_master WHERE name = 'stock'").fetchone()[0]
+    check("stock DDL carries quantity > 0", "quantity > 0" in stock_ddl.lower())
+    check("stock DDL carries the technical safe-integer bound", "9007199254740991" in stock_ddl)
+    check("stock DDL has no RESTRICT", "RESTRICT" not in stock_ddl.upper())
+    idx = con.execute("SELECT name FROM sqlite_master WHERE name = 'idx_stock_location_id'").fetchall()
+    check("idx_stock_location_id exists", len(idx) == 1)
     check(
-        "items DDL carries the technical safe-integer bound",
-        "9007199254740991" in items_ddl,
-    )
-    check(
-        "items DDL enforces integer storage (typeof quantity is integer)",
-        "typeof(quantity)" in items_ddl.lower() and "'integer'" in items_ddl.lower(),
-    )
-    check(
-        "items DDL has no CASCADE (location deletion never cascades items)",
-        "CASCADE" not in items_ddl.upper(),
+        "v4 user_version recorded",
+        con.execute("PRAGMA user_version").fetchone()[0] == 4,
     )
 
-    # --- B. populated v1 safe-stop: guard refuses, rows/version preserved --
-    con = fresh_db()
-    con.executescript(v1_sql)
-    con.execute("PRAGMA user_version = 1")
-    con.execute("INSERT INTO items (name) VALUES ('Rice')")
-    count = con.execute("SELECT COUNT(*) FROM items").fetchone()[0]
-    ran_v2 = False
-    if count == 0:  # mirrors the TypeScript guard in src/db/index.ts
-        con.executescript(v2_sql)
-        ran_v2 = True
-    check("populated v1 blocks v2 (guard refuses)", count > 0 and not ran_v2)
-    check(
-        "populated v1 rows preserved",
-        con.execute("SELECT name FROM items").fetchall() == [("Rice",)],
-    )
-    check(
-        "populated v1 user_version preserved",
-        con.execute("PRAGMA user_version").fetchone()[0] == 1,
-    )
-
-    # --- C. real constraint enforcement (FK pragma ON) ----------------------
+    # --- B. populated v3 maps to catalog + stock, links preserved ---------
     con = fresh_db()
     con.execute("PRAGMA foreign_keys = ON")
-    con.executescript(v1_sql)
-    con.executescript(v2_sql)
+    apply_v3(con)
+    loc_a = con.execute("INSERT INTO locations (name) VALUES ('Casa')").lastrowid
+    loc_b = con.execute("INSERT INTO locations (name) VALUES ('Garage')").lastrowid
+    cat = con.execute("INSERT INTO categories (name) VALUES ('Grains')").lastrowid
+    rice = con.execute(
+        "INSERT INTO items (name, quantity, location_id) VALUES ('Rice', 2, ?)", (loc_a,)
+    ).lastrowid
+    beans = con.execute(
+        "INSERT INTO items (name, quantity, location_id) VALUES ('Beans', 0, ?)", (loc_b,)
+    ).lastrowid
+    before_catalog = con.execute("SELECT id, name, created_at FROM items ORDER BY id").fetchall()
+    before_sum = con.execute("SELECT COALESCE(SUM(quantity), 0) FROM items").fetchone()[0]
+    con.execute("INSERT INTO item_categories (item_id, category_id) VALUES (?, ?)", (rice, cat))
+    con.execute("INSERT INTO item_categories (item_id, category_id) VALUES (?, ?)", (beans, cat))
+    apply_v4_envelope(con, v4_sql)
+    check(
+        "catalog keeps id/name/created_at byte-identical",
+        con.execute("SELECT id, name, created_at FROM items ORDER BY id").fetchall() == before_catalog,
+    )
+    stock_rows = con.execute("SELECT item_id, location_id, quantity FROM stock").fetchall()
+    check(
+        "one stock row per old item with quantity > 0",
+        stock_rows == [(rice, loc_a, 2)],
+        str(stock_rows),
+    )
+    sin_stock = con.execute(
+        "SELECT name FROM items i LEFT JOIN stock s ON s.item_id = i.id WHERE s.item_id IS NULL"
+    ).fetchall()
+    check("exhausted item is catalog-only (sin stock)", sin_stock == [("Beans",)], str(sin_stock))
+    check(
+        "stock sum equals the old quantity sum",
+        con.execute("SELECT COALESCE(SUM(quantity), 0) FROM stock").fetchone()[0] == before_sum,
+    )
+    check(
+        "category links survive the rebuild",
+        con.execute("SELECT COUNT(*) FROM item_categories").fetchone()[0] == 2,
+    )
+    check(
+        "foreign_key_check is empty after the rebuild",
+        con.execute("SELECT COUNT(*) FROM pragma_foreign_key_check").fetchone()[0] == 0,
+    )
+    check(
+        "autoincrement continues past the preserved max id",
+        con.execute("INSERT INTO items (name) VALUES ('Salt')").lastrowid > max(rice, beans),
+    )
+
+    # --- C. the FK trap: DROP with keys ON destroys the category links ----
+    con = fresh_db()
+    con.execute("PRAGMA foreign_keys = ON")
+    apply_v3(con)
     loc = con.execute("INSERT INTO locations (name) VALUES ('Casa')").lastrowid
     cat = con.execute("INSERT INTO categories (name) VALUES ('Grains')").lastrowid
-    check("FK pragma reports enabled", con.execute("PRAGMA foreign_keys").fetchone()[0] == 1)
-
     item = con.execute(
-        "INSERT INTO items (name, quantity, location_id) VALUES ('Rice', 0, ?)",
-        (loc,),
+        "INSERT INTO items (name, quantity, location_id) VALUES ('Rice', 1, ?)", (loc,)
     ).lastrowid
-    check("quantity zero inserts (exhausted)", item is not None)
+    con.execute("INSERT INTO item_categories (item_id, category_id) VALUES (?, ?)", (item, cat))
+    con.executescript(f"BEGIN;\n{v4_sql}\nCOMMIT;")
     check(
-        "NULL location_id rejected (NOT NULL)",
-        expect_error(
-            con, "INSERT INTO items (name, quantity) VALUES ('X', 1)"
-        )
-        is not None,
-    )
-    check(
-        "absent location reference rejected (FK)",
-        expect_error(
-            con,
-            "INSERT INTO items (name, quantity, location_id) VALUES ('X', 1, 9999)",
-        )
-        is not None,
-    )
-    check(
-        "absent item reference in join rejected (FK)",
-        expect_error(
-            con,
-            "INSERT INTO item_categories (item_id, category_id) VALUES (9999, ?)",
-            (cat,),
-        )
-        is not None,
-    )
-    check(
-        "absent category reference in join rejected (FK)",
-        expect_error(
-            con,
-            "INSERT INTO item_categories (item_id, category_id) VALUES (?, 9999)",
-            (item,),
-        )
-        is not None,
-    )
-    con.execute(
-        "INSERT INTO item_categories (item_id, category_id) VALUES (?, ?)",
-        (item, cat),
-    )
-    check(
-        "duplicate category join rejected (composite PK)",
-        expect_error(
-            con,
-            "INSERT INTO item_categories (item_id, category_id) VALUES (?, ?)",
-            (item, cat),
-        )
-        is not None,
-    )
-    check(
-        "location with items cannot be deleted (RESTRICT, no orphan/cascade)",
-        expect_error(con, "DELETE FROM locations WHERE id = ?", (loc,))
-        is not None,
-    )
-    check(
-        "location still present after blocked delete",
-        con.execute("SELECT COUNT(*) FROM locations").fetchone()[0] == 1,
-    )
-    check(
-        "negative quantity rejected (CHECK)",
-        expect_error(
-            con,
-            "INSERT INTO items (name, quantity, location_id) VALUES ('X', -1, ?)",
-            (loc,),
-        )
-        is not None,
-    )
-    check(
-        "quantity above the technical bound rejected (CHECK)",
-        expect_error(
-            con,
-            "INSERT INTO items (name, quantity, location_id) VALUES ('X', 9007199254740992, ?)",
-            (loc,),
-        )
-        is not None,
-    )
-    check(
-        "quantity at the technical bound inserts",
-        expect_error(
-            con,
-            "INSERT INTO items (name, quantity, location_id) VALUES ('Max', 9007199254740991, ?)",
-            (loc,),
-        )
-        is None,
-    )
-    check(
-        "fractional quantity 1.5 rejected by SQLite (integer storage)",
-        expect_error(
-            con,
-            "INSERT INTO items (name, quantity, location_id) VALUES ('Frac', 1.5, ?)",
-            (loc,),
-        )
-        is not None,
-    )
-    con.execute("DELETE FROM items WHERE name IN ('Frac', 'TextBad', 'IntOk')")
-    check(
-        "non-numeric text quantity rejected by SQLite (integer storage)",
-        expect_error(
-            con,
-            "INSERT INTO items (name, quantity, location_id) VALUES ('TextBad', 'not-a-number', ?)",
-            (loc,),
-        )
-        is not None,
-    )
-    con.execute("DELETE FROM items WHERE name IN ('Frac', 'TextBad', 'IntOk')")
-    check(
-        "positive integer quantity inserts",
-        expect_error(
-            con,
-            "INSERT INTO items (name, quantity, location_id) VALUES ('IntOk', 2, ?)",
-            (loc,),
-        )
-        is None,
-    )
-    con.execute("DELETE FROM items WHERE name IN ('Frac', 'TextBad', 'IntOk', 'Max')")
-    check(
-        "blank item name rejected (CHECK length(TRIM(name)) > 0)",
-        expect_error(
-            con,
-            "INSERT INTO items (name, quantity, location_id) VALUES ('   ', 1, ?)",
-            (loc,),
-        )
-        is not None,
-    )
-    check(
-        "blank location name rejected",
-        expect_error(con, "INSERT INTO locations (name) VALUES ('  ')") is not None,
-    )
-    check(
-        "empty-string address rejected (must be NULL, not '')",
-        expect_error(con, "INSERT INTO locations (name, address) VALUES ('B', '')")
-        is not None,
-    )
-    check(
-        "NULL address inserts (optional address)",
-        expect_error(con, "INSERT INTO locations (name, address) VALUES ('B2', NULL)")
-        is None,
-    )
-    con.execute("DELETE FROM items WHERE id = ?", (item,))
-    check(
-        "deleting an item cleans up its join rows (CASCADE on join)",
+        "DROP with FK ON cascades every category link (the trap)",
         con.execute("SELECT COUNT(*) FROM item_categories").fetchone()[0] == 0,
     )
 
-    # --- D. atomic rollback: failed v2 leaves no tables and keeps version ---
+    # --- D. guard SQL present and functional -------------------------------
+    check("guard carries the typed v4 block", "Migration to schema version 4 blocked" in v4_sql)
+    trigger = re.search(
+        r"CREATE TEMP TRIGGER _migration_v4_guard_check.*?^END;",
+        v4_sql,
+        re.MULTILINE | re.DOTALL,
+    )
+    check("guard trigger text is extractable", trigger is not None)
+    if trigger:
+        # Catalog-count rig: items_new misses one row.
+        rig = fresh_db()
+        rig.executescript(
+            """CREATE TABLE items (id INTEGER PRIMARY KEY, quantity INTEGER, location_id INTEGER);
+               CREATE TABLE items_new (id INTEGER PRIMARY KEY);
+               CREATE TABLE stock (item_id INTEGER, location_id INTEGER, quantity INTEGER);
+               INSERT INTO items (id, quantity, location_id) VALUES (1, 2, 1), (2, 0, 1);
+               INSERT INTO items_new (id) VALUES (1);"""
+        )
+        rig.executescript("CREATE TEMP TABLE _migration_v4_guard (id INTEGER);")
+        rig.executescript(trigger.group(0))
+        err = expect_error(rig, "INSERT INTO _migration_v4_guard (id) VALUES (1)")
+        check("guard aborts on catalog count mismatch", err is not None and "Migration to schema version 4 blocked" in err, err or "")
+        # Stock-sum rig: counts agree, sums differ.
+        rig2 = fresh_db()
+        rig2.executescript(
+            """CREATE TABLE items (id INTEGER PRIMARY KEY, quantity INTEGER, location_id INTEGER);
+               CREATE TABLE items_new (id INTEGER PRIMARY KEY);
+               CREATE TABLE stock (item_id INTEGER, location_id INTEGER, quantity INTEGER);
+               INSERT INTO items (id, quantity, location_id) VALUES (1, 2, 1);
+               INSERT INTO items_new (id) VALUES (1);
+               INSERT INTO stock (item_id, location_id, quantity) VALUES (1, 1, 5);"""
+        )
+        rig2.executescript("CREATE TEMP TABLE _migration_v4_guard (id INTEGER);")
+        rig2.executescript(trigger.group(0))
+        err2 = expect_error(rig2, "INSERT INTO _migration_v4_guard (id) VALUES (1)")
+        check("guard aborts on stock sum mismatch", err2 is not None and "Migration to schema version 4 blocked" in err2, err2 or "")
+
+    # --- E. v4 constraint behavior (FK pragma ON) ---------------------------
     con = fresh_db()
-    con.executescript(v1_sql)
-    con.execute("PRAGMA user_version = 1")
-    statements = [s.strip() for s in v2_sql.split(";") if s.strip()]
-    con.execute("BEGIN")
-    try:
-        for statement in statements:
-            con.execute(statement)
-        con.execute("THIS IS NOT VALID SQL")
-        con.execute("COMMIT")
-    except sqlite3.Error:
-        con.execute("ROLLBACK")
+    con.execute("PRAGMA foreign_keys = ON")
+    apply_v3(con)
+    apply_v4_envelope(con, v4_sql)
+    loc = con.execute("INSERT INTO locations (name) VALUES ('Casa')").lastrowid
+    cat = con.execute("INSERT INTO categories (name) VALUES ('Grains')").lastrowid
+    item = con.execute("INSERT INTO items (name) VALUES ('Rice')").lastrowid
+    con.execute("INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, 2)", (item, loc))
+    con.execute("INSERT INTO item_categories (item_id, category_id) VALUES (?, ?)", (item, cat))
+    check("FK pragma reports enabled", con.execute("PRAGMA foreign_keys").fetchone()[0] == 1)
     check(
-        "rolled-back v2 leaves no v2 tables",
-        tables(con) == {"items"},
-        str(sorted(tables(con))),
+        "zero-quantity stock rejected (CHECK)",
+        expect_error(con, "INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, 0)", (item, loc)) is not None,
     )
     check(
-        "rolled-back v2 keeps user_version 1",
-        con.execute("PRAGMA user_version").fetchone()[0] == 1,
+        "duplicate stock row rejected (composite PK)",
+        expect_error(con, "INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, 2)", (item, loc)) is not None,
+    )
+    check(
+        "absent item reference in stock rejected (FK)",
+        expect_error(con, "INSERT INTO stock (item_id, location_id, quantity) VALUES (9999, ?, 1)", (loc,)) is not None,
+    )
+    check(
+        "absent location reference in stock rejected (FK)",
+        expect_error(con, "INSERT INTO stock (item_id, location_id, quantity) VALUES (?, 9999, 1)", (item,)) is not None,
+    )
+    check(
+        "fractional quantity 1.5 rejected (integer storage)",
+        expect_error(con, "INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, 1.5)", (item, loc)) is not None,
+    )
+    check(
+        "quantity above the technical bound rejected (CHECK)",
+        expect_error(con, "INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, 9007199254740992)", (item, loc)) is not None,
+    )
+    check(
+        "location delete removes stock but never the item (R3)",
+        expect_error(con, "DELETE FROM locations WHERE id = ?", (loc,)) is None
+        and con.execute("SELECT COUNT(*) FROM stock").fetchone()[0] == 0
+        and con.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1,
+    )
+    check(
+        "category links survive the location delete",
+        con.execute("SELECT COUNT(*) FROM item_categories").fetchone()[0] == 1,
+    )
+    check(
+        "deleting the item cleans its stock and join rows (CASCADE)",
+        (con.execute("DELETE FROM items WHERE id = ?", (item,)).rowcount is not None)
+        and con.execute("SELECT COUNT(*) FROM stock").fetchone()[0] == 0
+        and con.execute("SELECT COUNT(*) FROM item_categories").fetchone()[0] == 0,
     )
 
-    # --- E. user_version is transactional (validates the bump-inside-txn design)
+    # --- F. atomic rollback: failed v4 keeps rows and version ---------------
     con = fresh_db()
-    con.execute("PRAGMA user_version = 1")
-    con.execute("BEGIN")
-    con.execute("PRAGMA user_version = 2")
-    con.execute("ROLLBACK")
-    reverted = con.execute("PRAGMA user_version").fetchone()[0]
-    check("PRAGMA user_version rolls back with the transaction", reverted == 1,
-          f"after ROLLBACK user_version={reverted}")
+    con.execute("PRAGMA foreign_keys = ON")
+    apply_v3(con)
+    loc = con.execute("INSERT INTO locations (name) VALUES ('Casa')").lastrowid
+    con.execute("INSERT INTO items (name, quantity, location_id) VALUES ('Rice', 1, ?)", (loc,))
+    con.execute("CREATE TABLE items_new (id INTEGER PRIMARY KEY, name TEXT);")
+    blocked = False
+    try:
+        apply_v4_envelope(con, v4_sql)
+    except sqlite3.Error:
+        blocked = True
+        try:
+            con.execute("ROLLBACK;")
+        except sqlite3.Error:
+            pass
+    check("blocked v4 raises instead of merging", blocked)
+    check(
+        "blocked v4 preserves rows and version",
+        con.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
+        and con.execute("PRAGMA user_version").fetchone()[0] == 3,
+    )
 
     print(f"\n{PASS_COUNT} checks passed, {len(FAILURES)} failed (host SQLite).")
     if FAILURES:

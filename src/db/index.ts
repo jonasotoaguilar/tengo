@@ -2,6 +2,7 @@ import { openManagedDatabase } from './exclusive';
 import {
   getPendingMigrations,
   MIGRATIONS,
+  MigrationIntegrityError,
   MigrationRequiredError,
   SCHEMA_VERSION,
   UnknownSchemaVersionError,
@@ -9,7 +10,11 @@ import {
 
 export type { ManagedDatabase } from './exclusive';
 export { openManagedDatabase } from './exclusive';
-export { MigrationRequiredError, UnknownSchemaVersionError };
+export {
+  MigrationIntegrityError,
+  MigrationRequiredError,
+  UnknownSchemaVersionError,
+};
 
 export const DATABASE_NAME = 'tengo.db';
 
@@ -84,7 +89,15 @@ async function countV1Items(db: DatabaseLike): Promise<number> {
  * failing migration statement rolls the version update back with it.
  * Migration 2 additionally refuses to run while v1 `items` holds any rows
  * (see `MigrationRequiredError`): the check happens before the transaction,
- * so the block itself writes nothing.
+ * so the block itself writes nothing. Migration 4 additionally runs under
+ * the FK-off envelope: `PRAGMA foreign_keys=OFF` OUTSIDE the transaction
+ * (inside it the pragma is a no-op — with keys ON the `DROP TABLE items`
+ * would cascade-delete every `item_categories` link), then the rebuild
+ * plus a `foreign_key_check` plus the version bump in one transaction,
+ * then commit, then `PRAGMA foreign_keys=ON`. A non-empty check or the
+ * in-SQL preserve-and-stop guard surfaces as `MigrationIntegrityError`
+ * with rows and version untouched. Migrations 2 and 3 are exactly as
+ * they were: FK ON inside one transaction.
  */
 async function applyMigration(
   db: DatabaseLike,
@@ -95,6 +108,37 @@ async function applyMigration(
     if (rowCount > 0) {
       throw new MigrationRequiredError(rowCount);
     }
+  }
+  if (version === 4) {
+    await db.execAsync('PRAGMA foreign_keys = OFF');
+    try {
+      await runInTransaction(db, async () => {
+        await db.execAsync(MIGRATIONS[version]);
+        const check = (await db.getFirstAsync(
+          'SELECT COUNT(*) AS count FROM pragma_foreign_key_check',
+        )) as { count: number } | null;
+        if ((check?.count ?? 0) > 0) {
+          throw new MigrationIntegrityError(
+            'Migration to schema version 4 blocked: ' +
+              `foreign_key_check reported ${check?.count} violation(s) after the rebuild. ` +
+              'Rows and schema version are preserved; no data was modified.',
+          );
+        }
+        await setUserVersion(db, version);
+      });
+    } catch (error) {
+      if (error instanceof MigrationIntegrityError) throw error;
+      if (
+        error instanceof Error &&
+        /Migration to schema version 4 blocked/.test(error.message)
+      ) {
+        throw new MigrationIntegrityError(error.message, error);
+      }
+      throw error;
+    } finally {
+      await db.execAsync('PRAGMA foreign_keys = ON');
+    }
+    return;
   }
   await runInTransaction(db, async () => {
     await db.execAsync(MIGRATIONS[version]);

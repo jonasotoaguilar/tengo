@@ -47,6 +47,7 @@ interface Store {
   locations: Record<string, unknown>[];
   categories: Record<string, unknown>[];
   itemRows: Record<string, unknown>[];
+  stockRows: Record<string, unknown>[];
   linkRows: Record<string, unknown>[];
 }
 
@@ -57,6 +58,7 @@ function freshStore(): Store {
     locations: [],
     categories: [],
     itemRows: [],
+    stockRows: [],
     linkRows: [],
   };
 }
@@ -77,43 +79,38 @@ function makeDeps(store: Store, calls: string[]): QueryFixtureDeps {
       if (/fixture_state/.test(sql)) {
         return store.marker ? { value: store.marker } : null;
       }
-      if (/PRAGMA user_version/.test(sql)) return { user_version: 3 };
+      if (/PRAGMA user_version/.test(sql)) return { user_version: 4 };
       if (/PRAGMA foreign_keys/.test(sql)) return { foreign_keys: 1 };
       return null;
     }),
     getAllAsync: jest.fn(async (sql: string, params?: unknown[]) => {
       if (sql.includes('item_categories')) return store.linkRows;
-      if (sql.includes('FROM items')) {
-        const ids = params as number[] | undefined;
-        if (ids !== undefined && ids.length > 0) {
-          return store.itemRows.filter(
-            (row) => row.item_location_id === ids[0],
+      // The catalog read comes first: its EXISTS membership subquery
+      // itself contains `FROM stock s`, so `FROM items i` must route here.
+      if (sql.includes('FROM items i')) {
+        if (/EXISTS[\s\S]*location_id = \?/i.test(sql)) {
+          const member = (params as number[])[0];
+          const memberIds = new Set(
+            store.stockRows
+              .filter((row) => row.location_id === member)
+              .map((row) => row.stock_item_id),
+          );
+          return store.itemRows.filter((row) =>
+            memberIds.has(row.item_id as number),
           );
         }
         return store.itemRows;
       }
-      // `listLocations`/`listCategories` select the bare shape while the
-      // bounded `queryItems` batched location read selects the
-      // `location_*` aliases: serve each caller the shape its SQL selected.
-      if (sql.includes('FROM locations')) {
-        if (/l\.id IN/i.test(sql) || sql.includes('location_id')) {
-          return store.locations.map((loc) => {
-            const bare = loc as unknown as {
-              id: number;
-              name: string;
-              address: string | null;
-              created_at: string;
-            };
-            return {
-              location_id: bare.id,
-              location_name: bare.name,
-              location_address: bare.address,
-              location_created_at: bare.created_at,
-            };
-          });
-        }
-        return store.locations;
+      // The batched stock+locations join replaces the old separate
+      // locations read: breakdown rows plus location names in one read.
+      if (sql.includes('FROM stock s')) {
+        const ids = new Set((params as number[]) ?? []);
+        return store.stockRows.filter((row) =>
+          ids.has(row.stock_item_id as number),
+        );
       }
+      // `listLocations`/`listCategories` select the bare shape.
+      if (sql.includes('FROM locations')) return store.locations;
       if (sql.includes('FROM categories')) return store.categories;
       throw new Error(`unexpected SQL: ${sql}`);
     }),
@@ -153,14 +150,15 @@ function makeDeps(store: Store, calls: string[]): QueryFixtureDeps {
           _db: unknown,
           input: {
             name: string;
-            quantity: number;
-            locationId: number;
+            stock?: { locationId: number; quantity: number }[];
             categoryIds?: number[];
           },
         ) => {
           calls.push(`createItem:${input.name}`);
-          const loc = locById(input.locationId);
-          if (!loc) throw new EntityNotFoundError('location', input.locationId);
+          for (const row of input.stock ?? []) {
+            if (!locById(row.locationId))
+              throw new EntityNotFoundError('location', row.locationId);
+          }
           for (const cid of input.categoryIds ?? []) {
             if (!catById(cid)) throw new EntityNotFoundError('category', cid);
           }
@@ -168,14 +166,22 @@ function makeDeps(store: Store, calls: string[]): QueryFixtureDeps {
           store.itemRows.push({
             item_id: id,
             item_name: input.name,
-            item_quantity: input.quantity,
-            item_location_id: input.locationId,
             item_created_at: 't',
-            location_id: loc.id,
-            location_name: loc.name,
-            location_address: null,
-            location_created_at: 't',
           });
+          for (const row of input.stock ?? []) {
+            const loc = locById(row.locationId) as {
+              id: number;
+              name: string;
+            };
+            store.stockRows.push({
+              stock_item_id: id,
+              quantity: row.quantity,
+              location_id: loc.id,
+              location_name: loc.name,
+              location_address: null,
+              location_created_at: 't',
+            });
+          }
           for (const cid of input.categoryIds ?? []) {
             const cat = catById(cid) as { id: number; name: string };
             store.linkRows.push({
@@ -389,14 +395,14 @@ describe('query fixture behavior checks (mocked, real query model)', () => {
     expect(hammer[0].categoryIds).toHaveLength(2);
   });
 
-  test('exhausted zero quantities and per-location group counts hold', async () => {
+  test('sin-stock totals and per-location group counts hold', async () => {
     const store = await seededStore();
     const deps = makeDeps(store, []);
     const handle = await deps.openDatabaseAsync(QUERY_FIXTURE_SEEDED_DB);
     const all = await realQueryItems(handle, {});
     expect(
       all
-        .filter((item) => item.quantity === 0)
+        .filter((item) => item.totalQuantity === 0)
         .map((item) => item.name)
         .sort(),
     ).toEqual(['CAFÉ filter', 'Cafe Napkin']);
@@ -404,6 +410,12 @@ describe('query fixture behavior checks (mocked, real query model)', () => {
       categoryIds: number[];
     };
     expect(napkin.categoryIds).toEqual([]);
+    const hammer = all.find((item) => item.name === 'Hammer') as {
+      stock: unknown[];
+      totalQuantity: number;
+    };
+    expect(hammer.stock).toHaveLength(2);
+    expect(hammer.totalQuantity).toBe(6);
     const kueche = (await realListLocations(handle)).find(
       (loc) => loc.name === 'Küche',
     ) as { id: number };
@@ -415,7 +427,7 @@ describe('query fixture behavior checks (mocked, real query model)', () => {
     ).toHaveLength(2);
     expect(
       await realQueryItems(handle, { locationId: garage.id }),
-    ).toHaveLength(3);
+    ).toHaveLength(2);
   });
 });
 
@@ -475,17 +487,18 @@ describe('query fixture S9 cross-entity checks (mocked, real query model)', () =
 
   test('location-name-only matches with folding and no duplicates', async () => {
     const { handle } = await seededDeps();
+    // Only stocked sites match: the sin-stock Napkin never matches a
+    // location name, and the two-site Hammer appears once.
     const garage = await realQueryItems(handle, { query: 'garage' });
     expect(garage.map((item) => item.name).sort()).toEqual([
       '100%_literal\\blend',
-      'Cafe Napkin',
       'Hammer',
     ]);
-    expect(new Set(garage.map((item) => item.id)).size).toBe(3);
+    expect(new Set(garage.map((item) => item.id)).size).toBe(2);
     const kuche = await realQueryItems(handle, { query: 'kuche' });
     expect(kuche.map((item) => item.name).sort()).toEqual([
-      'CAFÉ filter',
       'Café Grinder',
+      'Hammer',
     ]);
   });
 

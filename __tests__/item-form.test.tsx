@@ -15,7 +15,11 @@ import { I18nextProvider } from 'react-i18next';
 import type { ViewProps } from 'react-native';
 
 import type ItemFormType from '../src/components/ItemForm';
-import type { ItemFormProps, ItemFormValues } from '../src/components/ItemForm';
+import type {
+  ItemFormProps,
+  ItemFormValues,
+  ItemStockRowValues,
+} from '../src/components/ItemForm';
 import i18n from '../src/i18n';
 import type { Category, Location } from '../src/inventory/types';
 
@@ -23,11 +27,10 @@ const ItemForm = require('../src/components/ItemForm')
   .default as typeof ItemFormType;
 const { firstErrorField, resolveErrorFocusTarget } =
   require('../src/components/ItemForm') as Pick<typeof ItemFormType, never> & {
-    firstErrorField: (errors?: Record<string, string>) => string | null;
-    resolveErrorFocusTarget: (
-      field: string | null,
-      locationKind?: string,
-    ) => string | null;
+    firstErrorField: (
+      errors?: import('../src/components/ItemForm').ItemFormErrors,
+    ) => unknown;
+    resolveErrorFocusTarget: (target: unknown, kind?: string) => string | null;
   };
 
 jest.mock('react-native-safe-area-context', () => {
@@ -62,12 +65,21 @@ const grainsTwin: Category = { id: 22, name: 'Grains', created_at: 'ts-22' };
 
 const emptyValues: ItemFormValues = {
   name: '',
-  quantityRaw: '',
-  location: null,
+  stock: [],
   categories: [],
   pendingNewCategoryName: '',
-  stashedNewLocation: null,
 };
+
+function row(quantityRaw: string, locationId = 10): ItemStockRowValues {
+  return { location: { kind: 'existing', locationId }, quantityRaw };
+}
+
+function newRow(quantityRaw = ''): ItemStockRowValues {
+  return {
+    location: { kind: 'new', location: { name: '', address: null } },
+    quantityRaw,
+  };
+}
 
 function baseProps(overrides: Partial<ItemFormProps> = {}): ItemFormProps {
   return {
@@ -123,9 +135,8 @@ afterEach(async () => {
 test('renders add-mode fields with stable testIDs', async () => {
   const view = await renderForm(baseProps());
   expect(await view.findByTestId('item-form/name')).toBeTruthy();
-  expect(view.getByTestId('item-form/quantity')).toBeTruthy();
-  expect(view.getByTestId('item-form/decrement')).toBeTruthy();
-  expect(view.getByTestId('item-form/increment')).toBeTruthy();
+  // No stock rows yet: the per-location editor offers its add affordance.
+  expect(view.queryByTestId('item-form/stock-0/quantity')).toBeNull();
   expect(view.getByTestId('item-form/location-10')).toBeTruthy();
   expect(view.getByTestId('item-form/location-new')).toBeTruthy();
   expect(view.getByTestId('item-form/category-20')).toBeTruthy();
@@ -133,6 +144,41 @@ test('renders add-mode fields with stable testIDs', async () => {
   expect(view.getByTestId('item-form/save')).toBeTruthy();
   expect(view.getByTestId('item-form/close')).toBeTruthy();
   expect(view.getByText('New item')).toBeTruthy();
+});
+
+test('add location chip appends a stock row with quantity controls', async () => {
+  const onChange = jest.fn();
+  const view = await renderForm(baseProps({ onChange }));
+  await fireEvent.press(view.getByTestId('item-form/location-10'));
+  expect(onChange).toHaveBeenCalledWith({
+    ...emptyValues,
+    stock: [row('')],
+  });
+  const withRow = await renderForm(
+    baseProps({ values: { ...emptyValues, stock: [row('')] } }),
+  );
+  expect(withRow.getByTestId('item-form/stock-0/quantity')).toBeTruthy();
+  expect(withRow.getByTestId('item-form/stock-0/decrement')).toBeTruthy();
+  expect(withRow.getByTestId('item-form/stock-0/increment')).toBeTruthy();
+  expect(withRow.getByTestId('item-form/stock-0/remove')).toBeTruthy();
+  // The added location leaves the add chips so other locations stay
+  // addable; the added one is gone.
+  expect(withRow.queryByTestId('item-form/location-10')).toBeNull();
+  expect(withRow.getByTestId('item-form/location-11')).toBeTruthy();
+});
+
+test('stock row remove drops the row', async () => {
+  const onChange = jest.fn();
+  const values: ItemFormValues = {
+    ...emptyValues,
+    stock: [row('2'), row('1', 11)],
+  };
+  const view = await renderForm(baseProps({ values, onChange }));
+  await fireEvent.press(view.getByTestId('item-form/stock-0/remove'));
+  expect(onChange).toHaveBeenCalledWith({
+    ...emptyValues,
+    stock: [row('1', 11)],
+  });
 });
 
 test('renders edit-mode title', async () => {
@@ -156,37 +202,63 @@ test('name typing emits controlled onChange with verbatim text', async () => {
 
 test('invalid quantity raw text is preserved for explicit errors', async () => {
   const onChange = jest.fn();
-  const view = await renderForm(baseProps({ onChange }));
-  await fireEvent.changeText(view.getByTestId('item-form/quantity'), 'abc');
-  expect(onChange).toHaveBeenCalledWith({ ...emptyValues, quantityRaw: 'abc' });
+  const view = await renderForm(
+    baseProps({
+      values: { ...emptyValues, stock: [row('')] },
+      onChange,
+    }),
+  );
+  await fireEvent.changeText(
+    view.getByTestId('item-form/stock-0/quantity'),
+    'abc',
+  );
+  expect(onChange).toHaveBeenCalledWith({
+    ...emptyValues,
+    stock: [row('abc')],
+  });
 });
 
 test('renders provided validation errors without inventing copy', async () => {
   const view = await renderForm(
     baseProps({
-      errors: { name: 'Enter a name.', quantity: 'Enter a whole number.' },
+      values: { ...emptyValues, stock: [row('')] },
+      errors: {
+        name: 'Enter a name.',
+        stock: [{ quantity: 'Enter a whole number.' }],
+      },
     }),
   );
   expect(await view.findByTestId('item-form/error-name')).toBeTruthy();
-  expect(view.getByTestId('item-form/error-quantity')).toBeTruthy();
+  expect(view.getByTestId('item-form/error-stock-0-quantity')).toBeTruthy();
   expect(view.getByText('Enter a name.')).toBeTruthy();
 });
 
-test('first-error focus order is name, quantity, location, categories', async () => {
-  expect(firstErrorField({ quantity: 'q', name: 'n' })).toBe('name');
-  expect(firstErrorField({ location: 'l', quantity: 'q' })).toBe('quantity');
-  expect(firstErrorField({ categories: 'c', location: 'l' })).toBe('location');
+test('first-error focus order is name, stock rows, categories', async () => {
+  expect(firstErrorField({ stock: [{ quantity: 'q' }], name: 'n' })).toBe(
+    'name',
+  );
+  expect(
+    firstErrorField({ stock: [{ location: 'l' }, { quantity: 'q' }] }),
+  ).toEqual({ row: 0, side: 'location' });
+  expect(firstErrorField({ stock: [{ quantity: 'q' }] })).toEqual({
+    row: 0,
+    side: 'quantity',
+  });
+  expect(firstErrorField({ categories: 'c', stock: [undefined] })).toBe(
+    'categories',
+  );
   expect(firstErrorField({})).toBeNull();
   expect(firstErrorField(undefined)).toBeNull();
 });
 
 test('quantity zero shows exhausted copy and disables decrement', async () => {
   const view = await renderForm(
-    baseProps({ values: { ...emptyValues, quantityRaw: '0' } }),
+    baseProps({ values: { ...emptyValues, stock: [row('0')] } }),
   );
   expect(await view.findByText('Exhausted')).toBeTruthy();
   expect(
-    view.getByTestId('item-form/decrement').props.accessibilityState.disabled,
+    view.getByTestId('item-form/stock-0/decrement').props.accessibilityState
+      .disabled,
   ).toBe(true);
 });
 
@@ -194,18 +266,22 @@ test('stepper emits controlled updates without touching other fields', async () 
   const onChange = jest.fn();
   const values: ItemFormValues = {
     name: 'Rice',
-    quantityRaw: '2',
-    location: { kind: 'existing', locationId: 10 },
+    stock: [row('2')],
     categories: [],
     pendingNewCategoryName: '',
-    stashedNewLocation: null,
   };
   const view = await renderForm(baseProps({ values, onChange }));
-  await fireEvent.press(view.getByTestId('item-form/increment'));
-  expect(onChange).toHaveBeenCalledWith({ ...values, quantityRaw: '3' });
+  await fireEvent.press(view.getByTestId('item-form/stock-0/increment'));
+  expect(onChange).toHaveBeenCalledWith({
+    ...values,
+    stock: [row('3')],
+  });
   onChange.mockClear();
-  await fireEvent.press(view.getByTestId('item-form/decrement'));
-  expect(onChange).toHaveBeenCalledWith({ ...values, quantityRaw: '1' });
+  await fireEvent.press(view.getByTestId('item-form/stock-0/decrement'));
+  expect(onChange).toHaveBeenCalledWith({
+    ...values,
+    stock: [row('1')],
+  });
 });
 
 test.each(['', '   ', 'abc', '1.5', '-3', '9007199254740992'])(
@@ -213,17 +289,21 @@ test.each(['', '   ', 'abc', '1.5', '-3', '9007199254740992'])(
   async (raw) => {
     const onChange = jest.fn();
     const view = await renderForm(
-      baseProps({ values: { ...emptyValues, quantityRaw: raw }, onChange }),
+      baseProps({ values: { ...emptyValues, stock: [row(raw)] }, onChange }),
     );
-    expect(view.getByTestId('item-form/quantity').props.value).toBe(raw);
+    expect(view.getByTestId('item-form/stock-0/quantity').props.value).toBe(
+      raw,
+    );
     expect(
-      view.getByTestId('item-form/increment').props.accessibilityState.disabled,
+      view.getByTestId('item-form/stock-0/increment').props.accessibilityState
+        .disabled,
     ).toBe(true);
     expect(
-      view.getByTestId('item-form/decrement').props.accessibilityState.disabled,
+      view.getByTestId('item-form/stock-0/decrement').props.accessibilityState
+        .disabled,
     ).toBe(true);
-    await fireEvent.press(view.getByTestId('item-form/increment'));
-    await fireEvent.press(view.getByTestId('item-form/decrement'));
+    await fireEvent.press(view.getByTestId('item-form/stock-0/increment'));
+    await fireEvent.press(view.getByTestId('item-form/stock-0/decrement'));
     expect(onChange).not.toHaveBeenCalled();
     // Save stays enabled: parent validation reports the explicit error.
     expect(
@@ -235,66 +315,71 @@ test.each(['', '   ', 'abc', '1.5', '-3', '9007199254740992'])(
 test('product cap disables increment at 999999; technical guard stays null-parse', async () => {
   const onChange = jest.fn();
   const view = await renderForm(
-    baseProps({ values: { ...emptyValues, quantityRaw: '999999' }, onChange }),
+    baseProps({ values: { ...emptyValues, stock: [row('999999')] }, onChange }),
   );
   expect(
-    view.getByTestId('item-form/increment').props.accessibilityState.disabled,
+    view.getByTestId('item-form/stock-0/increment').props.accessibilityState
+      .disabled,
   ).toBe(true);
   expect(
-    view.getByTestId('item-form/decrement').props.accessibilityState.disabled,
+    view.getByTestId('item-form/stock-0/decrement').props.accessibilityState
+      .disabled,
   ).toBe(false);
-  await fireEvent.press(view.getByTestId('item-form/decrement'));
+  await fireEvent.press(view.getByTestId('item-form/stock-0/decrement'));
   expect(onChange).toHaveBeenCalledWith({
     ...emptyValues,
-    quantityRaw: '999998',
+    stock: [row('999998')],
   });
 });
 
 test('increment from valid zero reaches one without a default', async () => {
   const onChange = jest.fn();
   const view = await renderForm(
-    baseProps({ values: { ...emptyValues, quantityRaw: '0' }, onChange }),
+    baseProps({ values: { ...emptyValues, stock: [row('0')] }, onChange }),
   );
   expect(
-    view.getByTestId('item-form/increment').props.accessibilityState.disabled,
+    view.getByTestId('item-form/stock-0/increment').props.accessibilityState
+      .disabled,
   ).toBe(false);
-  await fireEvent.press(view.getByTestId('item-form/increment'));
+  await fireEvent.press(view.getByTestId('item-form/stock-0/increment'));
   expect(onChange).toHaveBeenCalledWith({
     ...emptyValues,
-    quantityRaw: '1',
+    stock: [row('1')],
   });
 });
 
-test('existing location selection emits an existing draft', async () => {
+test('new location append appends a draft row with inline inputs', async () => {
   const onChange = jest.fn();
   const view = await renderForm(baseProps({ onChange }));
-  await fireEvent.press(view.getByTestId('item-form/location-11'));
+  await fireEvent.press(view.getByTestId('item-form/location-new'));
   expect(onChange).toHaveBeenCalledWith({
     ...emptyValues,
-    location: { kind: 'existing', locationId: 11 },
+    stock: [newRow()],
   });
 });
 
-test('new location draft preserves unsaved names across mode changes', async () => {
+test('new location draft preserves unsaved names while editing the row', async () => {
   const view = await render(<ControlledHarness />);
   await fireEvent.press(await view.findByTestId('item-form/location-new'));
   await fireEvent.changeText(
-    view.getByTestId('item-form/location-new/name'),
+    view.getByTestId('item-form/stock-0/location-new/name'),
     'Bodega',
   );
   await fireEvent.changeText(
-    view.getByTestId('item-form/location-new/address'),
+    view.getByTestId('item-form/stock-0/location-new/address'),
     'Calle Luna 3',
   );
-  await fireEvent.press(view.getByTestId('item-form/location-10'));
-  expect(view.queryByTestId('item-form/location-new/name')).toBeNull();
-  await fireEvent.press(view.getByTestId('item-form/location-new'));
-  expect(view.getByTestId('item-form/location-new/name').props.value).toBe(
-    'Bodega',
+  // Editing the same row's quantity keeps the draft text.
+  await fireEvent.changeText(
+    view.getByTestId('item-form/stock-0/quantity'),
+    '2',
   );
-  expect(view.getByTestId('item-form/location-new/address').props.value).toBe(
-    'Calle Luna 3',
-  );
+  expect(
+    view.getByTestId('item-form/stock-0/location-new/name').props.value,
+  ).toBe('Bodega');
+  expect(
+    view.getByTestId('item-form/stock-0/location-new/address').props.value,
+  ).toBe('Calle Luna 3');
 });
 
 test('category toggle adds and removes without duplicating selection', async () => {
@@ -313,7 +398,6 @@ test('same-named categories are distinct selectable entities', async () => {
     ...emptyValues,
     categories: [{ kind: 'existing', categoryId: 21 }],
     pendingNewCategoryName: '',
-    stashedNewLocation: null,
   };
   const view = await renderForm(
     baseProps({
@@ -348,7 +432,12 @@ test('new category appends a draft only and removes by draft button', async () =
 });
 
 test('pending disables save, close, and every mutating input', async () => {
-  const view = await renderForm(baseProps({ submitting: true }));
+  const view = await renderForm(
+    baseProps({
+      values: { ...emptyValues, stock: [row('2')] },
+      submitting: true,
+    }),
+  );
   const saveState = view.getByTestId('item-form/save').props.accessibilityState;
   expect(saveState.disabled).toBe(true);
   expect(saveState.busy).toBe(true);
@@ -356,9 +445,19 @@ test('pending disables save, close, and every mutating input', async () => {
     view.getByTestId('item-form/close').props.accessibilityState.disabled,
   ).toBe(true);
   expect(view.getByTestId('item-form/name').props.editable).toBe(false);
-  expect(view.getByTestId('item-form/quantity').props.editable).toBe(false);
+  expect(view.getByTestId('item-form/stock-0/quantity').props.editable).toBe(
+    false,
+  );
   expect(
-    view.getByTestId('item-form/increment').props.accessibilityState.disabled,
+    view.getByTestId('item-form/stock-0/increment').props.accessibilityState
+      .disabled,
+  ).toBe(true);
+  expect(
+    view.getByTestId('item-form/stock-0/remove').props.accessibilityState
+      .disabled,
+  ).toBe(true);
+  expect(
+    view.getByTestId('item-form/location-11').props.accessibilityState.disabled,
   ).toBe(true);
 });
 
@@ -381,14 +480,15 @@ test('missing save/close callbacks disable truthfully instead of no-op', async (
 });
 
 test('location error focus target exists in every selection state', async () => {
-  expect(resolveErrorFocusTarget('location', undefined)).toBe(
-    'item-form/error-location',
+  expect(resolveErrorFocusTarget('name', undefined)).toBe('item-form/name');
+  expect(resolveErrorFocusTarget({ row: 0, side: 'quantity' }, undefined)).toBe(
+    'item-form/stock-0/quantity',
   );
-  expect(resolveErrorFocusTarget('location', 'existing')).toBe(
-    'item-form/error-location',
-  );
-  expect(resolveErrorFocusTarget('location', 'new')).toBe(
-    'item-form/location-new/name',
+  expect(
+    resolveErrorFocusTarget({ row: 0, side: 'location' }, 'existing'),
+  ).toBe('item-form/error-stock-0-location');
+  expect(resolveErrorFocusTarget({ row: 1, side: 'location' }, 'new')).toBe(
+    'item-form/stock-1/location-new/name',
   );
   expect(resolveErrorFocusTarget('form', undefined)).toBe(
     'item-form/error-form',
@@ -396,12 +496,11 @@ test('location error focus target exists in every selection state', async () => 
   expect(resolveErrorFocusTarget(null, undefined)).toBeNull();
 });
 
-const locationFocusCases: [ItemFormValues['location'], string][] = [
-  [null, 'item-form/error-location'],
-  [{ kind: 'existing', locationId: 10 }, 'item-form/error-location'],
+const locationFocusCases: [ItemStockRowValues['location'], string][] = [
+  [{ kind: 'existing', locationId: 10 }, 'item-form/error-stock-0-location'],
   [
     { kind: 'new', location: { name: '', address: null } },
-    'item-form/location-new/name',
+    'item-form/stock-0/location-new/name',
   ],
 ];
 test.each(locationFocusCases)(
@@ -410,8 +509,8 @@ test.each(locationFocusCases)(
     const onRequestErrorFocus = jest.fn();
     const view = await renderForm(
       baseProps({
-        values: { ...emptyValues, location },
-        errors: { location: 'Choose or create a location.' },
+        values: { ...emptyValues, stock: [{ location, quantityRaw: '' }] },
+        errors: { stock: [{ location: 'Choose or create a location.' }] },
         onRequestErrorFocus,
       }),
     );
@@ -468,7 +567,7 @@ test('pending category typing is controlled and survives remount unappended', as
   expect(view.queryByTestId('item-form/new-category/remove-0')).toBeNull();
 });
 
-test('new-location text survives existing switch plus remount via stash', async () => {
+test('new-location row text survives remount controlled by props', async () => {
   let retained: ItemFormValues = { ...emptyValues };
   function RemountHarness({ initial }: { initial: ItemFormValues }) {
     const [current, setCurrent] = useState<ItemFormValues>(initial);
@@ -492,31 +591,30 @@ test('new-location text survives existing switch plus remount via stash', async 
   const view = await render(<RemountHarness key="a" initial={retained} />);
   await fireEvent.press(await view.findByTestId('item-form/location-new'));
   await fireEvent.changeText(
-    view.getByTestId('item-form/location-new/name'),
+    view.getByTestId('item-form/stock-0/location-new/name'),
     'Bodega',
   );
   await fireEvent.changeText(
-    view.getByTestId('item-form/location-new/address'),
+    view.getByTestId('item-form/stock-0/location-new/address'),
     'Calle Luna 3',
   );
-  await fireEvent.press(view.getByTestId('item-form/location-10'));
-  expect(retained.location).toEqual({
-    kind: 'existing',
-    locationId: 10,
-  });
-  expect(retained.stashedNewLocation).toEqual({
-    name: 'Bodega',
-    address: 'Calle Luna 3',
-  });
+  expect(retained.stock).toEqual([
+    {
+      location: {
+        kind: 'new',
+        location: { name: 'Bodega', address: 'Calle Luna 3' },
+      },
+      quantityRaw: '',
+    },
+  ]);
   // Key change forces a true remount: state re-initializes from props.
   await view.rerender(<RemountHarness key="b" initial={retained} />);
-  await fireEvent.press(await view.findByTestId('item-form/location-new'));
-  expect(view.getByTestId('item-form/location-new/name').props.value).toBe(
-    'Bodega',
-  );
-  expect(view.getByTestId('item-form/location-new/address').props.value).toBe(
-    'Calle Luna 3',
-  );
+  expect(
+    view.getByTestId('item-form/stock-0/location-new/name').props.value,
+  ).toBe('Bodega');
+  expect(
+    view.getByTestId('item-form/stock-0/location-new/address').props.value,
+  ).toBe('Calle Luna 3');
 });
 
 test('renders Spanish strings when locale is es', async () => {
@@ -587,29 +685,42 @@ describe('U2b delete affordance', () => {
 describe('M4 blur callback (Gap B)', () => {
   test('blur events call onFieldBlur with the right field', async () => {
     const onFieldBlur = jest.fn();
-    const view = await renderForm(baseProps({ onFieldBlur }));
+    const view = await renderForm(
+      baseProps({
+        values: { ...emptyValues, stock: [row('')] },
+        onFieldBlur,
+      }),
+    );
     await fireEvent(view.getByTestId('item-form/name'), 'blur');
     expect(onFieldBlur).toHaveBeenCalledWith('name');
-    await fireEvent(view.getByTestId('item-form/quantity'), 'blur');
-    expect(onFieldBlur).toHaveBeenCalledWith('quantity');
+    await fireEvent(view.getByTestId('item-form/stock-0/quantity'), 'blur');
+    expect(onFieldBlur).toHaveBeenCalledWith('quantity', 0);
     expect(onFieldBlur).toHaveBeenCalledTimes(2);
   });
 
   test('absent callback stays a true no-op on blur', async () => {
-    const view = await renderForm(baseProps({}));
+    const view = await renderForm(
+      baseProps({ values: { ...emptyValues, stock: [row('')] } }),
+    );
     await expect(
       (async () => {
         await fireEvent(view.getByTestId('item-form/name'), 'blur');
-        await fireEvent(view.getByTestId('item-form/quantity'), 'blur');
+        await fireEvent(view.getByTestId('item-form/stock-0/quantity'), 'blur');
       })(),
     ).resolves.toBeUndefined();
   });
 
   test('blur is not fired while submitting', async () => {
     const onFieldBlur = jest.fn();
-    const view = await renderForm(baseProps({ onFieldBlur, submitting: true }));
+    const view = await renderForm(
+      baseProps({
+        values: { ...emptyValues, stock: [row('')] },
+        onFieldBlur,
+        submitting: true,
+      }),
+    );
     await fireEvent(view.getByTestId('item-form/name'), 'blur');
-    await fireEvent(view.getByTestId('item-form/quantity'), 'blur');
+    await fireEvent(view.getByTestId('item-form/stock-0/quantity'), 'blur');
     expect(onFieldBlur).not.toHaveBeenCalled();
   });
 });
@@ -633,13 +744,17 @@ describe('P5a selection-chip labels and symbol glyphs', () => {
       baseProps({
         values: {
           ...emptyValues,
-          quantityRaw: '2',
+          stock: [row('2')],
           categories: [{ kind: 'new', category: { name: 'Grains' } }],
         },
       }),
     );
-    expect(view.getByTestId('item-form/decrement')).toHaveTextContent('−');
-    expect(view.getByTestId('item-form/increment')).toHaveTextContent('+');
+    expect(view.getByTestId('item-form/stock-0/decrement')).toHaveTextContent(
+      '−',
+    );
+    expect(view.getByTestId('item-form/stock-0/increment')).toHaveTextContent(
+      '+',
+    );
     expect(
       view.getByTestId('item-form/new-category/remove-0'),
     ).toHaveTextContent('✕');
@@ -657,20 +772,24 @@ describe('S10 product quantity bound (999999)', () => {
     const onChange = jest.fn();
     const view = await renderForm(
       baseProps({
-        values: { ...emptyValues, quantityRaw: '1000000' },
+        values: { ...emptyValues, stock: [row('1000000')] },
         onChange,
       }),
     );
     // Raw text is never coerced or clamped.
-    expect(view.getByTestId('item-form/quantity').props.value).toBe('1000000');
+    expect(view.getByTestId('item-form/stock-0/quantity').props.value).toBe(
+      '1000000',
+    );
     expect(
-      view.getByTestId('item-form/increment').props.accessibilityState.disabled,
+      view.getByTestId('item-form/stock-0/increment').props.accessibilityState
+        .disabled,
     ).toBe(true);
     expect(
-      view.getByTestId('item-form/decrement').props.accessibilityState.disabled,
+      view.getByTestId('item-form/stock-0/decrement').props.accessibilityState
+        .disabled,
     ).toBe(true);
-    await fireEvent.press(view.getByTestId('item-form/increment'));
-    await fireEvent.press(view.getByTestId('item-form/decrement'));
+    await fireEvent.press(view.getByTestId('item-form/stock-0/increment'));
+    await fireEvent.press(view.getByTestId('item-form/stock-0/decrement'));
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -678,22 +797,24 @@ describe('S10 product quantity bound (999999)', () => {
     const onChange = jest.fn();
     const view = await renderForm(
       baseProps({
-        values: { ...emptyValues, quantityRaw: '999999' },
+        values: { ...emptyValues, stock: [row('999999')] },
         onChange,
       }),
     );
     expect(
-      view.getByTestId('item-form/increment').props.accessibilityState.disabled,
+      view.getByTestId('item-form/stock-0/increment').props.accessibilityState
+        .disabled,
     ).toBe(true);
     expect(
-      view.getByTestId('item-form/decrement').props.accessibilityState.disabled,
+      view.getByTestId('item-form/stock-0/decrement').props.accessibilityState
+        .disabled,
     ).toBe(false);
-    await fireEvent.press(view.getByTestId('item-form/increment'));
+    await fireEvent.press(view.getByTestId('item-form/stock-0/increment'));
     expect(onChange).not.toHaveBeenCalled();
-    await fireEvent.press(view.getByTestId('item-form/decrement'));
+    await fireEvent.press(view.getByTestId('item-form/stock-0/decrement'));
     expect(onChange).toHaveBeenCalledWith({
       ...emptyValues,
-      quantityRaw: '999998',
+      stock: [row('999998')],
     });
   });
 });

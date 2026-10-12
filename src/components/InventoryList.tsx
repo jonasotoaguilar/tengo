@@ -196,8 +196,28 @@ function TextAction({
 }
 
 type ListEntry =
-  | { kind: 'group'; locationId: number; name: string; count: number }
+  | {
+      kind: 'group';
+      key: string;
+      locationId: number | null;
+      name: string;
+      count: number;
+    }
   | { kind: 'item'; item: ItemDetail };
+
+/** Quantity of one item at one location; 0 when it holds no stock there. */
+function stockQuantityAt(item: ItemDetail, locationId: number): number {
+  return (
+    item.stock.find((level) => level.locationId === locationId)?.quantity ?? 0
+  );
+}
+
+/** Per-location breakdown, e.g. `Heladera 1 · Alacena 2`. */
+function breakdownText(item: ItemDetail): string {
+  return item.stock
+    .map((level) => `${level.location.name} ${level.quantity}`)
+    .join(' · ');
+}
 
 export default function InventoryList({
   state,
@@ -224,8 +244,18 @@ export default function InventoryList({
   const trimmedQuery = query.trim();
   const isFiltered =
     trimmedQuery !== '' || locationId !== null || selectedCategories.length > 0;
+  const selectedLocation =
+    locationId === null
+      ? null
+      : (locations.find((entry) => entry.id === locationId) ?? null);
+  // A location id with no known location is a stale filter: nothing can
+  // be shown for it, so the list renders the generic no-results copy
+  // instead of an empty header.
+  const locationKnown = locationId === null || selectedLocation !== null;
+  const visibleItems = locationKnown ? items : [];
   const isFirstRun = state === 'ready' && totalCount === 0;
-  const isNoResults = state === 'ready' && totalCount > 0 && items.length === 0;
+  const isNoResults =
+    state === 'ready' && totalCount > 0 && visibleItems.length === 0;
   const showPlatformAdd = state === 'ready' && !isFirstRun && !isNoResults;
   const showFab = showPlatformAdd && os === 'android';
   const addDisabled = onAdd === undefined;
@@ -247,27 +277,32 @@ export default function InventoryList({
     onFilterChange({ query: '', locationId: null, categoryIds: [] });
   };
 
-  const selectedLocation =
-    locationId === null
-      ? null
-      : (locations.find((entry) => entry.id === locationId) ?? null);
-
   const entries: ListEntry[] = [];
-  {
+  if (locationId === null) {
+    // General view ("Todas"): one row per product grouped under its
+    // first stock location (first-encounter group order, input order
+    // within groups). Items with no stock anywhere trail in their own
+    // sin-stock group, never hidden (R6).
     const groupIndex = new Map<number, number>();
     const grouped: {
       locationId: number;
       name: string;
       items: ItemDetail[];
     }[] = [];
-    for (const item of items) {
-      let index = groupIndex.get(item.locationId);
+    const stockless: ItemDetail[] = [];
+    for (const item of visibleItems) {
+      const first = item.stock[0];
+      if (first === undefined) {
+        stockless.push(item);
+        continue;
+      }
+      let index = groupIndex.get(first.locationId);
       if (index === undefined) {
         index = grouped.length;
-        groupIndex.set(item.locationId, index);
+        groupIndex.set(first.locationId, index);
         grouped.push({
-          locationId: item.locationId,
-          name: item.location.name,
+          locationId: first.locationId,
+          name: first.location.name,
           items: [],
         });
       }
@@ -276,12 +311,37 @@ export default function InventoryList({
     for (const group of grouped) {
       entries.push({
         kind: 'group',
+        key: `group-${group.locationId}`,
         locationId: group.locationId,
         name: group.name,
         count: group.items.length,
       });
       for (const item of group.items) entries.push({ kind: 'item', item });
     }
+    if (stockless.length > 0) {
+      entries.push({
+        kind: 'group',
+        key: 'group-nostock',
+        locationId: null,
+        name: t('inventoryNoStockGroup'),
+        count: stockless.length,
+      });
+      for (const item of stockless) entries.push({ kind: 'item', item });
+    }
+  } else if (selectedLocation !== null && visibleItems.length > 0) {
+    // Location view: the grouping stays (one group for the selected
+    // location) and every row shows THAT location's quantity. An item
+    // with 0 there but stock elsewhere appears marked sin stock with
+    // its breakdown visible (L9a). An empty view renders no group
+    // header: the no-results copy covers it.
+    entries.push({
+      kind: 'group',
+      key: `group-${selectedLocation.id}`,
+      locationId: selectedLocation.id,
+      name: selectedLocation.name,
+      count: visibleItems.length,
+    });
+    for (const item of visibleItems) entries.push({ kind: 'item', item });
   }
 
   const renderEntry = ({ item: entry }: { item: ListEntry }) => {
@@ -291,18 +351,15 @@ export default function InventoryList({
           ? t('inventoryGroupCountOne', { count: entry.count })
           : t('inventoryGroupCountOther', { count: entry.count });
       return (
-        <View
-          testID={`inventory-group-${entry.locationId}`}
-          style={styles.groupHeader}
-        >
+        <View testID={`inventory-${entry.key}`} style={styles.groupHeader}>
           <Text
-            testID={`inventory-group-${entry.locationId}-name`}
+            testID={`inventory-${entry.key}-name`}
             style={[styles.groupName, { color: palette.text }]}
           >
             {entry.name}
           </Text>
           <Text
-            testID={`inventory-group-${entry.locationId}-count`}
+            testID={`inventory-${entry.key}-count`}
             style={[styles.groupCount, { color: palette.secondary }]}
           >
             {countLabel}
@@ -312,6 +369,26 @@ export default function InventoryList({
     }
     const item = entry.item;
     const rowId = `inventory-row-${item.id}`;
+    // The shown quantity depends on the view: the total across locations
+    // in the general view, that location's quantity in a location view.
+    const shownQuantity =
+      locationId === null
+        ? item.totalQuantity
+        : stockQuantityAt(item, locationId);
+    const isExhausted = shownQuantity === 0;
+    // Location line: the breakdown in the general view (or the sin-stock
+    // group name when there is nothing to break down), the selected
+    // location's name in a location view.
+    const locationLine =
+      locationId === null
+        ? item.stock.length > 0
+          ? breakdownText(item)
+          : t('inventoryNoStockGroup')
+        : (selectedLocation?.name ?? '');
+    const breakdown =
+      locationId !== null && isExhausted && item.stock.length > 0
+        ? breakdownText(item)
+        : null;
     // One composed label so a screen reader announces the whole row as a
     // single unit; shared by the static and pressable rows. It mirrors what
     // is rendered, including the exhausted state and the categories, so no
@@ -319,9 +396,10 @@ export default function InventoryList({
     const categoryNames = item.categories.map((entry) => entry.name).join(', ');
     const rowLabel = [
       item.name,
-      `${t('inventoryQuantityLabel')} ${item.quantity}`,
-      item.quantity === 0 ? t('inventoryExhausted') : null,
-      item.location.name,
+      `${t('inventoryQuantityLabel')} ${shownQuantity}`,
+      isExhausted ? t('inventoryExhausted') : null,
+      locationLine === '' ? null : locationLine,
+      breakdown,
       categoryNames === '' ? t('inventoryNoCategories') : categoryNames,
     ]
       .filter((part): part is string => part !== null)
@@ -337,9 +415,9 @@ export default function InventoryList({
           style={[styles.itemMeta, { color: palette.text }]}
         >
           {t('inventoryQuantityLabel')}{' '}
-          <Text style={styles.tabular}>{item.quantity}</Text>
+          <Text style={styles.tabular}>{shownQuantity}</Text>
         </Text>
-        {item.quantity === 0 ? (
+        {isExhausted ? (
           <Text
             testID={`${rowId}-exhausted`}
             style={[styles.exhausted, { color: palette.error }]}
@@ -352,8 +430,17 @@ export default function InventoryList({
           testID={`${rowId}-location`}
           style={[styles.itemMeta, { color: palette.secondary }]}
         >
-          {item.location.name}
+          {locationLine}
         </Text>
+        {breakdown !== null ? (
+          <Text
+            selectable
+            testID={`${rowId}-breakdown`}
+            style={[styles.itemMeta, { color: palette.secondary }]}
+          >
+            {breakdown}
+          </Text>
+        ) : null}
         <Text
           selectable
           testID={`${rowId}-categories`}
@@ -402,7 +489,10 @@ export default function InventoryList({
             testID="inventory-count"
             style={[styles.count, { color: palette.secondary }]}
           >
-            {t('inventoryCount', { shown: items.length, total: totalCount })}
+            {t('inventoryCount', {
+              shown: visibleItems.length,
+              total: totalCount,
+            })}
           </Text>
           {showPlatformAdd && os === 'ios' ? (
             <TextAction
@@ -606,9 +696,7 @@ export default function InventoryList({
         keyboardShouldPersistTaps="handled"
         data={state === 'ready' ? entries : []}
         keyExtractor={(entry) =>
-          entry.kind === 'group'
-            ? `group-${entry.locationId}`
-            : `item-${entry.item.id}`
+          entry.kind === 'group' ? entry.key : `item-${entry.item.id}`
         }
         renderItem={renderEntry}
         ListHeaderComponent={controls}

@@ -24,8 +24,9 @@
  *   item, delete another, store `phase=2`, close WITHOUT deleting =>
  *   `restart-required`.
  * - launch 3 (`phase=2`): verify the edit/deletion persisted, then prove
- *   typed `RESTRICT`, invalid-reference and late-failure rollback (no
- *   orphans), zero/many-category + native-query mapping, and the scoped
+ *   the R3 location-delete cascade (stock goes, catalog item survives sin
+ *   stock), invalid-reference and late-failure rollback (no orphans),
+ *   zero/many-category + native-query mapping, and the scoped
  *   exclusive-connection FK state. Full pass => close + delete ONLY the
  *   fixture file. Any failure keeps the DB for inspection.
  *
@@ -58,7 +59,6 @@ import { openManagedDatabase } from '../db/exclusive';
 import {
   EntityNotFoundError,
   isForeignKeyViolation,
-  LocationInUseError,
   type RepositoryDb,
   createCategory as realCreateCategory,
   createItem as realCreateItem,
@@ -245,15 +245,15 @@ async function runPhase1(
         user_version: number;
       } | null
     )?.user_version;
-    assert(version === 3, `user_version=${version}, want 3`);
+    assert(version === 4, `user_version=${version}, want 4`);
     assert(
       (await readForeignKeys(db)) === 1,
       'outer connection must enforce FK',
     );
     checks.push({
-      name: 'phase-1 initialized fixture database to v3 with FK ON',
+      name: 'phase-1 initialized fixture database to v4 with FK ON',
       pass: true,
-      detail: 'user_version=3 foreign_keys=1 on the outer connection',
+      detail: 'user_version=4 foreign_keys=1 on the outer connection',
     });
     const { repos } = deps;
     const locA = await repos.createLocation(db, { name: 'Fixture Kitchen' });
@@ -270,30 +270,37 @@ async function runPhase1(
     });
     const edit = await repos.createItem(db, {
       name: 'Rice',
-      quantity: 2,
-      locationId: locA.id,
+      stock: [{ locationId: locA.id, quantity: 2 }],
       categoryIds: [catA.id, catB.id],
     });
     assert(
       edit.categoryIds.length === 2,
       'two-category item must map both ids',
     );
+    assert(
+      edit.totalQuantity === 2 && edit.stock.length === 1,
+      'single-location stock must map with its total',
+    );
     checks.push({
       name: 'phase-1 created item with two categories via item repository',
       pass: true,
-      detail: `item=${edit.id} categories=${edit.categoryIds.join(',')}`,
+      detail: `item=${edit.id} total=2 categories=${edit.categoryIds.join(',')}`,
     });
+    // A catalog-only item (no stock rows): the v4 shape of "sin stock"
+    // (the old model stored this as quantity 0 on the item row).
     const gone = await repos.createItem(db, {
       name: 'Beans',
-      quantity: 0,
-      locationId: locB.id,
+      stock: [],
       categoryIds: [catB.id],
     });
-    assert(gone.quantity === 0, 'zero quantity must survive the round trip');
+    assert(
+      gone.totalQuantity === 0 && gone.stock.length === 0,
+      'catalog-only item must survive the round trip with total 0',
+    );
     checks.push({
-      name: 'phase-1 created zero-quantity item with one category',
+      name: 'phase-1 created catalog-only (sin stock) item with one category',
       pass: true,
-      detail: `item=${gone.id} qty=0 categories=${gone.categoryIds.join(',')}`,
+      detail: `item=${gone.id} total=0 categories=${gone.categoryIds.join(',')}`,
     });
     const ids: FixtureIds = {
       locA: locA.id,
@@ -333,8 +340,8 @@ async function runPhase2(
     const { repos } = deps;
     const edit = await repos.getItem(db, (ids as FixtureIds).edit);
     assert(
-      edit.name === 'Rice' && edit.quantity === 2,
-      `edit row changed: ${edit.name}/${edit.quantity}`,
+      edit.name === 'Rice' && edit.totalQuantity === 2,
+      `edit row changed: ${edit.name}/${edit.totalQuantity}`,
     );
     assert(
       edit.categoryIds.length === 2,
@@ -342,22 +349,21 @@ async function runPhase2(
     );
     const gone = await repos.getItem(db, (ids as FixtureIds).gone);
     assert(
-      gone.name === 'Beans' && gone.quantity === 0,
+      gone.name === 'Beans' && gone.totalQuantity === 0,
       'gone row changed before its delete',
     );
     checks.push({
       name: 'phase-2 created rows persisted across restart',
       pass: true,
-      detail: `edit=${edit.id} Rice/2/cats=2 gone=${gone.id} Beans/0/cats=1`,
+      detail: `edit=${edit.id} Rice/2/cats=2 gone=${gone.id} Beans/sin-stock/cats=1`,
     });
     const updated = await repos.updateItem(db, (ids as FixtureIds).edit, {
       name: 'EditedRice',
-      quantity: 5,
-      locationId: (ids as FixtureIds).locA,
+      stock: [{ locationId: (ids as FixtureIds).locA, quantity: 5 }],
       categoryIds: [(ids as FixtureIds).catA],
     });
     assert(
-      updated.name === 'EditedRice' && updated.quantity === 5,
+      updated.name === 'EditedRice' && updated.totalQuantity === 5,
       'update did not apply',
     );
     assert(
@@ -403,8 +409,8 @@ async function runPhase3(
 
     const edit = await repos.getItem(db, safeIds.edit);
     assert(
-      edit.name === 'EditedRice' && edit.quantity === 5,
-      `edit lost: ${edit.name}/${edit.quantity}`,
+      edit.name === 'EditedRice' && edit.totalQuantity === 5,
+      `edit lost: ${edit.name}/${edit.totalQuantity}`,
     );
     assert(
       edit.categoryIds.join(',') === String(safeIds.catA),
@@ -437,27 +443,32 @@ async function runPhase3(
       `joins for item ${safeIds.gone}=0`,
     );
 
-    let restrict: unknown = null;
-    try {
-      await repos.deleteLocation(db, safeIds.locA);
-    } catch (error) {
-      restrict = error;
-    }
+    // R3: deleting the location removes its stock rows while the catalog
+    // item survives (left with no stock anywhere: sin stock, R6). This
+    // replaces the old v2 RESTRICT assertion.
+    await repos.deleteLocation(db, safeIds.locA);
+    const unstocked = await repos.getItem(db, safeIds.edit);
     assert(
-      restrict instanceof LocationInUseError,
-      `location delete not RESTRICT-blocked: ${detailOf(restrict)}`,
+      unstocked.stock.length === 0 && unstocked.totalQuantity === 0,
+      `location delete did not cascade stock: rows=${unstocked.stock.length} total=${unstocked.totalQuantity}`,
     );
+    const stockLeft = await countRows(
+      db,
+      'SELECT COUNT(*) AS count FROM stock WHERE item_id = ?',
+      [safeIds.edit],
+    );
+    assert(stockLeft === 0, `stock rows survived the location delete`);
     pass(
-      'phase-3 location delete blocked with typed in-use',
-      `loc ${safeIds.locA} still referenced`,
+      'phase-3 location delete cascaded stock, catalog item survives sin stock',
+      `loc ${safeIds.locA} gone; item ${safeIds.edit} total=0`,
     );
 
     let rawError: unknown = null;
     let rawAccepted = false;
     try {
       await db.runAsync(
-        'INSERT INTO items (name, quantity, location_id) VALUES (?, ?, ?)',
-        ['__probe__', 1, 999999],
+        'INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, ?)',
+        [safeIds.edit, 999999, 1],
       );
       rawAccepted = true;
     } catch (error) {
@@ -465,7 +476,7 @@ async function runPhase3(
     }
     if (rawAccepted) {
       await db
-        .runAsync('DELETE FROM items WHERE location_id = ?', [999999])
+        .runAsync('DELETE FROM stock WHERE location_id = ?', [999999])
         .catch(() => {});
     }
     assert(
@@ -482,8 +493,7 @@ async function runPhase3(
     try {
       await repos.createItem(db, {
         name: 'Ghost',
-        quantity: 1,
-        locationId: 999999,
+        stock: [{ locationId: 999999, quantity: 1 }],
       });
     } catch (error) {
       invalid = error;
@@ -507,8 +517,15 @@ async function runPhase3(
     try {
       await repos.createItemFromDraft(db, {
         name: LATE_FAIL_ITEM,
-        quantity: 1,
-        location: { kind: 'new', location: { name: ORPHAN_PROBE_LOCATION } },
+        stock: [
+          {
+            location: {
+              kind: 'new',
+              location: { name: ORPHAN_PROBE_LOCATION },
+            },
+            quantity: 1,
+          },
+        ],
         categories: [],
       });
     } catch (error) {
@@ -542,8 +559,7 @@ async function runPhase3(
 
     const zero = await repos.createItem(db, {
       name: 'ZeroCats',
-      quantity: 0,
-      locationId: safeIds.locB,
+      stock: [],
       categoryIds: [],
     });
     assert(
@@ -554,20 +570,24 @@ async function runPhase3(
     const rawRows = await db.getAllAsync<{
       id: number;
       name: string;
+    }>('SELECT id, name FROM items ORDER BY id ASC');
+    const rawStock = await db.getAllAsync<{
+      item_id: number;
       quantity: number;
-      location_id: number;
-    }>('SELECT id, name, quantity, location_id FROM items ORDER BY id ASC');
+    }>('SELECT item_id, quantity FROM stock ORDER BY item_id ASC');
     assert(
       listed.length === rawRows.length,
       `list/raw count diverge: ${listed.length} vs ${rawRows.length}`,
     );
     for (const item of listed) {
       const raw = rawRows.find((row) => row.id === item.id);
+      const expectedTotal = rawStock
+        .filter((row) => row.item_id === item.id)
+        .reduce((sum, row) => sum + row.quantity, 0);
       assert(
         raw !== undefined &&
           raw.name === item.name &&
-          raw.quantity === item.quantity &&
-          raw.location_id === item.locationId,
+          item.totalQuantity === expectedTotal,
         `native mapping diverge for item ${item.id}`,
       );
     }

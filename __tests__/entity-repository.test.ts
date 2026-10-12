@@ -1,14 +1,18 @@
 /**
- * M2 location/category persistence (mocked native boundary).
+ * Location/category persistence with v4 cascade semantics (mocked native
+ * boundary).
  *
  * Runs against an in-memory fake `RepositoryDb` — no native module, no
  * `.db` file. Proves parameterized CRUD, domain normalization, typed errors
- * (validation/not-found/in-use/storage), and that raw SQLite text never
- * surfaces. Real driver behavior is P2 native proof (isolated test DBs).
+ * (validation/not-found/conflict/storage), location-delete cascades stock
+ * but never items (R3), category-delete cascades only join rows (R4), and
+ * the delete-impact reads the confirmations need. Real driver behavior is
+ * native proof (isolated test DBs).
  */
 
 import type { RepositoryDb, RunResult } from '../src/inventory/database';
 import {
+  categoryDeleteImpact,
   createCategory,
   createLocation,
   deleteCategory,
@@ -17,13 +21,13 @@ import {
   getLocation,
   listCategories,
   listLocations,
+  locationDeleteImpact,
   updateCategory,
   updateLocation,
 } from '../src/inventory/entityRepository';
 import {
   EntityConflictError,
   EntityNotFoundError,
-  LocationInUseError,
   StorageError,
 } from '../src/inventory/errors';
 import type { Category, Location } from '../src/inventory/types';
@@ -36,12 +40,19 @@ interface FakeRow {
   created_at: string;
 }
 
-/** In-memory fake: enforces location RESTRICT, category CASCADE. */
+interface StockRow {
+  itemId: number;
+  locationId: number;
+  quantity: number;
+}
+
+/** In-memory fake: enforces stock/location/category CASCADE, join CASCADE. */
 function makeFakeDb() {
   const calls: { source: string; params: unknown[] }[] = [];
   const locations = new Map<number, FakeRow>();
   const categories = new Map<number, FakeRow>();
-  const itemLocation = new Map<number, number>();
+  const items = new Map<number, { id: number }>();
+  const stock: StockRow[] = [];
   const joins = new Set<string>();
   let nextId = 1;
   let failNext: unknown = null;
@@ -74,7 +85,7 @@ function makeFakeDb() {
       if (/INSERT INTO categories/i.test(source)) {
         const [name] = params as [string];
         const id = nextId++;
-        categories.set(id, { id, name, created_at: 'now' });
+        categories.set(id, { id, name, created_at: `now` });
         return { lastInsertRowId: id, changes: 1 } satisfies RunResult;
       }
       if (/UPDATE locations/i.test(source)) {
@@ -93,19 +104,15 @@ function makeFakeDb() {
       }
       if (/DELETE FROM locations/i.test(source)) {
         const [id] = params as [number];
-        for (const locId of itemLocation.values()) {
-          if (locId === id) {
-            // Shape of the real expo-sqlite native failure (SQLite code 787).
-            throw new Error(
-              'SQLite error: FOREIGN KEY constraint failed (code 787 SQLITE_CONSTRAINT_FOREIGNKEY)',
-            );
-          }
+        if (!locations.has(id)) {
+          return { lastInsertRowId: 0, changes: 0 } satisfies RunResult;
         }
-        const deleted = locations.delete(id);
-        return {
-          lastInsertRowId: 0,
-          changes: deleted ? 1 : 0,
-        } satisfies RunResult;
+        // v4 CASCADE: stock rows go, catalog items survive.
+        for (let i = stock.length - 1; i >= 0; i -= 1) {
+          if (stock[i].locationId === id) stock.splice(i, 1);
+        }
+        locations.delete(id);
+        return { lastInsertRowId: 0, changes: 1 } satisfies RunResult;
       }
       if (/DELETE FROM categories/i.test(source)) {
         const [id] = params as [number];
@@ -127,6 +134,35 @@ function makeFakeDb() {
       if (table && /WHERE id = \?/i.test(source)) {
         return (table.get(params[0] as number) ?? null) as T | null;
       }
+      if (/FROM stock/i.test(source) && /COUNT\(\*\)/i.test(source)) {
+        const id = params[0] as number;
+        if (/NOT EXISTS/i.test(source)) {
+          // Unstocked-items count: items with stock at id and nowhere else.
+          const atLoc = new Set(
+            stock.filter((s) => s.locationId === id).map((s) => s.itemId),
+          );
+          let unstocked = 0;
+          for (const itemId of atLoc) {
+            if (
+              !stock.some((s) => s.itemId === itemId && s.locationId !== id)
+            ) {
+              unstocked += 1;
+            }
+          }
+          return { count: unstocked } as T;
+        }
+        return {
+          count: stock.filter((s) => s.locationId === id).length,
+        } as T;
+      }
+      if (/FROM item_categories/i.test(source) && /COUNT\(\*\)/i.test(source)) {
+        const id = params[0] as number;
+        let n = 0;
+        for (const key of joins) {
+          if (key.endsWith(`:${id}`)) n += 1;
+        }
+        return { count: n } as T;
+      }
       return null as T | null;
     }) as RepositoryDb['getFirstAsync'],
     getAllAsync: (async <T>(source: string, params: unknown[] = []) => {
@@ -141,8 +177,13 @@ function makeFakeDb() {
     calls,
     locations,
     categories,
-    itemLocation,
+    items,
+    stock,
     joins,
+    addStock: (itemId: number, locationId: number, quantity: number) => {
+      items.set(itemId, { id: itemId });
+      stock.push({ itemId, locationId, quantity });
+    },
     failNextWith: (error: unknown) => {
       failNext = error;
     },
@@ -191,6 +232,9 @@ describe('location repository', () => {
       await expect(deleteLocation(f.db, bad)).rejects.toBeInstanceOf(
         ValidationError,
       );
+      await expect(locationDeleteImpact(f.db, bad)).rejects.toBeInstanceOf(
+        ValidationError,
+      );
     }
     expect(f.calls).toEqual([]);
   });
@@ -206,6 +250,9 @@ describe('location repository', () => {
     await expect(deleteLocation(f.db, 99)).rejects.toMatchObject({
       code: 'not-found',
     });
+    await expect(locationDeleteImpact(f.db, 99)).rejects.toMatchObject({
+      code: 'not-found',
+    });
     f.failNextWith(new Error('disk I/O error on sqlite3_step'));
     const failure = (await getLocation(f.db, 1).catch(
       (e: unknown) => e,
@@ -215,38 +262,66 @@ describe('location repository', () => {
     expect(failure.message).not.toContain('disk I/O');
   });
 
-  test('deleting a referenced location maps the FK failure to in-use', async () => {
+  test('deleting a location with stock cascades the rows and keeps the items', async () => {
     const f = makeFakeDb();
     const loc = await createLocation(f.db, { name: 'Pantry' });
-    f.itemLocation.set(7, loc.id);
-    const failure = (await deleteLocation(f.db, loc.id).catch(
-      (e: unknown) => e,
-    )) as Error;
-    expect(failure).toBeInstanceOf(LocationInUseError);
-    expect(failure).toMatchObject({ code: 'in-use' });
-    expect(failure.message).not.toContain('SQLITE_CONSTRAINT');
-    // The location survives the blocked delete.
-    expect(await getLocation(f.db, loc.id)).toEqual(loc);
+    const other = await createLocation(f.db, { name: 'Garage' });
+    // Two items stocked at Pantry; one of them also stocked at Garage.
+    f.addStock(101, loc.id, 2);
+    f.addStock(102, loc.id, 1);
+    f.addStock(102, other.id, 4);
+    await deleteLocation(f.db, loc.id);
+    await expect(getLocation(f.db, loc.id)).rejects.toBeInstanceOf(
+      EntityNotFoundError,
+    );
+    // Stock at Pantry is gone; stock elsewhere and catalog items survive.
+    expect(f.stock).toEqual([
+      { itemId: 102, locationId: other.id, quantity: 4 },
+    ]);
+    expect(f.items.has(101)).toBe(true);
+    expect(f.items.has(102)).toBe(true);
+    expect(await getLocation(f.db, other.id)).toMatchObject({
+      name: 'Garage',
+    });
   });
 
-  test('alternate FK shapes map to in-use; other constraints stay storage', async () => {
-    // Extended-code shape and bare symbolic shape both occur across drivers.
-    for (const fkError of [
-      Object.assign(new Error('step failed'), { code: 787 }),
-      new Error('SQLITE_CONSTRAINT_FOREIGNKEY: abort'),
-    ]) {
-      const f = makeFakeDb();
-      const loc = await createLocation(f.db, { name: 'Pantry' });
-      f.itemLocation.set(1, loc.id);
-      const deleteSpy = f.db.runAsync as jest.Mock;
-      deleteSpy.mockImplementationOnce(async () => {
-        throw fkError;
-      });
-      await expect(deleteLocation(f.db, loc.id)).rejects.toBeInstanceOf(
-        LocationInUseError,
-      );
-    }
-    // A non-FK failure (e.g. CHECK) must not masquerade as in-use.
+  test('deleting the last location is allowed: zero locations stays valid', async () => {
+    const f = makeFakeDb();
+    const loc = await createLocation(f.db, { name: 'Only' });
+    await deleteLocation(f.db, loc.id);
+    expect(await listLocations(f.db)).toEqual([]);
+  });
+
+  test('locationDeleteImpact counts stock rows and newly unstocked items', async () => {
+    const f = makeFakeDb();
+    const pantry = await createLocation(f.db, { name: 'Pantry' });
+    const garage = await createLocation(f.db, { name: 'Garage' });
+    // Item 101 only at Pantry (becomes sin stock); 102 at both (survives
+    // on Garage); 103 only at Garage (untouched by a Pantry delete).
+    f.addStock(101, pantry.id, 2);
+    f.addStock(102, pantry.id, 1);
+    f.addStock(102, garage.id, 4);
+    f.addStock(103, garage.id, 7);
+    await expect(locationDeleteImpact(f.db, pantry.id)).resolves.toEqual({
+      stockRows: 2,
+      unstockedItems: 1,
+    });
+    await expect(locationDeleteImpact(f.db, garage.id)).resolves.toEqual({
+      stockRows: 2,
+      unstockedItems: 1,
+    });
+  });
+
+  test('locationDeleteImpact on an empty location reports zeros', async () => {
+    const f = makeFakeDb();
+    const loc = await createLocation(f.db, { name: 'Empty' });
+    await expect(locationDeleteImpact(f.db, loc.id)).resolves.toEqual({
+      stockRows: 0,
+      unstockedItems: 0,
+    });
+  });
+
+  test('a non-FK failure on delete stays storage, never a silent cascade', async () => {
     const f = makeFakeDb();
     const loc = await createLocation(f.db, { name: 'Pantry' });
     f.failNextWith(
@@ -256,8 +331,8 @@ describe('location repository', () => {
       (e: unknown) => e,
     )) as Error;
     expect(failure).toBeInstanceOf(StorageError);
-    expect(failure).not.toBeInstanceOf(LocationInUseError);
     expect(failure.message).not.toContain('CHECK constraint');
+    expect(await getLocation(f.db, loc.id)).toEqual(loc);
   });
 
   test('update normalizes and returns the stored row', async () => {
@@ -303,6 +378,9 @@ describe('category repository', () => {
     await expect(deleteCategory(f.db, 42)).rejects.toMatchObject({
       code: 'not-found',
     });
+    await expect(categoryDeleteImpact(f.db, 42)).rejects.toMatchObject({
+      code: 'not-found',
+    });
     f.failNextWith(new Error('SQLITE_FULL: database or disk is full'));
     const failure = (await listCategories(f.db).catch(
       (e: unknown) => e,
@@ -315,13 +393,28 @@ describe('category repository', () => {
     const f = makeFakeDb();
     const cat = await createCategory(f.db, { name: 'Bulk' });
     f.joins.add(`3:${cat.id}`);
-    f.itemLocation.set(3, 99);
+    f.items.set(3, { id: 3 });
     await deleteCategory(f.db, cat.id);
     expect(f.joins.size).toBe(0);
-    expect(f.itemLocation.has(3)).toBe(true);
+    expect(f.items.has(3)).toBe(true);
     await expect(getCategory(f.db, cat.id)).rejects.toBeInstanceOf(
       EntityNotFoundError,
     );
+  });
+
+  test('categoryDeleteImpact counts the items that would lose the link', async () => {
+    const f = makeFakeDb();
+    const cat = await createCategory(f.db, { name: 'Bulk' });
+    const other = await createCategory(f.db, { name: 'Fresh' });
+    f.joins.add(`11:${cat.id}`);
+    f.joins.add(`12:${cat.id}`);
+    f.joins.add(`12:${other.id}`);
+    await expect(categoryDeleteImpact(f.db, cat.id)).resolves.toEqual({
+      items: 2,
+    });
+    await expect(categoryDeleteImpact(f.db, other.id)).resolves.toEqual({
+      items: 1,
+    });
   });
 
   test('S10 RED: over-80 location and category names are rejected', async () => {

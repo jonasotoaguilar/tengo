@@ -71,9 +71,8 @@ const pantry = { id: 10, name: 'Pantry', address: null, created_at: 'ts-10' };
 const riceDetail: ItemDetail = {
   id: 1,
   name: 'Rice',
-  quantity: 2,
-  locationId: 10,
-  location: { ...pantry },
+  stock: [{ locationId: 10, location: { ...pantry }, quantity: 2 }],
+  totalQuantity: 2,
   categoryIds: [],
   categories: [],
   created_at: 'created-1',
@@ -111,11 +110,14 @@ async function renderScreen(options: {
   return { onSaved, onDeleted, onDismiss };
 }
 
-/** Fill a valid create form: name + quantity + existing location. */
+/** Fill a valid create form: name + added location row + its quantity. */
 async function fillValidCreateForm(): Promise<void> {
   await fireEvent.changeText(screen.getByTestId('item-form/name'), 'Rice');
-  await fireEvent.changeText(screen.getByTestId('item-form/quantity'), '2');
   await fireEvent.press(screen.getByTestId('item-form/location-10'));
+  await fireEvent.changeText(
+    screen.getByTestId('item-form/stock-0/quantity'),
+    '2',
+  );
 }
 
 beforeEach(() => {
@@ -185,7 +187,9 @@ test('edit route loads and prefills the form', async () => {
   expect(repository.getItem).toHaveBeenCalledTimes(1);
   expect(repository.getItem).toHaveBeenCalledWith(fakeDb, 1);
   expect(screen.getByTestId('item-form/name').props.value).toBe('Rice');
-  expect(screen.getByTestId('item-form/quantity').props.value).toBe('2');
+  expect(screen.getByTestId('item-form/stock-0/quantity').props.value).toBe(
+    '2',
+  );
   expect(screen.getByTestId('item-form/delete')).toBeTruthy();
 });
 
@@ -311,14 +315,16 @@ test('M4-LOAD: edit route shows a loading surface with no editable fields until 
   expect(await screen.findByTestId('item-form/loading')).toBeTruthy();
   expect(screen.getByText('Loading the item…')).toBeTruthy();
   expect(screen.queryByTestId('item-form/name')).toBeNull();
-  expect(screen.queryByTestId('item-form/quantity')).toBeNull();
+  expect(screen.queryByTestId('item-form/stock-0/quantity')).toBeNull();
   expect(screen.getByTestId('item-form/loading-close')).toBeTruthy();
   await act(async () => {
     resolveLoad({ ...riceDetail });
   });
   expect(await screen.findByTestId('item-form/name')).toBeTruthy();
   expect(screen.getByTestId('item-form/name').props.value).toBe('Rice');
-  expect(screen.getByTestId('item-form/quantity').props.value).toBe('2');
+  expect(screen.getByTestId('item-form/stock-0/quantity').props.value).toBe(
+    '2',
+  );
   expect(screen.queryByTestId('item-form/loading')).toBeNull();
 });
 

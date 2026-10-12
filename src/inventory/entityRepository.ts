@@ -10,23 +10,24 @@
  * domain layer before every create/update (self-excluded on update) with
  * the v3 `UNIQUE` index as the backstop authority; `UNIQUE` driver failures
  * map to `EntityConflictError`, never raw SQLite text. No caps are invented.
- * Location deletes rely on the v2
- * `ON DELETE RESTRICT` FK and map its violation to `LocationInUseError`;
- * category deletes cascade to `item_categories` join rows per the schema
- * while items themselves survive.
+ * Location deletes cascade their `stock` rows per the v4 schema (R3) while
+ * catalog items survive; category deletes cascade to `item_categories`
+ * join rows per the schema (R4) while items themselves survive. The delete
+ * confirmations count the impact first (`locationDeleteImpact`,
+ * `categoryDeleteImpact`) so the copy can state it.
  */
 import type { RepositoryDb } from './database';
 import {
   EntityConflictError,
   EntityNotFoundError,
-  isForeignKeyViolation,
   isUniqueConstraintViolation,
-  LocationInUseError,
   StorageError,
 } from './errors';
 import type {
   Category,
+  CategoryDeleteImpact,
   Location,
+  LocationDeleteImpact,
   NewCategoryInput,
   NewLocationInput,
 } from './types';
@@ -211,9 +212,10 @@ export async function updateLocation(
 }
 
 /**
- * Delete a location. A location still referenced by `items.location_id`
- * fails with `LocationInUseError` (v2 `ON DELETE RESTRICT`) — never a
- * cascade. Missing rows reject `not-found`.
+ * Delete a location. Its `stock` rows cascade per the v4 schema (R3)
+ * while catalog items survive (an item left with no stock anywhere stays
+ * visible as "sin stock", R6). There is no minimum location count (R8):
+ * deleting the last location is allowed. Missing rows reject `not-found`.
  */
 export async function deleteLocation(
   db: RepositoryDb,
@@ -229,10 +231,46 @@ export async function deleteLocation(
     }
   } catch (error) {
     if (error instanceof EntityNotFoundError) throw error;
-    if (isForeignKeyViolation(error)) {
-      throw new LocationInUseError(validId);
-    }
     throw new StorageError('location', 'delete', error);
+  }
+}
+
+/**
+ * Impact of deleting a location, for the R3 confirmation copy ("N
+ * existencias se borrarán; los ítems NO se borran"). Counts the stock
+ * rows the delete removes plus the items left with no stock anywhere
+ * afterwards (R6 sin stock). Missing rows reject `not-found`.
+ */
+export async function locationDeleteImpact(
+  db: RepositoryDb,
+  id: number,
+): Promise<LocationDeleteImpact> {
+  const validId = validateId(id, 'id');
+  try {
+    const location = await db.getFirstAsync<{ id: number }>(
+      'SELECT id FROM locations WHERE id = ?',
+      [validId],
+    );
+    if (location === null) {
+      throw new EntityNotFoundError('location', validId);
+    }
+    const stockRows = await db.getFirstAsync<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM stock WHERE location_id = ?',
+      [validId],
+    );
+    const unstocked = await db.getFirstAsync<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM (SELECT DISTINCT s1.item_id FROM stock s1 ' +
+        'WHERE s1.location_id = ? AND NOT EXISTS ' +
+        '(SELECT 1 FROM stock s2 WHERE s2.item_id = s1.item_id AND s2.location_id != ?))',
+      [validId, validId],
+    );
+    return {
+      stockRows: stockRows?.count ?? 0,
+      unstockedItems: unstocked?.count ?? 0,
+    };
+  } catch (error) {
+    if (error instanceof EntityNotFoundError) throw error;
+    throw new StorageError('location', 'fetch', error);
   }
 }
 
@@ -329,7 +367,36 @@ export async function updateCategory(
 }
 
 /**
- * Delete a category. `item_categories` join rows cascade per the v2 schema;
+ * Impact of deleting a category, for the R4 confirmation copy ("se
+ * quitará de N ítems; los ítems NO se borran"). Counts the items that
+ * would lose the association. Missing rows reject `not-found`.
+ */
+export async function categoryDeleteImpact(
+  db: RepositoryDb,
+  id: number,
+): Promise<CategoryDeleteImpact> {
+  const validId = validateId(id, 'id');
+  try {
+    const category = await db.getFirstAsync<{ id: number }>(
+      'SELECT id FROM categories WHERE id = ?',
+      [validId],
+    );
+    if (category === null) {
+      throw new EntityNotFoundError('category', validId);
+    }
+    const linked = await db.getFirstAsync<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM item_categories WHERE category_id = ?',
+      [validId],
+    );
+    return { items: linked?.count ?? 0 };
+  } catch (error) {
+    if (error instanceof EntityNotFoundError) throw error;
+    throw new StorageError('category', 'fetch', error);
+  }
+}
+
+/**
+ * Delete a category. `item_categories` join rows cascade per the schema;
  * items themselves are never deleted by this operation. Missing rows reject
  * `not-found`.
  */

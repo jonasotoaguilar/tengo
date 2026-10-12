@@ -1,22 +1,30 @@
 /**
- * M2 item persistence: parameterized CRUD plus atomic draft saves.
+ * Item persistence over catalog + stock: parameterized CRUD plus atomic
+ * draft saves.
  *
- * Items reference exactly one location entity and zero-to-many categories
- * via the v2 `item_categories` join. All user text (including ids) travels
- * as bound `?` params; SQL sources are fixed strings. Inputs run through
- * the existing M1 domain normalization (`validateItemInput`, draft checks
- * below), so zero quantity stays valid, duplicate category ids are
- * rejected, and verbatim text is preserved.
+ * Items are catalog rows (identity: `id, name, created_at`) with zero or
+ * more `stock(item_id, location_id, quantity)` rows plus zero-to-many
+ * categories via the `item_categories` join. One item may hold stock in
+ * many locations; the read model returns it ONCE with its per-location
+ * breakdown and total (R2). An item with no stock rows stays visible as
+ * "sin stock" with total 0 (R6). All user text (including ids) travels as
+ * bound `?` params; SQL sources are fixed strings. Inputs run through the
+ * existing M1 domain normalization (`validateItemInput`, draft checks
+ * below), so 0-quantity rows are dropped rather than stored, duplicate
+ * location ids are rejected, every stock quantity honors the S10 bounds,
+ * and verbatim text is preserved.
  *
- * Reads return the `ItemDetail` read model (stored row plus the resolved
- * location entity and category list/ids). Every mutation runs inside the
- * driver's exclusive transaction on its scoped `txn` handle — never on the
- * outer db — so the item row, new related rows, and join writes commit or
- * roll back together with no orphan rows and no interleaved unrelated
- * writes. When the exclusive hook is absent the mutation fails closed with
- * a typed `storage` error instead of running non-atomically. Updates never
- * touch `created_at`. Location deletes stay `RESTRICT` (see
- * `./entityRepository`); deleting an item cascades only to its join rows.
+ * Reads return the `ItemDetail` read model (catalog row plus the stock
+ * breakdown with resolved locations plus the category list/ids). Every
+ * mutation runs inside the driver's exclusive transaction on its scoped
+ * `txn` handle — never on the outer db — so the item row, stock rows,
+ * new related rows, and join writes commit or roll back together with no
+ * orphan rows and no interleaved unrelated writes. When the exclusive
+ * hook is absent the mutation fails closed with a typed `storage` error
+ * instead of running non-atomically. Updates never touch `created_at`.
+ * Deleting a location cascades only its stock rows (see
+ * `./entityRepository`); deleting an item cascades its stock and join
+ * rows while locations and categories survive.
  */
 import type { RepositoryDb, RunResult, TransactionHandle } from './database';
 import {
@@ -33,10 +41,12 @@ import type {
   Category,
   ItemDetail,
   ItemDraftInput,
-  Location,
+  ItemStockDraft,
   NewItemInput,
+  StockLevel,
 } from './types';
 import {
+  type NormalizedItemStockInput,
   normalizeName,
   normalizeNameKey,
   normalizeQuantity,
@@ -50,8 +60,6 @@ import {
 interface ItemRow {
   id: number;
   name: string;
-  quantity: number;
-  location_id: number;
   created_at: string;
 }
 
@@ -68,22 +76,39 @@ interface CategoryRow {
   created_at: string;
 }
 
-const ITEM_COLUMNS = 'id, name, quantity, location_id, created_at';
+interface StockJoinRow {
+  quantity: number;
+  location_id: number;
+  location_name: string;
+  location_address: string | null;
+  location_created_at: string;
+}
+
+const ITEM_COLUMNS = 'id, name, created_at';
 const LOCATION_COLUMNS = 'id, name, address, created_at';
 const CATEGORY_COLUMNS = 'id, name, created_at';
 const CATEGORY_JOIN_SELECT = `SELECT c.${CATEGORY_COLUMNS} FROM categories c JOIN item_categories jc ON jc.category_id = c.id WHERE jc.item_id = ? ORDER BY c.id ASC`;
-
-function toLocation(row: LocationRow): Location {
-  return {
-    id: row.id,
-    name: row.name,
-    address: row.address,
-    created_at: row.created_at,
-  };
-}
+const STOCK_JOIN_SELECT =
+  'SELECT s.quantity AS quantity, l.id AS location_id, l.name AS location_name, ' +
+  'l.address AS location_address, l.created_at AS location_created_at ' +
+  'FROM stock s JOIN locations l ON l.id = s.location_id ' +
+  'WHERE s.item_id = ? ORDER BY l.id ASC';
 
 function toCategory(row: CategoryRow): Category {
   return { id: row.id, name: row.name, created_at: row.created_at };
+}
+
+function toStockLevel(row: StockJoinRow): StockLevel {
+  return {
+    locationId: row.location_id,
+    location: {
+      id: row.location_id,
+      name: row.location_name,
+      address: row.location_address,
+      created_at: row.location_created_at,
+    },
+    quantity: row.quantity,
+  };
 }
 
 /**
@@ -112,7 +137,8 @@ async function runExclusive(
     if (
       error instanceof EntityConflictError ||
       error instanceof EntityNotFoundError ||
-      error instanceof StorageError
+      error instanceof StorageError ||
+      error instanceof ValidationError
     ) {
       throw error;
     }
@@ -156,19 +182,16 @@ async function requireCategory(
   }
 }
 
-/** Assemble the read model for a known item row (location + categories). */
+/** Assemble the read model for a known item row (stock + categories). */
 async function detailForRow(
   db: RepositoryDb,
   row: ItemRow,
 ): Promise<ItemDetail> {
   try {
-    const locationRow = await db.getFirstAsync<LocationRow>(
-      `SELECT ${LOCATION_COLUMNS} FROM locations WHERE id = ?`,
-      [row.location_id],
-    );
-    if (locationRow === null) {
-      throw new StorageError('item', 'fetch');
-    }
+    const stockRows = await db.getAllAsync<StockJoinRow>(STOCK_JOIN_SELECT, [
+      row.id,
+    ]);
+    const stock = stockRows.map(toStockLevel);
     const categoryRows = await db.getAllAsync<CategoryRow>(
       CATEGORY_JOIN_SELECT,
       [row.id],
@@ -177,9 +200,8 @@ async function detailForRow(
     return {
       id: row.id,
       name: row.name,
-      quantity: row.quantity,
-      locationId: row.location_id,
-      location: toLocation(locationRow),
+      stock,
+      totalQuantity: stock.reduce((sum, level) => sum + level.quantity, 0),
       categoryIds: categories.map((category) => category.id),
       categories,
       created_at: row.created_at,
@@ -207,6 +229,21 @@ async function requireItemRow(db: RepositoryDb, id: number): Promise<ItemRow> {
   }
 }
 
+/** Replace an item's stock set: delete-then-insert, zero rows allowed. */
+async function replaceStockRows(
+  txn: TransactionHandle,
+  itemId: number,
+  stock: NormalizedItemStockInput[],
+): Promise<void> {
+  await txn.runAsync('DELETE FROM stock WHERE item_id = ?', [itemId]);
+  for (const row of stock) {
+    await txn.runAsync(
+      'INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, ?)',
+      [itemId, row.locationId, row.quantity],
+    );
+  }
+}
+
 /** Replace an item's category set: delete-then-insert, zero allowed. */
 async function replaceCategoryLinks(
   txn: TransactionHandle,
@@ -222,53 +259,99 @@ async function replaceCategoryLinks(
   }
 }
 
-interface NormalizedDraft {
-  name: string;
-  quantity: number;
+interface NormalizedStockDraft {
   locationId: number | null;
   newLocation: { name: string; address: string | null } | null;
+  quantity: number;
+}
+
+interface NormalizedDraft {
+  name: string;
+  stock: NormalizedStockDraft[];
   categoryIds: number[];
   newCategories: { name: string }[];
 }
 
+/** Validate one draft stock row: a location selector plus an S10 quantity. */
+function validateStockDraft(entry: ItemStockDraft): NormalizedStockDraft {
+  if (entry === null || typeof entry !== 'object') {
+    throw new ValidationError(
+      'stock',
+      'invalid',
+      'each stock row must carry a location selector and a quantity.',
+    );
+  }
+  const quantity = normalizeQuantity(entry.quantity);
+  const selector = entry.location;
+  if (selector === null || typeof selector !== 'object') {
+    throw new ValidationError(
+      'location',
+      'missing',
+      'every stock row must reference a valid location.',
+    );
+  }
+  if (selector.kind === 'existing') {
+    return {
+      locationId: validateId(selector.locationId, 'locationId'),
+      newLocation: null,
+      quantity,
+    };
+  }
+  if (selector.kind === 'new') {
+    return {
+      locationId: null,
+      newLocation: validateLocationInput(selector.location),
+      quantity,
+    };
+  }
+  throw new ValidationError(
+    'location',
+    'invalid',
+    'location must select an existing id or a new name/address.',
+  );
+}
+
 /**
  * Validate the full add/edit draft before any write or transaction
- * starts: item fields via the M1 rules, the location selector (exactly
- * one of an existing id or a new name/address), and the zero-to-many
- * category selectors. Duplicate existing category ids are rejected like
- * `validateItemInput` rejects them.
+ * starts: item name via the M1 rules, every stock row (location selector
+ * plus quantity), and the zero-to-many category selectors. Duplicate
+ * existing location ids across stock rows are rejected like
+ * `validateItemInput` rejects them; duplicate existing category ids
+ * likewise. Zero-quantity rows are dropped here, so a new location that
+ * only a zero row references is never created.
  */
 function validateDraftInput(draft: ItemDraftInput): NormalizedDraft {
   if (draft === null || typeof draft !== 'object') {
     throw new ValidationError(
       'item',
       'invalid',
-      'item must be an object with a name, quantity, and location.',
+      'item must be an object with a name and stock rows.',
     );
   }
   const name = normalizeName(draft.name, 'name');
-  const quantity = normalizeQuantity(draft.quantity);
-  const selector = draft.location;
-  if (selector === null || typeof selector !== 'object') {
+  const rawStock = draft.stock === undefined ? [] : draft.stock;
+  if (!Array.isArray(rawStock)) {
     throw new ValidationError(
-      'location',
-      'missing',
-      'every item must reference a valid location.',
-    );
-  }
-  let locationId: number | null = null;
-  let newLocation: NormalizedDraft['newLocation'] = null;
-  if (selector.kind === 'existing') {
-    locationId = validateId(selector.locationId, 'locationId');
-  } else if (selector.kind === 'new') {
-    newLocation = validateLocationInput(selector.location);
-  } else {
-    throw new ValidationError(
-      'location',
+      'stock',
       'invalid',
-      'location must select an existing id or a new name/address.',
+      'stock must be an array of location/quantity rows.',
     );
   }
+  const validatedStock = rawStock.map((entry) => validateStockDraft(entry));
+  const existingIds = validatedStock
+    .map((row) => row.locationId)
+    .filter((id): id is number => id !== null);
+  if (new Set(existingIds).size !== existingIds.length) {
+    throw new ValidationError(
+      'stock',
+      'duplicate',
+      'stock must not reference the same existing location twice.',
+    );
+  }
+  // Drop zero rows before resolution: "no hay nada acá" stores nothing,
+  // and a would-be-new location referenced only by a zero row is never
+  // created.
+  const stock = validatedStock.filter((row) => row.quantity > 0);
   const raw = draft.categories ?? [];
   if (!Array.isArray(raw)) {
     throw new ValidationError(
@@ -306,56 +389,64 @@ function validateDraftInput(draft: ItemDraftInput): NormalizedDraft {
       'categories must not select the same existing category twice.',
     );
   }
-  return {
-    name,
-    quantity,
-    locationId,
-    newLocation,
-    categoryIds,
-    newCategories,
-  };
+  return { name, stock, categoryIds, newCategories };
 }
 
 /**
- * Resolve a validated draft inside the transaction: reuse the existing
- * location/categories after confirming they exist, or insert the new
- * ones. New names pass the S11 domain uniqueness check first (against
- * stored rows and, for categories, against each other); the v3 `UNIQUE`
- * index stays the authority for races and its violations map to the same
- * typed `conflict`. Every statement runs on `txn`, so any failure rolls
- * back with no orphan item, location, or category rows.
+ * Resolve every stock row's location (existing or newly created) plus
+ * the category set inside the same exclusive transaction, so an item
+ * with three new locations either commits all three or none. New names
+ * pass the S11 domain uniqueness check first (against stored rows and,
+ * for categories, against each other); the v3 `UNIQUE` index stays the
+ * authority for races and its violations map to the same typed
+ * `conflict`. Every statement runs on `txn`, so any failure rolls back
+ * with no orphan item, location, category, or stock rows.
  */
 async function resolveDraftRelations(
   txn: TransactionHandle,
   draft: NormalizedDraft,
-): Promise<{ locationId: number; categoryIds: number[] }> {
-  let locationId: number;
-  if (draft.locationId !== null) {
-    await requireLocation(txn, draft.locationId);
-    locationId = draft.locationId;
-  } else if (draft.newLocation !== null) {
-    const newLocationName = draft.newLocation.name;
-    await assertUniqueLocationName(txn, newLocationName);
-    let created: RunResult;
-    try {
-      created = await txn.runAsync(
-        'INSERT INTO locations (name, address) VALUES (?, ?)',
-        [draft.newLocation.name, draft.newLocation.address],
-      );
-    } catch (error) {
-      if (isUniqueConstraintViolation(error)) {
+): Promise<{
+  stock: NormalizedItemStockInput[];
+  categoryIds: number[];
+}> {
+  const stock: NormalizedItemStockInput[] = [];
+  const seenNewLocationKeys = new Set<string>();
+  for (const row of draft.stock) {
+    if (row.locationId !== null) {
+      await requireLocation(txn, row.locationId);
+      stock.push({ locationId: row.locationId, quantity: row.quantity });
+    } else if (row.newLocation !== null) {
+      const newLocationName = row.newLocation.name;
+      await assertUniqueLocationName(txn, newLocationName);
+      const key = normalizeNameKey(newLocationName);
+      if (seenNewLocationKeys.has(key)) {
         throw new EntityConflictError('location', newLocationName);
       }
-      throw error;
+      seenNewLocationKeys.add(key);
+      let created: RunResult;
+      try {
+        created = await txn.runAsync(
+          'INSERT INTO locations (name, address) VALUES (?, ?)',
+          [row.newLocation.name, row.newLocation.address],
+        );
+      } catch (error) {
+        if (isUniqueConstraintViolation(error)) {
+          throw new EntityConflictError('location', newLocationName);
+        }
+        throw error;
+      }
+      await requireLocation(txn, created.lastInsertRowId);
+      stock.push({
+        locationId: created.lastInsertRowId,
+        quantity: row.quantity,
+      });
+    } else {
+      throw new ValidationError(
+        'location',
+        'missing',
+        'every stock row must reference a valid location.',
+      );
     }
-    locationId = created.lastInsertRowId;
-    await requireLocation(txn, locationId);
-  } else {
-    throw new ValidationError(
-      'location',
-      'missing',
-      'every item must reference a valid location.',
-    );
   }
   const categoryIds: number[] = [];
   for (const categoryId of draft.categoryIds) {
@@ -384,13 +475,14 @@ async function resolveDraftRelations(
     await requireCategory(txn, created.lastInsertRowId);
     categoryIds.push(created.lastInsertRowId);
   }
-  return { locationId, categoryIds };
+  return { stock, categoryIds };
 }
 
 /**
- * Create an item with an explicit location id and category id set.
+ * Create an item with a per-location stock set and category id set.
  * Runs atomically: missing references reject typed `not-found` with
- * no partial rows.
+ * no partial rows. Zero-quantity rows never reach the database (dropped
+ * by validation); a stockless payload creates a catalog-only item.
  */
 export async function createItem(
   db: RepositoryDb,
@@ -399,14 +491,16 @@ export async function createItem(
   const normalized = validateItemInput(input);
   let detail: ItemDetail | null = null;
   await runExclusive(db, 'create', async (txn) => {
-    await requireLocation(txn, normalized.locationId);
+    for (const row of normalized.stock) {
+      await requireLocation(txn, row.locationId);
+    }
     for (const categoryId of normalized.categoryIds) {
       await requireCategory(txn, categoryId);
     }
-    const created = await txn.runAsync(
-      'INSERT INTO items (name, quantity, location_id) VALUES (?, ?, ?)',
-      [normalized.name, normalized.quantity, normalized.locationId],
-    );
+    const created = await txn.runAsync('INSERT INTO items (name) VALUES (?)', [
+      normalized.name,
+    ]);
+    await replaceStockRows(txn, created.lastInsertRowId, normalized.stock);
     await replaceCategoryLinks(
       txn,
       created.lastInsertRowId,
@@ -421,7 +515,7 @@ export async function createItem(
   return detail;
 }
 
-/** Fetch one item with its location and categories. */
+/** Fetch one item with its stock breakdown and categories. */
 export async function getItem(
   db: RepositoryDb,
   id: number,
@@ -430,7 +524,7 @@ export async function getItem(
   return detailForRow(db, await requireItemRow(db, validId));
 }
 
-/** List items in insertion order with their locations and categories. */
+/** List items in insertion order with their stock breakdowns and categories. */
 export async function listItems(db: RepositoryDb): Promise<ItemDetail[]> {
   try {
     const rows = await db.getAllAsync<ItemRow>(
@@ -450,9 +544,10 @@ export async function listItems(db: RepositoryDb): Promise<ItemDetail[]> {
 }
 
 /**
- * Update an item (full replacement including its category set) without
- * changing `created_at`. Missing rows or references reject typed
- * `not-found`; the category delete+insert is atomic.
+ * Update an item (full replacement of name, stock set, and category set)
+ * without changing `created_at`. Missing rows or references reject typed
+ * `not-found`; the stock/category delete+insert is atomic. An empty stock
+ * set leaves a catalog-only (sin stock) item.
  */
 export async function updateItem(
   db: RepositoryDb,
@@ -464,14 +559,17 @@ export async function updateItem(
   let detail: ItemDetail | null = null;
   await runExclusive(db, 'update', async (txn) => {
     await requireItemRow(txn, validId);
-    await requireLocation(txn, normalized.locationId);
+    for (const row of normalized.stock) {
+      await requireLocation(txn, row.locationId);
+    }
     for (const categoryId of normalized.categoryIds) {
       await requireCategory(txn, categoryId);
     }
-    await txn.runAsync(
-      'UPDATE items SET name = ?, quantity = ?, location_id = ? WHERE id = ?',
-      [normalized.name, normalized.quantity, normalized.locationId, validId],
-    );
+    await txn.runAsync('UPDATE items SET name = ? WHERE id = ?', [
+      normalized.name,
+      validId,
+    ]);
+    await replaceStockRows(txn, validId, normalized.stock);
     await replaceCategoryLinks(txn, validId, normalized.categoryIds);
     detail = await detailForRow(txn, await requireItemRow(txn, validId));
   });
@@ -480,8 +578,8 @@ export async function updateItem(
 }
 
 /**
- * Delete an item; its join rows cascade per the v2 schema while
- * locations and categories survive. Missing rows reject `not-found`.
+ * Delete an item; its stock and join rows cascade per the v4 schema
+ * while locations and categories survive. Missing rows reject `not-found`.
  */
 export async function deleteItem(db: RepositoryDb, id: number): Promise<void> {
   const validId = validateId(id, 'id');
@@ -496,11 +594,11 @@ export async function deleteItem(db: RepositoryDb, id: number): Promise<void> {
 }
 
 /**
- * Create an item from an add-form draft, atomically inserting a new
- * location and/or new categories first when the draft selects them.
- * The whole draft is validated before the transaction starts; any
+ * Create an item from an add-form draft, atomically resolving every
+ * stock row's location (existing or new) and new categories first. The
+ * whole draft is validated before the transaction starts; any
  * invalid/missing reference or write failure rolls back with no orphan
- * item, location, or category rows.
+ * item, location, category, or stock rows.
  */
 export async function createItemFromDraft(
   db: RepositoryDb,
@@ -510,10 +608,10 @@ export async function createItemFromDraft(
   let detail: ItemDetail | null = null;
   await runExclusive(db, 'create', async (txn) => {
     const relations = await resolveDraftRelations(txn, normalized);
-    const created = await txn.runAsync(
-      'INSERT INTO items (name, quantity, location_id) VALUES (?, ?, ?)',
-      [normalized.name, normalized.quantity, relations.locationId],
-    );
+    const created = await txn.runAsync('INSERT INTO items (name) VALUES (?)', [
+      normalized.name,
+    ]);
+    await replaceStockRows(txn, created.lastInsertRowId, relations.stock);
     await replaceCategoryLinks(
       txn,
       created.lastInsertRowId,
@@ -543,10 +641,11 @@ export async function updateItemFromDraft(
   await runExclusive(db, 'update', async (txn) => {
     await requireItemRow(txn, validId);
     const relations = await resolveDraftRelations(txn, normalized);
-    await txn.runAsync(
-      'UPDATE items SET name = ?, quantity = ?, location_id = ? WHERE id = ?',
-      [normalized.name, normalized.quantity, relations.locationId, validId],
-    );
+    await txn.runAsync('UPDATE items SET name = ? WHERE id = ?', [
+      normalized.name,
+      validId,
+    ]);
+    await replaceStockRows(txn, validId, relations.stock);
     await replaceCategoryLinks(txn, validId, relations.categoryIds);
     detail = await detailForRow(txn, await requireItemRow(txn, validId));
   });

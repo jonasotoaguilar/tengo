@@ -26,6 +26,7 @@ import type {
   ItemDetail,
   ItemFilter,
   Location,
+  StockLevel,
 } from '../src/inventory/types';
 
 const InventoryList = require('../src/components/InventoryList')
@@ -60,20 +61,23 @@ const fridge: Location = {
 const bulk: Category = { id: 20, name: 'Bulk', created_at: 'ts-20' };
 const cold: Category = { id: 21, name: 'Cold', created_at: 'ts-21' };
 
+function stockAt(location: Location, quantity: number): StockLevel {
+  return { locationId: location.id, location, quantity };
+}
+
 function makeItem(
   detail: Partial<ItemDetail> & Pick<ItemDetail, 'id'>,
 ): ItemDetail {
-  const location = detail.location ?? pantry;
+  const stock = detail.stock ?? [stockAt(pantry, 1)];
   const categories = detail.categories ?? [];
   return {
-    name: `Item ${detail.id}`,
-    quantity: 1,
-    locationId: location.id,
-    location,
+    id: detail.id,
+    name: detail.name ?? `Item ${detail.id}`,
+    stock,
+    totalQuantity: stock.reduce((sum, level) => sum + level.quantity, 0),
     categoryIds: categories.map((entry) => entry.id),
     categories,
-    created_at: `created-${detail.id}`,
-    ...detail,
+    created_at: detail.created_at ?? `created-${detail.id}`,
   };
 }
 
@@ -116,17 +120,15 @@ afterEach(async () => {
   await cleanup();
 });
 
-test('ready rows show verbatim names, quantity, location, and categories', async () => {
+test('ready rows show verbatim names, total, breakdown, and categories', async () => {
   const items = [
     makeItem({
       id: 1,
       name: 'CAFÉ 100%_\\mélange',
-      quantity: 0,
-      location: fridge,
+      stock: [stockAt(fridge, 1), stockAt(pantry, 2)],
       categories: [bulk, cold],
-      categoryIds: [bulk.id, cold.id],
     }),
-    makeItem({ id: 2, name: 'Rice', quantity: 3, categories: [] }),
+    makeItem({ id: 2, name: 'Rice', stock: [stockAt(pantry, 3)] }),
   ];
   const view = await renderList(
     baseProps({ items, totalCount: 2, onOpenItem: jest.fn() }),
@@ -134,19 +136,39 @@ test('ready rows show verbatim names, quantity, location, and categories', async
   expect(view.getByTestId('inventory-row-1')).toHaveTextContent(
     /CAFÉ 100%_\\mélange/,
   );
+  // One row per product with the total across locations plus the
+  // per-location breakdown (R2).
   expect(view.getByTestId('inventory-row-1-quantity')).toHaveTextContent(
-    /Quantity 0/,
+    /Quantity 3/,
   );
-  expect(view.getByTestId('inventory-row-1-exhausted')).toBeTruthy();
-  expect(view.queryByTestId('inventory-row-2-exhausted')).toBeNull();
   expect(view.getByTestId('inventory-row-1-location')).toHaveTextContent(
-    'Fridge',
+    'Fridge 1 · Pantry 2',
   );
+  expect(view.queryByTestId('inventory-row-1-exhausted')).toBeNull();
   expect(view.getByTestId('inventory-row-1-categories')).toHaveTextContent(
     'Bulk, Cold',
   );
   expect(view.getByTestId('inventory-row-2-categories')).toHaveTextContent(
     'No categories',
+  );
+  // Each product renders exactly once even with stock in two places.
+  expect(view.getAllByTestId('inventory-row-1')).toHaveLength(1);
+});
+
+test('stockless items render exhausted with a sin-stock location line', async () => {
+  const view = await renderList(
+    baseProps({
+      items: [makeItem({ id: 9, name: 'Salt', stock: [] })],
+      totalCount: 1,
+      onOpenItem: jest.fn(),
+    }),
+  );
+  expect(view.getByTestId('inventory-row-9-quantity')).toHaveTextContent(
+    /Quantity 0/,
+  );
+  expect(view.getByTestId('inventory-row-9-exhausted')).toBeTruthy();
+  expect(view.getByTestId('inventory-row-9-location')).toHaveTextContent(
+    'No stock',
   );
 });
 
@@ -362,25 +384,33 @@ test('Spanish renders translated search, add, and empty copy', async () => {
   }
 });
 
-test('groups items by location with verbatim names and filtered counts', async () => {
+test('groups one row per product with a trailing sin-stock group', async () => {
   const items = [
-    makeItem({ id: 1, name: 'Rice', quantity: 2, categories: [bulk] }),
-    makeItem({ id: 2, name: 'Rice', quantity: 0, categories: [] }),
+    makeItem({
+      id: 1,
+      name: 'Leche',
+      stock: [stockAt(pantry, 1), stockAt(fridge, 2)],
+      categories: [bulk],
+    }),
+    makeItem({ id: 2, name: 'Quinoa', stock: [] }),
     makeItem({
       id: 3,
       name: 'Olive oil',
-      quantity: 1,
-      location: fridge,
+      stock: [stockAt(fridge, 1)],
       categories: [bulk, cold],
-      categoryIds: [bulk.id, cold.id],
     }),
   ];
   const view = await renderList(baseProps({ items, totalCount: 3 }));
+  // The multi-location product shows its total once, grouped under its
+  // first stock location.
+  expect(view.getByTestId('inventory-row-1-quantity')).toHaveTextContent(
+    /Quantity 3/,
+  );
   expect(view.getByTestId('inventory-group-10-name')).toHaveTextContent(
     'Pantry',
   );
   expect(view.getByTestId('inventory-group-10-count')).toHaveTextContent(
-    '2 items',
+    '1 item',
   );
   expect(view.getByTestId('inventory-group-11-name')).toHaveTextContent(
     'Fridge',
@@ -388,33 +418,68 @@ test('groups items by location with verbatim names and filtered counts', async (
   expect(view.getByTestId('inventory-group-11-count')).toHaveTextContent(
     '1 item',
   );
+  // Stockless items are never hidden: they trail in their own group (R6).
+  expect(view.getByTestId('inventory-group-nostock-name')).toHaveTextContent(
+    'No stock',
+  );
+  expect(view.getByTestId('inventory-group-nostock-count')).toHaveTextContent(
+    '1 item',
+  );
   const order = view
-    .getAllByTestId(/^inventory-(group-\d+-(name|count)|row-\d+)$/)
+    .getAllByTestId(/^inventory-(group-\w+-(name|count)|row-\d+)$/)
     .map((node) => node.props.testID);
   expect(order).toEqual([
     'inventory-group-10-name',
     'inventory-group-10-count',
     'inventory-row-1',
-    'inventory-row-2',
     'inventory-group-11-name',
     'inventory-group-11-count',
     'inventory-row-3',
+    'inventory-group-nostock-name',
+    'inventory-group-nostock-count',
+    'inventory-row-2',
   ]);
 });
 
-test('location-only filter shows a single group with no empty headers', async () => {
+test('location view shows that location quantity with sin-stock breakdowns', async () => {
   const view = await renderList(
     baseProps({
-      items: [makeItem({ id: 3, name: 'Olive oil', location: fridge })],
+      items: [
+        makeItem({
+          id: 1,
+          name: 'Leche',
+          stock: [stockAt(pantry, 1), stockAt(fridge, 2)],
+        }),
+        makeItem({ id: 2, name: 'Rice', stock: [stockAt(pantry, 2)] }),
+        makeItem({ id: 3, name: 'Salt', stock: [] }),
+      ],
       totalCount: 3,
       filter: { locationId: 11 },
     }),
   );
+  // A single group for the selected location; the row shows that
+  // location's quantity.
   expect(view.getByTestId('inventory-group-11-count')).toHaveTextContent(
-    '1 item',
+    '3 items',
   );
-  expect(view.getByTestId('inventory-row-3')).toBeTruthy();
+  expect(view.getByTestId('inventory-row-1-quantity')).toHaveTextContent(
+    /Quantity 2/,
+  );
+  expect(view.queryByTestId('inventory-row-1-exhausted')).toBeNull();
   expect(view.queryByTestId('inventory-group-10-name')).toBeNull();
+  expect(view.queryByTestId('inventory-group-nostock-name')).toBeNull();
+  // Zero in this location but stock elsewhere: marked sin stock with the
+  // breakdown visible (L9a: "acá no hay, pero hay 2 en Alacena").
+  expect(view.getByTestId('inventory-row-2-quantity')).toHaveTextContent(
+    /Quantity 0/,
+  );
+  expect(view.getByTestId('inventory-row-2-exhausted')).toBeTruthy();
+  expect(view.getByTestId('inventory-row-2-breakdown')).toHaveTextContent(
+    'Pantry 2',
+  );
+  // Stockless everywhere: exhausted with no breakdown to show.
+  expect(view.getByTestId('inventory-row-3-exhausted')).toBeTruthy();
+  expect(view.queryByTestId('inventory-row-3-breakdown')).toBeNull();
 });
 
 test('location-only no-results names the place, never an empty header', async () => {
@@ -485,9 +550,13 @@ test('Spanish renders grouped counts and location zero-match copy', async () => 
   const view = await renderList(
     baseProps({
       items: [
-        makeItem({ id: 1, name: 'Rice' }),
-        makeItem({ id: 2, name: 'Oats' }),
-        makeItem({ id: 3, name: 'Olive oil', location: fridge }),
+        makeItem({ id: 1, name: 'Rice', stock: [stockAt(pantry, 2)] }),
+        makeItem({ id: 2, name: 'Oats', stock: [stockAt(pantry, 1)] }),
+        makeItem({
+          id: 3,
+          name: 'Olive oil',
+          stock: [stockAt(fridge, 1)],
+        }),
       ],
       totalCount: 3,
     }),
@@ -536,7 +605,13 @@ describe('P5a accessibility labels and touch-target floors', () => {
   test('pressable rows read name, quantity and location as one labelled unit', async () => {
     const view = await renderList(
       baseProps({
-        items: [makeItem({ id: 5, name: 'Rice', quantity: 3 })],
+        items: [
+          makeItem({
+            id: 5,
+            name: 'Rice',
+            stock: [stockAt(pantry, 3)],
+          }),
+        ],
         totalCount: 1,
         onOpenItem: jest.fn(),
       }),
@@ -558,7 +633,7 @@ describe('P5a accessibility labels and touch-target floors', () => {
           makeItem({
             id: 6,
             name: 'Beans',
-            quantity: 0,
+            stock: [],
             categories: [
               { id: 1, name: 'Bulk', created_at: 'c1' },
               { id: 2, name: 'Cold', created_at: 'c2' },
@@ -580,7 +655,7 @@ describe('P5a accessibility labels and touch-target floors', () => {
 
     const uncategorised = await renderList(
       baseProps({
-        items: [makeItem({ id: 7, name: 'Salt', quantity: 2, categories: [] })],
+        items: [makeItem({ id: 7, name: 'Salt', stock: [stockAt(pantry, 2)] })],
         totalCount: 1,
         onOpenItem: jest.fn(),
       }),
@@ -594,7 +669,9 @@ describe('P5a accessibility labels and touch-target floors', () => {
   });
 
   test('static rows share the same composed label without becoming buttons', async () => {
-    const items = [makeItem({ id: 5, name: 'Rice', quantity: 3 })];
+    const items = [
+      makeItem({ id: 5, name: 'Rice', stock: [stockAt(pantry, 3)] }),
+    ];
     const pressable = await renderList(
       baseProps({ items, totalCount: 1, onOpenItem: jest.fn() }),
     );

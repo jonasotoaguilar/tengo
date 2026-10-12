@@ -25,8 +25,29 @@
  * names exist (checked first, inside the same runner transaction), leaving
  * rows and `user_version` untouched: no silent rewrite, no row loss, no
  * invented data.
+ *
+ * Migration 4 (multi-location stock) splits identity from storage: `items`
+ * is rebuilt as the identity-only catalog (`id`, `name`, `created_at`)
+ * and per-location quantities move to `stock(item_id, location_id,
+ * quantity)`. SQLite cannot drop a column used by an index or a foreign
+ * key, so the table is rebuilt following the SQLite procedure. The
+ * rebuild MUST run with `PRAGMA foreign_keys=OFF` OUTSIDE the transaction
+ * (inside it the pragma is a no-op): `item_categories.item_id REFERENCES
+ * items(id) ON DELETE CASCADE` means a plain `DROP TABLE items` with
+ * foreign keys ON silently cascade-deletes every category link. The
+ * runner (see `src/db/index.ts`) owns that envelope; this SQL only holds
+ * the rebuild plus its preserve-and-stop guard.
+ *
+ * The guard aborts with a clear `Migration to schema version 4 blocked`
+ * message (via a single-firing TEMP trigger, same pattern as v3) when the
+ * copied catalog count differs from the old item count or the stock sum
+ * differs from the old quantity sum, leaving rows and `user_version`
+ * untouched: one stock row per old item WITH `quantity > 0` (an old item
+ * at quantity 0 becomes a catalog item with no stock = "sin stock"),
+ * never rewritten, never an invented location, never backfilled. `PRAGMA
+ * foreign_key_check` must come back empty before the version bump.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const MIGRATIONS: Record<number, string> = {
   1: `
@@ -98,6 +119,47 @@ DROP TRIGGER IF EXISTS temp._migration_v3_guard_check;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_locations_name_norm ON locations (lower(trim(name)));
 CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_name_norm ON categories (lower(trim(name)));
 `.trim(),
+  // Rebuild (runs under the runner's FK-off envelope, see `src/db/index.ts`):
+  // the new catalog keeps `id, name, created_at` byte-identical; `stock`
+  // carries one row per old item WITH `quantity > 0`; the TEMP guard
+  // aborts before the DROP when either comparison differs; the
+  // `sqlite_sequence` fix-up keeps AUTOINCREMENT past the preserved max id
+  // after the rename (DROP removes the old row, RENAME does not move the
+  // new one). `stock.location_id ON DELETE CASCADE` is the R3 inversion:
+  // deleting a location removes stock, never items.
+  4: `
+CREATE TABLE items_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL CHECK (length(TRIM(name)) > 0),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+INSERT INTO items_new (id, name, created_at) SELECT id, name, created_at FROM items;
+CREATE TABLE stock (
+  item_id INTEGER NOT NULL,
+  location_id INTEGER NOT NULL,
+  quantity INTEGER NOT NULL CHECK (typeof(quantity) = 'integer' AND quantity > 0 AND quantity <= 9007199254740991),
+  PRIMARY KEY (item_id, location_id),
+  FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE,
+  FOREIGN KEY (location_id) REFERENCES locations (id) ON DELETE CASCADE
+);
+INSERT INTO stock (item_id, location_id, quantity) SELECT id, location_id, quantity FROM items WHERE quantity > 0;
+CREATE TEMP TABLE _migration_v4_guard (id INTEGER);
+CREATE TEMP TRIGGER _migration_v4_guard_check BEFORE INSERT ON _migration_v4_guard
+BEGIN
+  SELECT CASE
+    WHEN (SELECT COUNT(*) FROM items_new) != (SELECT COUNT(*) FROM items)
+    THEN RAISE(ABORT, 'Migration to schema version 4 blocked: catalog copy holds a different row count than the old items table. Rows and schema version are preserved; no data was modified.')
+    WHEN (SELECT COALESCE(SUM(quantity), 0) FROM stock) != (SELECT COALESCE(SUM(quantity), 0) FROM items)
+    THEN RAISE(ABORT, 'Migration to schema version 4 blocked: stock quantity sum differs from the old items quantity sum. Rows and schema version are preserved; no data was modified.')
+  END;
+END;
+INSERT INTO _migration_v4_guard (id) VALUES (1);
+DROP TRIGGER IF EXISTS temp._migration_v4_guard_check;
+DROP TABLE items;
+ALTER TABLE items_new RENAME TO items;
+UPDATE sqlite_sequence SET name = 'items' WHERE name = 'items_new';
+CREATE INDEX IF NOT EXISTS idx_stock_location_id ON stock (location_id);
+`.trim(),
 };
 
 /**
@@ -145,6 +207,25 @@ export class MigrationRequiredError extends Error {
     );
     this.name = 'MigrationRequiredError';
     this.rowCount = rowCount;
+  }
+}
+
+/**
+ * Raised when the v4 preserve-and-stop guard fires (catalog count or stock
+ * sum differs) or the post-rebuild `foreign_key_check` is non-empty. The
+ * runner raises this inside the migration transaction, so rows and
+ * `user_version` are preserved. Never rewritten, never an invented
+ * location, never backfilled.
+ */
+export class MigrationIntegrityError extends Error {
+  readonly code = 'MIGRATION_INTEGRITY';
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'MigrationIntegrityError';
+    if (cause !== undefined) {
+      (this as { cause?: unknown }).cause = cause;
+    }
   }
 }
 

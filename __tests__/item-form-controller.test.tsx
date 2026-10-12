@@ -64,17 +64,30 @@ const pantry = {
 const bulk = { id: 20, name: 'Bulk', created_at: 'cat-20' };
 
 function makeDetail(overrides: Partial<ItemDetail> = {}): ItemDetail {
+  const stock = overrides.stock ?? [
+    { locationId: pantry.id, location: { ...pantry }, quantity: 2 },
+  ];
+  const categories = overrides.categories ?? [{ ...bulk }];
   return {
     id: 7,
     name: 'Rice',
-    quantity: 2,
-    locationId: pantry.id,
-    location: { ...pantry },
-    categoryIds: [bulk.id],
-    categories: [{ ...bulk }],
     created_at: 'item-7',
     ...overrides,
+    stock,
+    totalQuantity: stock.reduce((sum, level) => sum + level.quantity, 0),
+    categoryIds: categories.map((entry) => entry.id),
+    categories,
   };
+}
+
+function rowQuantityError(result: { current: { errors: unknown } }): unknown {
+  return (
+    result.current.errors as { stock?: { quantity?: string }[] } | undefined
+  )?.stock?.[0]?.quantity;
+}
+
+function existingRow(locationId: number, quantityRaw: string) {
+  return { location: { kind: 'existing', locationId }, quantityRaw };
 }
 
 const db = {} as RepositoryDb;
@@ -195,36 +208,54 @@ function WindowParent({
   return <WindowChild options={options} />;
 }
 
-test('create starts blank with no default quantity', async () => {
+test('create starts blank with no rows and no default quantity', async () => {
   const { result } = await renderController(baseOptions());
   expect(result.current.values).toEqual({
     name: '',
-    quantityRaw: '',
-    location: null,
+    stock: [],
     categories: [],
     pendingNewCategoryName: '',
-    stashedNewLocation: null,
   });
   expect(result.current.mode).toBe('add');
   expect(result.current.loadState).toBe('ready');
 });
 
 test('blankItemFormValues carries an optional prefilled name verbatim', async () => {
-  expect(blankItemFormValues()).toMatchObject({ name: '', quantityRaw: '' });
+  expect(blankItemFormValues()).toMatchObject({ name: '', stock: [] });
   expect(blankItemFormValues('quinoa')).toMatchObject({ name: 'quinoa' });
   const options = baseOptions({
     route: { kind: 'create', prefilledName: 'quinoa' },
   });
   const { result } = await renderController(options);
   expect(result.current.values.name).toBe('quinoa');
-  expect(result.current.values.quantityRaw).toBe('');
+  expect(result.current.values.stock).toEqual([]);
 });
 
 test.each([
-  ['blank name and quantity', { name: '  ', quantityRaw: '' }, 'name'],
-  ['invalid quantity text', { name: 'Rice', quantityRaw: 'abc' }, 'quantity'],
-  ['fraction quantity', { name: 'Rice', quantityRaw: '1.5' }, 'quantity'],
-  ['missing location', { name: 'Rice', quantityRaw: '2' }, 'location'],
+  ['blank name', { name: '  ' }, 'name'],
+  [
+    'invalid row quantity text',
+    { name: 'Rice', stock: [existingRow(10, 'abc')] },
+    'stock',
+  ],
+  [
+    'fraction row quantity',
+    { name: 'Rice', stock: [existingRow(10, '1.5')] },
+    'stock',
+  ],
+  [
+    'new location with blank name',
+    {
+      name: 'Rice',
+      stock: [
+        {
+          location: { kind: 'new', location: { name: '  ', address: null } },
+          quantityRaw: '2',
+        },
+      ],
+    },
+    'stock',
+  ],
 ])(
   'invalid create %p writes nothing and reports localized errors',
   async (_label, patch, field) => {
@@ -242,32 +273,67 @@ test.each([
     });
     expect(outcome.persisted).toBe(false);
     expect(repository.createItemFromDraft).not.toHaveBeenCalled();
-    expect(result.current.errors[field]).toBeTruthy();
-    expect(typeof result.current.errors[field]).toBe('string');
+    const fieldError = result.current.errors[field] as unknown;
+    expect(fieldError).toBeTruthy();
+    if (field === 'stock') {
+      // Per-row errors: the first row reports a side message.
+      const rows = fieldError as { location?: string; quantity?: string }[];
+      expect(
+        rows[0]?.location !== undefined || rows[0]?.quantity !== undefined,
+      ).toBe(true);
+    } else {
+      expect(typeof fieldError).toBe('string');
+    }
   },
 );
 
 test('field errors use existing localized strings', async () => {
   const { result } = await renderController(baseOptions());
   await act(async () => {
+    result.current.onChange({
+      ...(result.current.values as object),
+      name: '   ',
+      stock: [existingRow(10, 'abc')],
+    });
+  });
+  await act(async () => {
     await result.current.onSave();
   });
   expect(result.current.errors.name).toBe('Enter a name.');
-  expect(result.current.errors.quantity).toBe(
-    'Enter a whole number of 0 or more.',
-  );
-  expect(result.current.errors.location).toBe('Choose or create a location.');
+  const stock = result.current.errors.stock as unknown as
+    | { quantity?: string }[]
+    | undefined;
+  expect(stock?.[0]?.quantity).toBe('Enter a whole number of 0 or more.');
 });
 
-test('zero quantity is a valid create', async () => {
+test('blank name with no rows still requires only the name', async () => {
+  const repository = makeRepository();
+  const { result } = await renderController(baseOptions({ repository }));
+  await act(async () => {
+    result.current.onChange({
+      ...(result.current.values as object),
+      name: '   ',
+    });
+  });
+  let outcome!: SaveOutcome;
+  await act(async () => {
+    outcome = await result.current.onSave();
+  });
+  expect(outcome.persisted).toBe(false);
+  expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+  expect(result.current.errors.name).toBe('Enter a name.');
+  // Stockless is valid (sin stock): no row errors without rows.
+  expect(result.current.errors.stock).toBeUndefined();
+});
+
+test('zero and blank quantities are dropped, leaving catalog-only stock', async () => {
   const repository = makeRepository();
   const { result } = await renderController(baseOptions({ repository }));
   await act(async () => {
     result.current.onChange({
       ...(result.current.values as object),
       name: 'Rice',
-      quantityRaw: '0',
-      location: { kind: 'existing', locationId: 10 },
+      stock: [existingRow(10, '0'), existingRow(11, '  ')],
     });
   });
   await act(async () => {
@@ -278,11 +344,11 @@ test('zero quantity is a valid create', async () => {
     string,
     unknown
   >;
-  expect(draft.quantity).toBe(0);
+  expect(draft.stock).toEqual([]);
 });
 
 test('edit loads the latest detail and populates raw values', async () => {
-  const detail = makeDetail({ name: 'Olive oil', quantity: 0 });
+  const detail = makeDetail({ name: 'Olive oil', stock: [] });
   const gate = deferred<ItemDetail>();
   const repository = makeRepository();
   repository.getItem.mockReturnValueOnce(gate.promise);
@@ -298,11 +364,37 @@ test('edit loads the latest detail and populates raw values', async () => {
   expect(result.current.loadState).toBe('ready');
   expect(result.current.values).toEqual({
     name: 'Olive oil',
-    quantityRaw: '0',
-    location: { kind: 'existing', locationId: 10 },
+    stock: [],
     categories: [{ kind: 'existing', categoryId: 20 }],
     pendingNewCategoryName: '',
-    stashedNewLocation: null,
+  });
+});
+
+test('edit loads stock rows into the per-location editor', async () => {
+  const detail = makeDetail({ name: 'Leche' });
+  const repository = makeRepository();
+  repository.getItem.mockResolvedValueOnce({
+    ...detail,
+    stock: [
+      { locationId: 10, location: { ...pantry }, quantity: 1 },
+      {
+        locationId: 11,
+        location: { id: 11, name: 'Fridge', address: null, created_at: 'l11' },
+        quantity: 2,
+      },
+    ],
+    totalQuantity: 3,
+  });
+  const { result } = await renderController(
+    baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+  );
+  await act(async () => {});
+  expect(result.current.loadState).toBe('ready');
+  expect(result.current.values).toEqual({
+    name: 'Leche',
+    stock: [existingRow(10, '1'), existingRow(11, '2')],
+    categories: [{ kind: 'existing', categoryId: 20 }],
+    pendingNewCategoryName: '',
   });
 });
 
@@ -312,14 +404,21 @@ test('conversion is explicit and excludes UI-only fields', async () => {
   await act(async () => {
     result.current.onChange({
       name: 'Rice',
-      quantityRaw: '3',
-      location: { kind: 'new', location: { name: 'Bodega', address: null } },
+      stock: [
+        existingRow(10, '2'),
+        {
+          location: {
+            kind: 'new',
+            location: { name: 'Bodega', address: null },
+          },
+          quantityRaw: '1',
+        },
+      ],
       categories: [
         { kind: 'existing', categoryId: 20 },
         { kind: 'new', category: { name: 'Fresh' } },
       ],
       pendingNewCategoryName: 'Not yet added',
-      stashedNewLocation: { name: 'Old stash', address: null },
     });
   });
   await act(async () => {
@@ -330,17 +429,47 @@ test('conversion is explicit and excludes UI-only fields', async () => {
     unknown
   >;
   expect(Object.keys(draft).sort()).toEqual(
-    ['categories', 'location', 'name', 'quantity'].sort(),
+    ['categories', 'name', 'stock'].sort(),
   );
   expect(draft).toEqual({
     name: 'Rice',
-    quantity: 3,
-    location: { kind: 'new', location: { name: 'Bodega', address: null } },
+    stock: [
+      {
+        location: { kind: 'existing', locationId: 10 },
+        quantity: 2,
+      },
+      {
+        location: { kind: 'new', location: { name: 'Bodega', address: null } },
+        quantity: 1,
+      },
+    ],
     categories: [
       { kind: 'existing', categoryId: 20 },
       { kind: 'new', category: { name: 'Fresh' } },
     ],
   });
+});
+
+test('duplicate existing locations in one payload write nothing', async () => {
+  const repository = makeRepository();
+  const { result } = await renderController(baseOptions({ repository }));
+  await act(async () => {
+    result.current.onChange({
+      ...(result.current.values as object),
+      name: 'Rice',
+      stock: [existingRow(10, '1'), existingRow(10, '2')],
+    });
+  });
+  let outcome!: SaveOutcome;
+  await act(async () => {
+    outcome = await result.current.onSave();
+  });
+  expect(outcome.persisted).toBe(false);
+  expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+  const stock = result.current.errors.stock as unknown as
+    | { location?: string }[]
+    | undefined;
+  expect(stock?.[1]?.location).toBe('This location is already added.');
 });
 
 test('immediate double save writes once; second outcome reports no persist', async () => {
@@ -355,8 +484,7 @@ test('immediate double save writes once; second outcome reports no persist', asy
     result.current.onChange({
       ...(result.current.values as object),
       name: 'Rice',
-      quantityRaw: '1',
-      location: { kind: 'existing', locationId: 10 },
+      stock: [existingRow(10, '1')],
     });
   });
   let first!: Promise<SaveOutcome>;
@@ -382,11 +510,14 @@ test('save failure preserves all raw text and codes the error', async () => {
   repository.createItemFromDraft.mockRejectedValueOnce(new FakeStorageError());
   const before = {
     name: 'Rice ',
-    quantityRaw: '2',
-    location: { kind: 'new', location: { name: 'Bodega', address: 'C 3' } },
+    stock: [
+      {
+        location: { kind: 'new', location: { name: 'Bodega', address: 'C 3' } },
+        quantityRaw: '2',
+      },
+    ],
     categories: [{ kind: 'new', category: { name: 'Fresh' } }],
     pendingNewCategoryName: 'Later',
-    stashedNewLocation: { name: 'Bodega', address: 'C 3' },
   };
   const { result } = await renderController(baseOptions({ repository }));
   await act(async () => {
@@ -456,8 +587,7 @@ test('close during a pending write is blocked truthfully', async () => {
     result.current.onChange({
       ...(result.current.values as object),
       name: 'Rice',
-      quantityRaw: '1',
-      location: { kind: 'existing', locationId: 10 },
+      stock: [existingRow(10, '1')],
     });
   });
   await act(async () => {
@@ -574,8 +704,7 @@ test('unmount during save suppresses callbacks but resolves the outcome', async 
     view.result.current.onChange({
       ...(view.result.current.values as object),
       name: 'Rice',
-      quantityRaw: '1',
-      location: { kind: 'existing', locationId: 10 },
+      stock: [existingRow(10, '1')],
     });
   });
   let outcome!: Promise<SaveOutcome>;
@@ -603,8 +732,7 @@ test('REGRESSION D1: stale-route persisted save releases submitting and still re
     view.result.current.onChange({
       ...(view.result.current.values as object),
       name: 'Rice',
-      quantityRaw: '1',
-      location: { kind: 'existing', locationId: 10 },
+      stock: [existingRow(10, '1')],
     });
   });
   let outcome!: Promise<SaveOutcome>;
@@ -632,7 +760,7 @@ test('REGRESSION D1: stale-route persisted save releases submitting and still re
     view.result.current.onChange({
       ...(view.result.current.values as object),
       name: 'Second',
-      quantityRaw: '2',
+      stock: [existingRow(10, '2')],
     });
   });
   await act(async () => {
@@ -659,8 +787,7 @@ test('REGRESSION D4: stale save completion never clears a newer save\u2019s guar
     view.result.current.onChange({
       ...(view.result.current.values as object),
       name: 'Rice',
-      quantityRaw: '1',
-      location: { kind: 'existing', locationId: 10 },
+      stock: [existingRow(10, '1')],
     });
   });
   let outcomeA!: Promise<SaveOutcome>;
@@ -729,11 +856,9 @@ test('REGRESSION B0a: create route settles with an inline repository recreated e
   await act(async () => {});
   expect(view.result.current.values).toEqual({
     name: '',
-    quantityRaw: '',
-    location: null,
+    stock: [],
     categories: [],
     pendingNewCategoryName: '',
-    stashedNewLocation: null,
   });
   expect(view.result.current.loadState).toBe('ready');
   expect(renders).toBeLessThanOrEqual(4);
@@ -787,8 +912,7 @@ test('REGRESSION RA1: throwing onSaved still runs onDismissed', async () => {
     result.current.onChange({
       ...(result.current.values as object),
       name: 'Rice',
-      quantityRaw: '1',
-      location: { kind: 'existing', locationId: 10 },
+      stock: [existingRow(10, '1')],
     });
   });
   let outcome!: SaveOutcome;
@@ -999,7 +1123,6 @@ test('REGRESSION W3: layout-phase save after route change writes nothing', async
     latestProbedController?.onChange({
       ...(latestProbedController?.values as object),
       name: 'Hijack',
-      quantityRaw: '4',
     });
   });
   fire = true;
@@ -1379,8 +1502,7 @@ test('REGRESSION D2a: throwing onSaved still reports persisted without a storage
     result.current.onChange({
       ...(result.current.values as object),
       name: 'Rice',
-      quantityRaw: '1',
-      location: { kind: 'existing', locationId: 10 },
+      stock: [existingRow(10, '1')],
     });
   });
   let outcome!: SaveOutcome;
@@ -1498,20 +1620,18 @@ describe('M4 blur validation (Gap B)', () => {
       result.current.onChange({
         ...(result.current.values as object),
         name: '   ',
-        quantityRaw: '2',
-        location: { kind: 'existing', locationId: 10 },
+        stock: [existingRow(10, '2')],
       });
     });
     await act(async () => {
       await (
         result.current as unknown as {
-          onFieldBlur: (f: 'name' | 'quantity') => void;
+          onFieldBlur: (f: 'name' | 'quantity', index?: number) => void;
         }
       ).onFieldBlur('name');
     });
     expect(result.current.errors.name).toBe('Enter a name.');
-    expect(result.current.errors.quantity).toBeUndefined();
-    expect(result.current.errors.location).toBeUndefined();
+    expect(result.current.errors.stock).toBeUndefined();
   });
 
   test('blur on a valid name clears a previous name error and leaves a quantity error intact', async () => {
@@ -1520,21 +1640,18 @@ describe('M4 blur validation (Gap B)', () => {
       result.current.onChange({
         ...(result.current.values as object),
         name: '   ',
-        quantityRaw: 'abc',
-        location: { kind: 'existing', locationId: 10 },
+        stock: [existingRow(10, 'abc')],
       });
     });
     const blur = (
       result.current as unknown as {
-        onFieldBlur: (f: 'name' | 'quantity') => void;
+        onFieldBlur: (f: 'name' | 'quantity', index?: number) => void;
       }
     ).onFieldBlur;
     await act(async () => {
-      await blur('quantity');
+      await blur('quantity', 0);
     });
-    expect(result.current.errors.quantity).toBe(
-      'Enter a whole number of 0 or more.',
-    );
+    expect(rowQuantityError(result)).toBe('Enter a whole number of 0 or more.');
     await act(async () => {
       result.current.onChange({
         ...(result.current.values as object),
@@ -1549,20 +1666,18 @@ describe('M4 blur validation (Gap B)', () => {
       result.current.onChange({
         ...(result.current.values as object),
         name: 'Rice',
-        quantityRaw: 'abc',
+        stock: [existingRow(10, 'abc')],
       });
     });
     await act(async () => {
       await (
         result.current as unknown as {
-          onFieldBlur: (f: 'name' | 'quantity') => void;
+          onFieldBlur: (f: 'name' | 'quantity', index?: number) => void;
         }
       ).onFieldBlur('name');
     });
     expect(result.current.errors.name).toBeUndefined();
-    expect(result.current.errors.quantity).toBe(
-      'Enter a whole number of 0 or more.',
-    );
+    expect(rowQuantityError(result)).toBe('Enter a whole number of 0 or more.');
   });
 
   test('blur on an invalid quantity sets only the quantity error', async () => {
@@ -1571,20 +1686,17 @@ describe('M4 blur validation (Gap B)', () => {
       result.current.onChange({
         ...(result.current.values as object),
         name: 'Rice',
-        quantityRaw: 'abc',
-        location: { kind: 'existing', locationId: 10 },
+        stock: [existingRow(10, 'abc')],
       });
     });
     await act(async () => {
       await (
         result.current as unknown as {
-          onFieldBlur: (f: 'name' | 'quantity') => void;
+          onFieldBlur: (f: 'name' | 'quantity', index?: number) => void;
         }
-      ).onFieldBlur('quantity');
+      ).onFieldBlur('quantity', 0);
     });
-    expect(result.current.errors.quantity).toBe(
-      'Enter a whole number of 0 or more.',
-    );
+    expect(rowQuantityError(result)).toBe('Enter a whole number of 0 or more.');
     expect(result.current.errors.name).toBeUndefined();
   });
 
@@ -1594,32 +1706,31 @@ describe('M4 blur validation (Gap B)', () => {
       result.current.onChange({
         ...(result.current.values as object),
         name: 'Rice',
-        quantityRaw: 'abc',
-        location: { kind: 'existing', locationId: 10 },
+        stock: [existingRow(10, 'abc')],
       });
     });
     await act(async () => {
       await (
         result.current as unknown as {
-          onFieldBlur: (f: 'name' | 'quantity') => void;
+          onFieldBlur: (f: 'name' | 'quantity', index?: number) => void;
         }
-      ).onFieldBlur('quantity');
+      ).onFieldBlur('quantity', 0);
     });
-    expect(result.current.errors.quantity).toBeTruthy();
+    expect(rowQuantityError(result)).toBeTruthy();
     await act(async () => {
       result.current.onChange({
         ...(result.current.values as object),
-        quantityRaw: '3',
+        stock: [existingRow(10, '3')],
       });
     });
     await act(async () => {
       await (
         result.current as unknown as {
-          onFieldBlur: (f: 'name' | 'quantity') => void;
+          onFieldBlur: (f: 'name' | 'quantity', index?: number) => void;
         }
-      ).onFieldBlur('quantity');
+      ).onFieldBlur('quantity', 0);
     });
-    expect(result.current.errors.quantity).toBeUndefined();
+    expect(result.current.errors.stock?.[0]).toBeUndefined();
   });
 
   test('blur while submitting does nothing', async () => {
@@ -1650,7 +1761,7 @@ describe('M4 blur validation (Gap B)', () => {
     await act(async () => {
       await (
         result.current as unknown as {
-          onFieldBlur: (f: 'name' | 'quantity') => void;
+          onFieldBlur: (f: 'name' | 'quantity', index?: number) => void;
         }
       ).onFieldBlur('name');
     });
@@ -1673,7 +1784,7 @@ describe('M4 blur validation (Gap B)', () => {
         fire = false;
         (
           controller as unknown as {
-            onFieldBlur: (f: 'name' | 'quantity') => void;
+            onFieldBlur: (f: 'name' | 'quantity', index?: number) => void;
           }
         ).onFieldBlur('name');
       }
@@ -1686,7 +1797,7 @@ describe('M4 blur validation (Gap B)', () => {
       latestProbedController?.onChange({
         ...(latestProbedController?.values as object),
         name: '   ',
-        quantityRaw: '2',
+        stock: [existingRow(10, '2')],
       });
     });
     fire = true;
@@ -1707,8 +1818,7 @@ describe('S10 out-of-range inline errors (current language)', () => {
       result.current.onChange({
         ...(result.current.values as object),
         name: 'a'.repeat(121),
-        quantityRaw: '2',
-        location: { kind: 'existing', locationId: 10 },
+        stock: [existingRow(10, '2')],
       });
     });
     let outcome!: SaveOutcome;
@@ -1729,8 +1839,7 @@ describe('S10 out-of-range inline errors (current language)', () => {
       result.current.onChange({
         ...(result.current.values as object),
         name: 'Rice',
-        quantityRaw: '1000000',
-        location: { kind: 'existing', locationId: 10 },
+        stock: [existingRow(10, '1000000')],
       });
     });
     let outcome!: SaveOutcome;
@@ -1739,13 +1848,13 @@ describe('S10 out-of-range inline errors (current language)', () => {
     });
     expect(outcome.persisted).toBe(false);
     expect(repository.createItemFromDraft).not.toHaveBeenCalled();
-    expect(result.current.errors.quantity).toBe(
+    expect(rowQuantityError(result)).toBe(
       'Enter a quantity of 999999 or less.',
     );
     await act(async () => {
       result.current.onChange({
         ...(result.current.values as object),
-        quantityRaw: '999999',
+        stock: [existingRow(10, '999999')],
       });
     });
     await act(async () => {
@@ -1756,7 +1865,9 @@ describe('S10 out-of-range inline errors (current language)', () => {
       string,
       unknown
     >;
-    expect(draft.quantity).toBe(999999);
+    expect(draft.stock).toEqual([
+      { location: { kind: 'existing', locationId: 10 }, quantity: 999999 },
+    ]);
   });
 
   test('RED: new location name over 80 rejected with location copy, no write', async () => {
@@ -1766,11 +1877,15 @@ describe('S10 out-of-range inline errors (current language)', () => {
       result.current.onChange({
         ...(result.current.values as object),
         name: 'Rice',
-        quantityRaw: '2',
-        location: {
-          kind: 'new',
-          location: { name: 'b'.repeat(81), address: null },
-        },
+        stock: [
+          {
+            location: {
+              kind: 'new',
+              location: { name: 'b'.repeat(81), address: null },
+            },
+            quantityRaw: '2',
+          },
+        ],
       });
     });
     let outcome!: SaveOutcome;
@@ -1779,7 +1894,12 @@ describe('S10 out-of-range inline errors (current language)', () => {
     });
     expect(outcome.persisted).toBe(false);
     expect(repository.createItemFromDraft).not.toHaveBeenCalled();
-    expect(result.current.errors.location).toBe(
+    const longNameError = (
+      result.current.errors.stock as unknown as
+        | { location?: string }[]
+        | undefined
+    )?.[0];
+    expect(longNameError?.location).toBe(
       'Enter a location name of 80 characters or fewer.',
     );
   });
@@ -1791,8 +1911,7 @@ describe('S10 out-of-range inline errors (current language)', () => {
       result.current.onChange({
         ...(result.current.values as object),
         name: 'Rice',
-        quantityRaw: '2',
-        location: { kind: 'existing', locationId: 10 },
+        stock: [existingRow(10, '2')],
         categories: [{ kind: 'new', category: { name: 'c'.repeat(81) } }],
       });
     });
@@ -1819,11 +1938,15 @@ describe('S11 duplicate-name conflict inline errors (current language)', () => {
       result.current.onChange({
         ...(result.current.values as object),
         name: 'Rice',
-        quantityRaw: '2',
-        location: {
-          kind: 'new',
-          location: { name: 'pantry', address: null },
-        },
+        stock: [
+          {
+            location: {
+              kind: 'new',
+              location: { name: 'pantry', address: null },
+            },
+            quantityRaw: '2',
+          },
+        ],
       });
     });
     let outcome!: SaveOutcome;
@@ -1831,7 +1954,12 @@ describe('S11 duplicate-name conflict inline errors (current language)', () => {
       outcome = await result.current.onSave();
     });
     expect(outcome.persisted).toBe(false);
-    expect(result.current.errors.location).toBe(
+    const conflict = (
+      result.current.errors.stock as unknown as
+        | { location?: string }[]
+        | undefined
+    )?.[0];
+    expect(conflict?.location).toBe(
       'A location with this name already exists.',
     );
     expect(result.current.errors.form).toBeUndefined();
@@ -1847,8 +1975,7 @@ describe('S11 duplicate-name conflict inline errors (current language)', () => {
       result.current.onChange({
         ...(result.current.values as object),
         name: 'Rice',
-        quantityRaw: '2',
-        location: { kind: 'existing', locationId: 10 },
+        stock: [existingRow(10, '2')],
         categories: [{ kind: 'new', category: { name: 'bulk' } }],
       });
     });

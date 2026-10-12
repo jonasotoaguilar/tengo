@@ -2,23 +2,22 @@
  * P4 U1 controlled item add/edit form (no persistence, no navigation).
  *
  * Fully controlled by the parent controller (U2): `values` carries verbatim
- * `name`, raw `quantityRaw` (so empty/invalid input stays representable),
- * exactly one `location` reference-or-draft (or null when unchosen), and
- * zero-to-many `categories` draft refs — plus two UI-only fields,
+ * `name`, a per-location `stock` editor (one row per location with its raw
+ * `quantityRaw`, so empty/invalid input stays representable), and
+ * zero-to-many `categories` draft refs — plus one UI-only field,
  * `pendingNewCategoryName` (typed-but-not-appended text, never submitted as
- * a category until Add) and `stashedNewLocation` (preserved new-location
- * text, never the selected location until the user selects new). Every edit
- * emits `onChange`, so remounts and failed saves rehydrate from props; U2
- * must convert explicitly to `ItemDraftInput` and never spread these
- * UI-only fields into the draft. The component never reads/writes the DB,
+ * a category until Add). Every edit emits `onChange`, so remounts and
+ * failed saves rehydrate from props; U2 converts explicitly to
+ * `ItemDraftInput` (a blank or zero row quantity means "no stock there"
+ * and is dropped, never stored). The component never reads/writes the DB,
  * navigates, fabricates a synthetic location, clamps or rewrites raw input,
- * or creates repository entities (new categories append drafts only).
- * A null-parse quantity (blank, invalid, non-integer, or unsafe) disables
- * both steppers without rewriting the raw text; save stays enabled except
- * while `submitting` or when `onSubmit` is absent so parent validation can
- * focus errors; absent save/close callbacks render truthfully disabled,
- * never no-op. Unit tests only — TalkBack/keyboard focus needs Android
- * proof, never claimed from Jest.
+ * or creates repository entities (new locations/categories append drafts
+ * only). A null-parse quantity (blank, invalid, non-integer, or unsafe)
+ * disables both steppers without rewriting the raw text; save stays enabled
+ * except while `submitting` or when `onSubmit` is absent so parent
+ * validation can focus errors; absent save/close callbacks render
+ * truthfully disabled, never no-op. Unit tests only — TalkBack/keyboard
+ * focus needs Android proof, never claimed from Jest.
  */
 
 import type { Ref, RefObject } from 'react';
@@ -52,27 +51,45 @@ export type ItemFormMode = 'add' | 'edit';
 
 /**
  * Controlled form state; raw strings keep empty/invalid input visible.
- * UI-only fields (`pendingNewCategoryName`, `stashedNewLocation`) are
- * controlled so every keystroke is observable and survives remount, but
- * they are NOT part of the domain draft: U2 converts explicitly.
+ * `stock` is the per-location editor: one row per location with its raw
+ * quantity. The UI-only `pendingNewCategoryName` is controlled so every
+ * keystroke is observable and survives remount, but it is NOT part of the
+ * domain draft: U2 converts explicitly.
  */
 export interface ItemFormValues {
   name: string;
-  quantityRaw: string;
-  location: ItemLocationDraft | null;
+  stock: ItemStockRowValues[];
   categories: ItemCategoryDraft[];
   pendingNewCategoryName: string;
-  stashedNewLocation: NewLocationInput | null;
 }
 
-export type ItemFormField =
-  | 'name'
-  | 'quantity'
-  | 'location'
-  | 'categories'
-  | 'form';
+/** One per-location editor row: a location selector plus raw quantity. */
+export interface ItemStockRowValues {
+  location: ItemLocationDraft;
+  quantityRaw: string;
+}
 
-export type ItemFormErrors = Partial<Record<ItemFormField, string>>;
+/** Per-row inline errors, index-aligned with `values.stock`. */
+export interface ItemStockRowErrors {
+  location?: string;
+  quantity?: string;
+}
+
+export type ItemFormField = 'name' | 'stock' | 'categories' | 'form';
+
+export interface ItemFormErrors {
+  name?: string;
+  stock?: (ItemStockRowErrors | undefined)[];
+  categories?: string;
+  form?: string;
+}
+
+/** Mounted focus target descriptor for an error: a field or one row side. */
+export type ItemFormErrorTarget =
+  | 'name'
+  | 'categories'
+  | 'form'
+  | { row: number; side: 'quantity' | 'location' };
 
 export interface ItemFormProps {
   mode: ItemFormMode;
@@ -88,11 +105,12 @@ export interface ItemFormProps {
   /**
    * Blur validation entry (M4 Gap B): the parent validates a single
    * field against the current values and merges the inline error.
-   * Wired to the name and quantity inputs only; never fired while
-   * `submitting` (the inputs are non-editable then, and the handler
-   * guards regardless). Absent stays a true no-op.
+   * Wired to the name input and to each stock row's quantity input (with
+   * its row index); never fired while `submitting` (the inputs are
+   * non-editable then, and the handler guards regardless). Absent stays a
+   * true no-op.
    */
-  onFieldBlur?: (field: 'name' | 'quantity') => void;
+  onFieldBlur?: (field: 'name' | 'quantity', index?: number) => void;
   /**
    * Called with the testID of the mounted focus target whenever the
    * component requests error focus (never alters selection). Lets unit
@@ -105,13 +123,22 @@ export interface ItemFormProps {
   categories: Category[];
 }
 
-const ERROR_ORDER: ItemFormField[] = [
-  'name',
-  'quantity',
-  'location',
-  'categories',
-  'form',
-];
+/** First error to focus: name, then stock rows in order (quantity before
+ * location within a row), then categories, then form. */
+export function firstErrorField(
+  errors?: ItemFormErrors,
+): ItemFormErrorTarget | null {
+  if (!errors) return null;
+  if (errors.name) return 'name';
+  const rows = errors.stock ?? [];
+  for (let row = 0; row < rows.length; row += 1) {
+    if (rows[row]?.quantity) return { row, side: 'quantity' };
+    if (rows[row]?.location) return { row, side: 'location' };
+  }
+  if (errors.categories) return 'categories';
+  if (errors.form) return 'form';
+  return null;
+}
 
 /**
  * Non-translatable symbols: the steppers and the draft-remove affordance
@@ -123,35 +150,29 @@ const DECREMENT_GLYPH = '−';
 const INCREMENT_GLYPH = '+';
 const REMOVE_GLYPH = '✕';
 
-/** First field to focus when the parent reports validation errors. */
-export function firstErrorField(errors?: ItemFormErrors): ItemFormField | null {
-  if (!errors) return null;
-  for (const field of ERROR_ORDER) {
-    if (errors[field]) return field;
-  }
-  return null;
-}
-
 /**
- * Mounted focus target for an error field in each selection state. New-mode
- * location errors target the inline name input; null/existing selections
- * target the announced location error itself (always mounted, never steals
- * selection); categories target the always-mounted new-category input and
- * form errors target the announced form alert.
+ * Mounted focus target for an error in each editor state. Row quantity
+ * errors target that row's quantity input; row location errors target the
+ * inline name input for new-location rows and the row's announced location
+ * error otherwise (always mounted, never steals selection); categories
+ * target the always-mounted new-category input and form errors target the
+ * announced form alert.
  */
 export function resolveErrorFocusTarget(
-  field: ItemFormField | null,
+  target: ItemFormErrorTarget | null,
   locationKind: ItemLocationDraft['kind'] | undefined,
 ): string | null {
-  if (field === 'name') return 'item-form/name';
-  if (field === 'quantity') return 'item-form/quantity';
-  if (field === 'location') {
+  if (target === 'name') return 'item-form/name';
+  if (typeof target === 'object' && target !== null) {
+    if (target.side === 'quantity') {
+      return `item-form/stock-${target.row}/quantity`;
+    }
     return locationKind === 'new'
-      ? 'item-form/location-new/name'
-      : 'item-form/error-location';
+      ? `item-form/stock-${target.row}/location-new/name`
+      : `item-form/error-stock-${target.row}-location`;
   }
-  if (field === 'categories') return 'item-form/new-category/name';
-  if (field === 'form') return 'item-form/error-form';
+  if (target === 'categories') return 'item-form/new-category/name';
+  if (target === 'form') return 'item-form/error-form';
   return null;
 }
 
@@ -254,88 +275,96 @@ export default function ItemForm({
   const palette = scheme === 'dark' ? DARK : LIGHT;
   const pending = submitting === true;
 
-  const nameRef = useRef<TextInput>(null);
-  const quantityRef = useRef<TextInput>(null);
-  const newLocationNameRef = useRef<TextInput>(null);
-  const newCategoryNameRef = useRef<TextInput>(null);
-  const locationErrorRef = useRef<View>(null);
-  const formErrorRef = useRef<View>(null);
+  // Mounted-node registry for error focus: every focusable target
+  // registers its testID here, and the error effect routes through
+  // `onRequestErrorFocus` plus this map (never native focus under Jest).
+  const nodeRefs = useRef(new Map<string, TextInput | View | null>());
+  const registerNode = (testID: string) => (node: TextInput | View | null) => {
+    if (node === null) nodeRefs.current.delete(testID);
+    else nodeRefs.current.set(testID, node);
+  };
 
-  const locationKind = values.location?.kind;
   useEffect(() => {
     const field = firstErrorField(errors);
+    const locationKind =
+      typeof field === 'object' && field !== null
+        ? values.stock[field.row]?.location.kind
+        : undefined;
     const target = resolveErrorFocusTarget(field, locationKind);
     if (!field || !target) return;
     onRequestErrorFocus?.(target);
-    if (target === 'item-form/name') focusNode(nameRef);
-    else if (target === 'item-form/quantity') focusNode(quantityRef);
-    else if (target === 'item-form/location-new/name') {
-      focusNode(newLocationNameRef);
-    } else if (target === 'item-form/new-category/name') {
-      focusNode(newCategoryNameRef);
-    } else if (target === 'item-form/error-location') {
-      focusNode(locationErrorRef);
-    } else if (target === 'item-form/error-form') focusNode(formErrorRef);
-  }, [errors, locationKind, onRequestErrorFocus]);
+    focusNode({ current: nodeRefs.current.get(target) ?? null });
+  }, [errors, values.stock, onRequestErrorFocus]);
 
-  const parsedQuantity = parseQuantityRaw(values.quantityRaw);
-  const quantityValid = parsedQuantity !== null;
-  const isExhausted = parsedQuantity === 0;
-  // Null-parse raw (blank/invalid/non-integer/unsafe) disables BOTH
-  // steppers: no quiet rewrite to a default, the text stays for errors.
-  const decrementDisabled =
-    pending || !quantityValid || (parsedQuantity as number) <= 0;
-  // Product cap: the stepper never steps above PRODUCT_MAX_QUANTITY. At
-  // the cap increment is disabled (like the old MAX_QUANTITY behavior);
-  // above the cap the parse is null so both steppers stay disabled and
-  // the raw text is preserved for the parent's out-of-range error.
-  const incrementDisabled =
-    pending || !quantityValid || parsedQuantity === PRODUCT_MAX_QUANTITY;
+  const setRow = (index: number, patch: Partial<ItemStockRowValues>) => {
+    onChange({
+      ...values,
+      stock: values.stock.map((row, i) =>
+        i === index ? { ...row, ...patch } : row,
+      ),
+    });
+  };
 
-  const stepQuantity = (delta: 1 | -1) => {
+  const stepRowQuantity = (index: number, delta: 1 | -1) => {
     if (pending) return;
-    const base = parseQuantityRaw(values.quantityRaw);
+    const base = parseQuantityRaw(values.stock[index]?.quantityRaw ?? '');
     if (base === null) return;
     const next = base + delta;
     if (next < 0 || next > PRODUCT_MAX_QUANTITY) return;
-    onChange({ ...values, quantityRaw: String(next) });
+    setRow(index, { quantityRaw: String(next) });
   };
 
-  const selectExistingLocation = (locationId: number) => {
-    if (pending) return;
-    const stash =
-      values.location?.kind === 'new'
-        ? { ...values.location.location }
-        : values.stashedNewLocation;
+  const addedExistingIds = new Set<number>();
+  for (const row of values.stock) {
+    if (row.location.kind === 'existing') {
+      addedExistingIds.add(row.location.locationId);
+    }
+  }
+  const availableLocations = locations.filter(
+    (location) => !addedExistingIds.has(location.id),
+  );
+
+  const appendExistingLocation = (locationId: number) => {
+    if (pending || addedExistingIds.has(locationId)) return;
     onChange({
       ...values,
-      location: { kind: 'existing', locationId },
-      stashedNewLocation: stash,
+      stock: [
+        ...values.stock,
+        { location: { kind: 'existing', locationId }, quantityRaw: '' },
+      ],
     });
   };
 
-  const selectNewLocation = () => {
-    if (pending || values.location?.kind === 'new') return;
+  const appendNewLocation = () => {
+    if (pending) return;
     onChange({
       ...values,
-      location: {
-        kind: 'new',
-        location: values.stashedNewLocation ?? { name: '', address: null },
-      },
+      stock: [
+        ...values.stock,
+        {
+          location: { kind: 'new', location: { name: '', address: null } },
+          quantityRaw: '',
+        },
+      ],
     });
   };
 
-  const editNewLocation = (patch: Partial<NewLocationInput>) => {
+  const editRowNewLocation = (
+    index: number,
+    patch: Partial<NewLocationInput>,
+  ) => {
     if (pending) return;
-    const current =
-      values.location?.kind === 'new'
-        ? values.location.location
-        : (values.stashedNewLocation ?? { name: '', address: null });
-    const next: NewLocationInput = { ...current, ...patch };
+    const row = values.stock[index];
+    if (row?.location.kind !== 'new') return;
+    const next: NewLocationInput = { ...row.location.location, ...patch };
+    setRow(index, { location: { kind: 'new', location: next } });
+  };
+
+  const removeRow = (index: number) => {
+    if (pending) return;
     onChange({
       ...values,
-      location: { kind: 'new', location: next },
-      stashedNewLocation: next,
+      stock: values.stock.filter((_, i) => i !== index),
     });
   };
 
@@ -397,7 +426,6 @@ export default function ItemForm({
   // callback only, never while a write is in flight.
   const showDelete = mode === 'edit' && onRequestDelete !== undefined;
   const deleteDisabled = pending;
-  const newLocation = values.location?.kind === 'new' ? values.location : null;
   const addCategoryDisabled =
     pending || values.pendingNewCategoryName.trim() === '';
 
@@ -447,7 +475,7 @@ export default function ItemForm({
             testID="item-form/error-form"
             message={errors.form}
             palette={palette}
-            focusRef={formErrorRef}
+            focusRef={registerNode('item-form/error-form')}
           />
         ) : null}
 
@@ -459,7 +487,7 @@ export default function ItemForm({
         </Text>
         <TextInput
           testID="item-form/name"
-          ref={nameRef}
+          ref={registerNode('item-form/name')}
           accessibilityLabel={t('itemFormNameLabel')}
           aria-labelledby="item-form-name-label"
           placeholder={t('itemFormNamePlaceholder')}
@@ -487,226 +515,277 @@ export default function ItemForm({
           />
         ) : null}
 
-        <Text
-          nativeID="item-form-quantity-label"
-          style={[styles.label, { color: palette.text }]}
-        >
-          {t('itemFormQuantityLabel')}
-        </Text>
-        <View style={styles.quantityRow}>
-          <Pressable
-            testID="item-form/decrement"
-            accessibilityRole="button"
-            accessibilityLabel={t('itemFormDecrement')}
-            accessibilityState={{ disabled: decrementDisabled }}
-            disabled={decrementDisabled}
-            onPress={() => stepQuantity(-1)}
-            style={[
-              styles.stepper,
-              {
-                borderColor: palette.controlBorder,
-                backgroundColor: decrementDisabled
-                  ? palette.surface
-                  : 'transparent',
-              },
-            ]}
-          >
-            <Text
-              style={[
-                styles.stepperText,
-                {
-                  color: decrementDisabled ? palette.secondary : palette.text,
-                },
-              ]}
-            >
-              {DECREMENT_GLYPH}
-            </Text>
-          </Pressable>
-          <TextInput
-            testID="item-form/quantity"
-            ref={quantityRef}
-            accessibilityLabel={t('itemFormQuantityLabel')}
-            aria-labelledby="item-form-quantity-label"
-            placeholder={t('itemFormQuantityPlaceholder')}
-            placeholderTextColor={palette.secondary}
-            value={values.quantityRaw}
-            onChangeText={(next) => {
-              if (!pending) onChange({ ...values, quantityRaw: next });
-            }}
-            onBlur={() => {
-              if (!pending) onFieldBlur?.('quantity');
-            }}
-            editable={!pending}
-            keyboardType="number-pad"
-            inputMode="numeric"
-            returnKeyType="done"
-            style={[
-              styles.quantityInput,
-              { color: palette.text, borderColor: palette.controlBorder },
-            ]}
-          />
-          <Pressable
-            testID="item-form/increment"
-            accessibilityRole="button"
-            accessibilityLabel={t('itemFormIncrement')}
-            accessibilityState={{ disabled: incrementDisabled }}
-            disabled={incrementDisabled}
-            onPress={() => stepQuantity(1)}
-            style={[
-              styles.stepper,
-              {
-                borderColor: palette.controlBorder,
-                backgroundColor: incrementDisabled
-                  ? palette.surface
-                  : 'transparent',
-              },
-            ]}
-          >
-            <Text
-              style={[
-                styles.stepperText,
-                {
-                  color: incrementDisabled ? palette.secondary : palette.text,
-                },
-              ]}
-            >
-              {INCREMENT_GLYPH}
-            </Text>
-          </Pressable>
-        </View>
-        {isExhausted ? (
-          <Text
-            testID="item-form/exhausted"
-            style={[styles.exhausted, { color: palette.error }]}
-          >
-            {t('inventoryExhausted')}
-          </Text>
-        ) : null}
-        {errors?.quantity ? (
-          <FieldError
-            testID="item-form/error-quantity"
-            message={errors.quantity}
-            palette={palette}
-          />
-        ) : null}
-
         <Text style={[styles.label, { color: palette.text }]}>
-          {t('itemFormLocationLabel')}
+          {t('itemFormStockLabel')}
+        </Text>
+        {values.stock.map((row, index) => {
+          const parsed = parseQuantityRaw(row.quantityRaw);
+          const rowValid = parsed !== null;
+          // Null-parse raw (blank/invalid/non-integer/unsafe) disables
+          // BOTH steppers: no quiet rewrite to a default, the text stays
+          // for errors.
+          const rowDecrementDisabled =
+            pending || !rowValid || (parsed as number) <= 0;
+          // Product cap: the stepper never steps above
+          // PRODUCT_MAX_QUANTITY. At the cap increment is disabled; above
+          // the cap the parse is null so both steppers stay disabled and
+          // the raw text is preserved for the parent's out-of-range error.
+          const rowIncrementDisabled =
+            pending || !rowValid || parsed === PRODUCT_MAX_QUANTITY;
+          const rowIsExhausted = parsed === 0;
+          const rowErrors = errors?.stock?.[index];
+          const selector = row.location;
+          const rowName =
+            selector.kind === 'existing'
+              ? (locations.find(
+                  (location) => location.id === selector.locationId,
+                )?.name ?? `#${selector.locationId}`)
+              : selector.location.name.trim() !== ''
+                ? selector.location.name
+                : t('itemFormLocationNew');
+          const quantityTestID = `item-form/stock-${index}/quantity`;
+          return (
+            // Rows are append/remove-by-index with no stable id; the
+            // controller aligns per-row errors by this same index.
+            // biome-ignore lint/suspicious/noArrayIndexKey: index is the row identity here.
+            <View key={`stock-${index}`} style={styles.stockRow}>
+              <View style={styles.stockRowHeader}>
+                <Text
+                  testID={`item-form/stock-${index}/name`}
+                  style={[styles.stockRowName, { color: palette.text }]}
+                >
+                  {rowName}
+                </Text>
+                <Pressable
+                  testID={`item-form/stock-${index}/remove`}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('itemFormRemoveStockRow', {
+                    name: rowName,
+                  })}
+                  accessibilityState={{ disabled: pending }}
+                  disabled={pending}
+                  onPress={() => removeRow(index)}
+                  style={styles.draftRemove}
+                >
+                  <Text
+                    style={[styles.draftRemoveText, { color: palette.accent }]}
+                  >
+                    {REMOVE_GLYPH}
+                  </Text>
+                </Pressable>
+              </View>
+              {row.location.kind === 'new' ? (
+                <View style={styles.inlineGroup}>
+                  <Text style={[styles.subLabel, { color: palette.text }]}>
+                    {t('itemFormNewLocationNameLabel')}
+                  </Text>
+                  <TextInput
+                    testID={`item-form/stock-${index}/location-new/name`}
+                    ref={registerNode(
+                      `item-form/stock-${index}/location-new/name`,
+                    )}
+                    accessibilityLabel={t('itemFormNewLocationNameLabel')}
+                    placeholder={t('itemFormNewLocationNamePlaceholder')}
+                    placeholderTextColor={palette.secondary}
+                    value={row.location.location.name}
+                    onChangeText={(next) =>
+                      editRowNewLocation(index, { name: next })
+                    }
+                    editable={!pending}
+                    autoCorrect={false}
+                    style={[
+                      styles.input,
+                      {
+                        color: palette.text,
+                        borderColor: palette.controlBorder,
+                      },
+                    ]}
+                  />
+                  <Text style={[styles.subLabel, { color: palette.text }]}>
+                    {t('itemFormNewLocationAddressLabel')}
+                  </Text>
+                  <TextInput
+                    testID={`item-form/stock-${index}/location-new/address`}
+                    accessibilityLabel={t('itemFormNewLocationAddressLabel')}
+                    placeholder={t('itemFormNewLocationAddressPlaceholder')}
+                    placeholderTextColor={palette.secondary}
+                    value={row.location.location.address ?? ''}
+                    onChangeText={(next) =>
+                      editRowNewLocation(index, {
+                        address: next === '' ? null : next,
+                      })
+                    }
+                    editable={!pending}
+                    autoCorrect={false}
+                    style={[
+                      styles.input,
+                      {
+                        color: palette.text,
+                        borderColor: palette.controlBorder,
+                      },
+                    ]}
+                  />
+                </View>
+              ) : null}
+              <View style={styles.quantityRow}>
+                <Pressable
+                  testID={`item-form/stock-${index}/decrement`}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('itemFormDecrement')}
+                  accessibilityState={{ disabled: rowDecrementDisabled }}
+                  disabled={rowDecrementDisabled}
+                  onPress={() => stepRowQuantity(index, -1)}
+                  style={[
+                    styles.stepper,
+                    {
+                      borderColor: palette.controlBorder,
+                      backgroundColor: rowDecrementDisabled
+                        ? palette.surface
+                        : 'transparent',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.stepperText,
+                      {
+                        color: rowDecrementDisabled
+                          ? palette.secondary
+                          : palette.text,
+                      },
+                    ]}
+                  >
+                    {DECREMENT_GLYPH}
+                  </Text>
+                </Pressable>
+                <TextInput
+                  testID={quantityTestID}
+                  ref={registerNode(quantityTestID)}
+                  accessibilityLabel={`${rowName}, ${t('itemFormQuantityLabel')}`}
+                  placeholder={t('itemFormQuantityPlaceholder')}
+                  placeholderTextColor={palette.secondary}
+                  value={row.quantityRaw}
+                  onChangeText={(next) => {
+                    if (!pending) setRow(index, { quantityRaw: next });
+                  }}
+                  onBlur={() => {
+                    if (!pending) onFieldBlur?.('quantity', index);
+                  }}
+                  editable={!pending}
+                  keyboardType="number-pad"
+                  inputMode="numeric"
+                  returnKeyType="done"
+                  style={[
+                    styles.quantityInput,
+                    {
+                      color: palette.text,
+                      borderColor: palette.controlBorder,
+                    },
+                  ]}
+                />
+                <Pressable
+                  testID={`item-form/stock-${index}/increment`}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('itemFormIncrement')}
+                  accessibilityState={{ disabled: rowIncrementDisabled }}
+                  disabled={rowIncrementDisabled}
+                  onPress={() => stepRowQuantity(index, 1)}
+                  style={[
+                    styles.stepper,
+                    {
+                      borderColor: palette.controlBorder,
+                      backgroundColor: rowIncrementDisabled
+                        ? palette.surface
+                        : 'transparent',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.stepperText,
+                      {
+                        color: rowIncrementDisabled
+                          ? palette.secondary
+                          : palette.text,
+                      },
+                    ]}
+                  >
+                    {INCREMENT_GLYPH}
+                  </Text>
+                </Pressable>
+              </View>
+              {rowIsExhausted ? (
+                <Text
+                  testID={`item-form/stock-${index}/exhausted`}
+                  style={[styles.exhausted, { color: palette.error }]}
+                >
+                  {t('inventoryExhausted')}
+                </Text>
+              ) : null}
+              {rowErrors?.quantity ? (
+                <FieldError
+                  testID={`item-form/error-stock-${index}-quantity`}
+                  message={rowErrors.quantity}
+                  palette={palette}
+                />
+              ) : null}
+              {rowErrors?.location ? (
+                <FieldError
+                  testID={`item-form/error-stock-${index}-location`}
+                  message={rowErrors.location}
+                  palette={palette}
+                  focusRef={registerNode(
+                    `item-form/error-stock-${index}-location`,
+                  )}
+                />
+              ) : null}
+            </View>
+          );
+        })}
+        <Text style={[styles.subLabel, { color: palette.text }]}>
+          {t('itemFormAddLocationLabel')}
         </Text>
         <View style={styles.chipWrap}>
-          {locations.map((location) => {
-            const selected =
-              values.location?.kind === 'existing' &&
-              values.location.locationId === location.id;
-            return (
-              <Pressable
-                key={location.id}
-                testID={`item-form/location-${location.id}`}
-                accessibilityRole="button"
-                accessibilityLabel={location.name}
-                accessibilityState={{ selected, disabled: pending }}
-                disabled={pending}
-                onPress={() => selectExistingLocation(location.id)}
-                style={[
-                  styles.chip,
-                  {
-                    borderColor: palette.controlBorder,
-                    backgroundColor: selected ? palette.accent : 'transparent',
-                  },
-                ]}
-              >
-                <Text
-                  style={{
-                    color: selected ? palette.accentOn : palette.text,
-                  }}
-                >
-                  {location.name}
-                </Text>
-              </Pressable>
-            );
-          })}
+          {availableLocations.map((location) => (
+            <Pressable
+              key={location.id}
+              testID={`item-form/location-${location.id}`}
+              accessibilityRole="button"
+              accessibilityLabel={location.name}
+              accessibilityState={{ selected: false, disabled: pending }}
+              disabled={pending}
+              onPress={() => appendExistingLocation(location.id)}
+              style={[
+                styles.chip,
+                {
+                  borderColor: palette.controlBorder,
+                  backgroundColor: 'transparent',
+                },
+              ]}
+            >
+              <Text style={{ color: palette.text }}>{location.name}</Text>
+            </Pressable>
+          ))}
           <Pressable
             testID="item-form/location-new"
             accessibilityRole="button"
             accessibilityLabel={t('itemFormLocationNew')}
-            accessibilityState={{
-              selected: values.location?.kind === 'new',
-              disabled: pending,
-            }}
+            accessibilityState={{ selected: false, disabled: pending }}
             disabled={pending}
-            onPress={selectNewLocation}
+            onPress={appendNewLocation}
             style={[
               styles.chip,
               {
                 borderColor: palette.controlBorder,
-                backgroundColor:
-                  values.location?.kind === 'new'
-                    ? palette.accent
-                    : 'transparent',
+                backgroundColor: 'transparent',
               },
             ]}
           >
-            <Text
-              style={{
-                color:
-                  values.location?.kind === 'new'
-                    ? palette.accentOn
-                    : palette.text,
-              }}
-            >
+            <Text style={{ color: palette.text }}>
               {t('itemFormLocationNew')}
             </Text>
           </Pressable>
         </View>
-        {newLocation ? (
-          <View style={styles.inlineGroup}>
-            <Text style={[styles.subLabel, { color: palette.text }]}>
-              {t('itemFormNewLocationNameLabel')}
-            </Text>
-            <TextInput
-              testID="item-form/location-new/name"
-              ref={newLocationNameRef}
-              accessibilityLabel={t('itemFormNewLocationNameLabel')}
-              placeholder={t('itemFormNewLocationNamePlaceholder')}
-              placeholderTextColor={palette.secondary}
-              value={newLocation.location.name}
-              onChangeText={(next) => editNewLocation({ name: next })}
-              editable={!pending}
-              autoCorrect={false}
-              style={[
-                styles.input,
-                { color: palette.text, borderColor: palette.controlBorder },
-              ]}
-            />
-            <Text style={[styles.subLabel, { color: palette.text }]}>
-              {t('itemFormNewLocationAddressLabel')}
-            </Text>
-            <TextInput
-              testID="item-form/location-new/address"
-              accessibilityLabel={t('itemFormNewLocationAddressLabel')}
-              placeholder={t('itemFormNewLocationAddressPlaceholder')}
-              placeholderTextColor={palette.secondary}
-              value={newLocation.location.address ?? ''}
-              onChangeText={(next) =>
-                editNewLocation({ address: next === '' ? null : next })
-              }
-              editable={!pending}
-              autoCorrect={false}
-              style={[
-                styles.input,
-                { color: palette.text, borderColor: palette.controlBorder },
-              ]}
-            />
-          </View>
-        ) : null}
-        {errors?.location ? (
-          <FieldError
-            testID="item-form/error-location"
-            message={errors.location}
-            palette={palette}
-            focusRef={locationErrorRef}
-          />
-        ) : null}
 
         <Text style={[styles.label, { color: palette.text }]}>
           {t('itemFormCategoriesLabel')}
@@ -785,7 +864,7 @@ export default function ItemForm({
         <View style={styles.newCategoryRow}>
           <TextInput
             testID="item-form/new-category/name"
-            ref={newCategoryNameRef}
+            ref={registerNode('item-form/new-category/name')}
             accessibilityLabel={t('itemFormNewCategoryLabel')}
             placeholder={t('itemFormNewCategoryPlaceholder')}
             placeholderTextColor={palette.secondary}
@@ -990,6 +1069,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     marginTop: 4,
+  },
+  stockRow: {
+    marginTop: 8,
+    gap: 2,
+  },
+  stockRowHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 48,
+  },
+  stockRowName: {
+    flex: 1,
+    flexShrink: 1,
+    fontSize: 15,
+    fontWeight: '600',
   },
   chipWrap: {
     flexDirection: 'row',

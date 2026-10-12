@@ -94,13 +94,6 @@ export interface InventoryContainerProps {
   enableMutations?: boolean;
 }
 
-function isFilterEmpty(filter: ItemFilter): boolean {
-  const query = filter.query ?? '';
-  const locationId = filter.locationId ?? null;
-  const categoryIds = filter.categoryIds ?? [];
-  return query.trim() === '' && locationId === null && categoryIds.length === 0;
-}
-
 export default function InventoryContainer({
   bootstrap = defaultBootstrap,
   enableMutations = false,
@@ -254,12 +247,23 @@ export default function InventoryContainer({
           if (!isCurrent()) return;
         }
         const activeFilter = filter;
+        // The location selects the list's view (which quantity each row
+        // shows), never the queried rows: items with 0 at the selected
+        // location but stock elsewhere stay visible marked sin stock
+        // (L9a), so the membership predicate must not filter them out.
+        // Search text and the category OR still filter server-side.
+        const queryFilter: ItemFilter = {
+          query: activeFilter.query,
+          categoryIds: activeFilter.categoryIds,
+        };
         const unfilteredPromise = queryItems(db, {});
-        // Reuse the unfiltered page when nothing is filtered so an empty
-        // filter costs no second item query.
-        const filteredPromise = isFilterEmpty(activeFilter)
-          ? unfilteredPromise
-          : queryItems(db, activeFilter);
+        // Reuse the unfiltered page when nothing but the location view
+        // is set, so switching locations costs no second item query.
+        const filteredPromise =
+          (queryFilter.query?.trim() ?? '') === '' &&
+          (queryFilter.categoryIds ?? []).length === 0
+            ? unfilteredPromise
+            : queryItems(db, queryFilter);
         const [filteredItems, unfilteredItems, nextLocations, nextCategories] =
           await Promise.all([
             filteredPromise,

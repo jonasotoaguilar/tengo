@@ -1,14 +1,18 @@
 /**
- * P3a bounded item query (host fake only, not real SQLite proof).
+ * Bounded item query over catalog + stock (host fake only, not real
+ * SQLite proof).
  *
- * Covers JS accent-folded substring search (ASCII + CAFÉ/café/cafe fold both
- * directions + Α/α, trim, literal %_\\), location all/existing/unknown/invalid,
- * category []/single/OR/overlap/dedup/duplicate/unknown/invalid, AND
- * cross-filters, zero/many categories, stable id order, validation before
- * SQL, generic storage errors, and the 3-read bound at N=101. Real
- * expo-sqlite behavior is P3b isolated-fixture work. S9 adds cross-entity
- * text matching: the folded query matches the item name, its location
- * name, or any of its category names (OR with dedup, item appears once).
+ * Covers JS accent-folded substring search (ASCII + CAFÉ/café/cafe fold
+ * both directions, trim, literal %_\), location membership
+ * (all/existing/unknown/invalid, sin-stock exclusion), category
+ * []/single/OR/overlap/dedup/duplicate/unknown/invalid, AND
+ * cross-filters, zero/many categories, multi-location breakdown with
+ * total, sin-stock items as legitimate results, stable id order,
+ * validation before SQL, generic storage errors, and the 3-read bound at
+ * N=101. Real expo-sqlite behavior is isolated-fixture work. Cross-entity
+ * text matching: the folded query matches the item name, the names of
+ * locations where the item has stock, or any of its category names (OR
+ * with dedup, item appears once).
  */
 import type { RepositoryDb } from '../src/inventory/database';
 import { StorageError } from '../src/inventory/errors';
@@ -27,14 +31,9 @@ function makeQueryFake() {
   >();
   const items = new Map<
     number,
-    {
-      id: number;
-      name: string;
-      quantity: number;
-      location_id: number;
-      created_at: string;
-    }
+    { id: number; name: string; created_at: string }
   >();
+  const stock: { itemId: number; locationId: number; quantity: number }[] = [];
   const joins = new Set<string>();
   let nextId = 1;
   const db: RepositoryDb = {
@@ -42,38 +41,54 @@ function makeQueryFake() {
     getFirstAsync: jest.fn(),
     getAllAsync: jest.fn(async (source: string, params: unknown[] = []) => {
       calls.push({ source, params });
-      if (/FROM items/i.test(source)) {
-        const onlyLoc = /WHERE i\.location_id/i.test(source)
+      if (/FROM items i/i.test(source)) {
+        // Location filter is membership: the item has stock there.
+        // (Checked before the stock branch: the EXISTS subquery itself
+        // contains `FROM stock s`.)
+        const memberMatch = /EXISTS[\s\S]*location_id = \?/i.test(source)
           ? (params[0] as number)
           : null;
-        // Raw item page without the location join: dangling items are
-        // returned here and dropped by the batched location read instead.
         return [...items.values()]
           .filter((it) =>
-            onlyLoc === null ? true : it.location_id === onlyLoc,
+            memberMatch === null
+              ? true
+              : stock.some(
+                  (s) => s.itemId === it.id && s.locationId === memberMatch,
+                ),
           )
           .sort((a, b) => a.id - b.id)
           .map((it) => ({
             item_id: it.id,
             item_name: it.name,
-            item_quantity: it.quantity,
-            item_location_id: it.location_id,
             item_created_at: it.created_at,
           }));
       }
-      if (/FROM locations/i.test(source)) {
-        const onlyLocs = /id IN/i.test(source) ? (params as number[]) : null;
-        return [...locations.values()]
-          .filter((loc) =>
-            onlyLocs === null ? true : onlyLocs.includes(loc.id),
+      if (/FROM stock s/i.test(source)) {
+        const onlyItems = /item_id IN/i.test(source)
+          ? (params as number[])
+          : null;
+        return stock
+          .filter((s) =>
+            onlyItems === null ? true : onlyItems.includes(s.itemId),
           )
-          .sort((a, b) => a.id - b.id)
-          .map((loc) => ({
-            location_id: loc.id,
-            location_name: loc.name,
-            location_address: loc.address,
-            location_created_at: loc.created_at,
-          }));
+          .filter((s) => locations.has(s.locationId))
+          .sort((a, b) => a.itemId - b.itemId || a.locationId - b.locationId)
+          .map((s) => {
+            const loc = locations.get(s.locationId) as {
+              id: number;
+              name: string;
+              address: string | null;
+              created_at: string;
+            };
+            return {
+              stock_item_id: s.itemId,
+              quantity: s.quantity,
+              location_id: loc.id,
+              location_name: loc.name,
+              location_address: loc.address,
+              location_created_at: loc.created_at,
+            };
+          });
       }
       if (/FROM item_categories/i.test(source)) {
         const onlyItems = /item_id IN/i.test(source)
@@ -111,22 +126,22 @@ function makeQueryFake() {
   };
   const item = (
     name: string,
-    quantity: number,
-    locationId: number,
+    stockRows: { locationId: number; quantity: number }[] = [],
     catIds: number[] = [],
   ) => {
     const id = nextId++;
-    items.set(id, {
-      id,
-      name,
-      quantity,
-      location_id: locationId,
-      created_at: `ts-${id}`,
-    });
+    items.set(id, { id, name, created_at: `ts-${id}` });
+    for (const s of stockRows) {
+      stock.push({
+        itemId: id,
+        locationId: s.locationId,
+        quantity: s.quantity,
+      });
+    }
     for (const c of catIds) joins.add(`${id}:${c}`);
     return id;
   };
-  return { db, calls, loc, cat, item, joins };
+  return { db, calls, loc, cat, item, joins, stock };
 }
 
 test('normalize helper is pure: trim/dedup, null-all, rejects bad runtime input', () => {
@@ -159,13 +174,15 @@ test('normalize helper is pure: trim/dedup, null-all, rejects bad runtime input'
 test('search: ASCII/non-ASCII case, trim, accent-folded cafe=café, literal %_\\ preserved verbatim', async () => {
   const f = makeQueryFake();
   const l = f.loc();
-  const rice = f.item('Rice', 1, l);
-  const cafeUpper = f.item('CAFÉ latte', 2, l);
-  const cafePlain = f.item('cafe noir', 1, l);
-  const melange = f.item('CAFÉ 100%_\\mélange', 1, l);
-  const greek = f.item('Αθήνα honey', 0, l);
-  f.item('100% cotton_\\weave', 1, l);
-  f.item("x'); DROP TABLE items; --", 1, l);
+  const rice = f.item('Rice', [{ locationId: l, quantity: 1 }]);
+  const cafeUpper = f.item('CAFÉ latte', [{ locationId: l, quantity: 2 }]);
+  const cafePlain = f.item('cafe noir', [{ locationId: l, quantity: 1 }]);
+  const melange = f.item('CAFÉ 100%_\\mélange', [
+    { locationId: l, quantity: 1 },
+  ]);
+  const greek = f.item('Αθήνα honey', [{ locationId: l, quantity: 3 }]);
+  f.item('100% cotton_\\weave', [{ locationId: l, quantity: 1 }]);
+  f.item("x'); DROP TABLE items; --", [{ locationId: l, quantity: 1 }]);
   expect((await queryItems(f.db, { query: 'rice' })).map((i) => i.id)).toEqual([
     rice,
   ]);
@@ -205,26 +222,37 @@ test('search: ASCII/non-ASCII case, trim, accent-folded cafe=café, literal %_\\
   expect(await queryItems(f.db, { query: '_' })).toHaveLength(2);
   expect(await queryItems(f.db, { query: '\\' })).toHaveLength(2);
   expect(await queryItems(f.db, { query: 'DROP TABLE' })).toHaveLength(1);
-  // Zero quantity preserved through the query path.
-  expect((await queryItems(f.db, { query: 'αθήνα' }))[0].quantity).toBe(0);
+  // Totals ride the breakdown through the query path.
+  expect((await queryItems(f.db, { query: 'αθήνα' }))[0].totalQuantity).toBe(3);
 });
 
-test('location: all/existing/unknown + categories OR/dedup/unknown + AND cross-filter', async () => {
+test('location membership: stocked here matches, stocked elsewhere and sin-stock do not', async () => {
   const f = makeQueryFake();
   const pantry = f.loc('Pantry');
   const fridge = f.loc('Fridge');
   const bulk = f.cat('Bulk');
   const cold = f.cat('Cold');
-  const a = f.item('Rice milk', 1, pantry, [bulk]);
-  const b = f.item('Rice ice', 0, fridge, [bulk, cold]);
-  const c = f.item('Oats', 3, fridge, []);
+  const a = f.item('Rice milk', [{ locationId: pantry, quantity: 1 }], [bulk]);
+  const b = f.item(
+    'Rice ice',
+    [
+      { locationId: pantry, quantity: 2 },
+      { locationId: fridge, quantity: 3 },
+    ],
+    [bulk, cold],
+  );
+  const c = f.item('Oats', [], []);
   expect((await queryItems(f.db)).map((i) => i.id)).toEqual([a, b, c]);
   expect(
     (await queryItems(f.db, { locationId: null })).map((i) => i.id),
   ).toEqual([a, b, c]);
-  expect(
-    (await queryItems(f.db, { locationId: fridge })).map((i) => i.id),
-  ).toEqual([b, c]);
+  // b appears once with its full breakdown even under the filter.
+  const fridgePage = await queryItems(f.db, { locationId: fridge });
+  expect(fridgePage.map((i) => i.id)).toEqual([b]);
+  expect(fridgePage[0].stock).toHaveLength(2);
+  expect(fridgePage[0].totalQuantity).toBe(5);
+  // Sin-stock items match no location filter but stay in the full list.
+  expect(await queryItems(f.db, { locationId: pantry })).toHaveLength(2);
   expect(await queryItems(f.db, { locationId: 9999 })).toEqual([]);
   expect(
     (await queryItems(f.db, { categoryIds: [] })).map((i) => i.id),
@@ -253,28 +281,45 @@ test('location: all/existing/unknown + categories OR/dedup/unknown + AND cross-f
   const detail = (await queryItems(f.db, { query: 'oats' }))[0];
   expect(detail.categoryIds).toEqual([]);
   expect(detail.categories).toEqual([]);
-  expect(detail.location).toMatchObject({ id: fridge, name: 'Fridge' });
+  expect(detail.stock).toEqual([]);
+  expect(detail.totalQuantity).toBe(0);
 });
 
-test('stable order, many-category model, empty skips follow-up reads, 101 items stay bounded', async () => {
+test('one answer per product: multi-location breakdown with total, stable order', async () => {
   const f = makeQueryFake();
-  const l = f.loc();
+  const pantry = f.loc('Pantry');
+  const garage = f.loc('Garage');
   const c2 = f.cat('b');
   const c1 = f.cat('a');
-  const many = f.item('Many', 5, l, [c1, c2]);
-  f.item('Zero', 0, l, []);
+  const many = f.item(
+    'Many',
+    [
+      { locationId: garage, quantity: 5 },
+      { locationId: pantry, quantity: 2 },
+    ],
+    [c1, c2],
+  );
+  const sin = f.item('Zero', [], []);
   const got = await queryItems(f.db);
   expect(got.map((i) => i.id)).toEqual(
     [...got.map((i) => i.id)].sort((x, y) => x - y),
   );
   const manyDetail = got.find((i) => i.id === many);
   if (manyDetail === undefined) throw new Error('test: many item missing');
+  expect(manyDetail.totalQuantity).toBe(7);
+  expect(manyDetail.stock.map((s) => s.locationId)).toEqual([pantry, garage]);
+  expect(manyDetail.stock[0].location.name).toBe('Pantry');
   expect(manyDetail.categoryIds).toEqual([c2, c1]);
   expect(manyDetail.categories.map((x) => x.id)).toEqual([c2, c1]);
-  // Three batched reads: items, links for the surviving ids, locations.
+  const sinDetail = got.find((i) => i.id === sin);
+  expect(sinDetail?.stock).toEqual([]);
+  expect(sinDetail?.totalQuantity).toBe(0);
+  // Three batched reads: items, links for the page ids, stock+locations join.
   expect(f.calls).toHaveLength(3);
   expect(f.calls[1].source).toContain('WHERE jc.item_id IN');
-  expect(f.calls[2].source).toContain('WHERE l.id IN');
+  expect(f.calls[2].source).toContain('FROM stock');
+  expect(f.calls[2].source).toContain('JOIN locations');
+  expect(f.calls[2].source).toContain('WHERE s.item_id IN');
 
   const empty = makeQueryFake();
   empty.loc();
@@ -283,13 +328,12 @@ test('stable order, many-category model, empty skips follow-up reads, 101 items 
 
   // Selective predicates skip follow-up reads where the names are not
   // needed: an empty page stops after the item read, and a category miss
-  // stops after the batched link read. S9 cross-entity matching means a
-  // text miss can no longer stop after read 1 — the location/category names
-  // are unread at that point — so it pays the full 3-read shape.
+  // stops after the batched link read. A text miss still pays the full
+  // 3-read shape (location/category names are unread at read 1).
   const selective = makeQueryFake();
   const sl = selective.loc();
   const sc = selective.cat('Bulk');
-  selective.item('Rice', 1, sl, [sc]);
+  selective.item('Rice', [{ locationId: sl, quantity: 1 }], [sc]);
   expect(await queryItems(selective.db, { query: 'no-such-item' })).toEqual([]);
   expect(selective.calls).toHaveLength(3);
   expect(await queryItems(selective.db, { categoryIds: [9999] })).toEqual([]);
@@ -297,13 +341,14 @@ test('stable order, many-category model, empty skips follow-up reads, 101 items 
 
   const big = makeQueryFake();
   const bl = big.loc();
-  for (let n = 0; n < 101; n++) big.item(`item-${n}`, n % 3, bl, []);
+  for (let n = 0; n < 101; n++)
+    big.item(`item-${n}`, [{ locationId: bl, quantity: (n % 3) + 1 }], []);
   const all = await queryItems(big.db);
   expect(all).toHaveLength(101);
-  // Still one batched links read + one batched locations read, never N+1.
+  // Still one batched links read + one batched stock read, never N+1.
   expect(big.calls).toHaveLength(3);
   expect(big.calls[1].params).toHaveLength(101);
-  expect(big.calls[2].params).toEqual([bl]);
+  expect(big.calls[2].params).toHaveLength(101);
   expect(all.map((i) => i.id)).toEqual(
     [...all.map((i) => i.id)].sort((x, y) => x - y),
   );
@@ -312,16 +357,17 @@ test('stable order, many-category model, empty skips follow-up reads, 101 items 
 test('SQL shape is fixed/parameterized; invalid filters never touch the driver', async () => {
   const f = makeQueryFake();
   const l = f.loc();
-  const rice = f.item('Rice', 1, l);
+  const rice = f.item('Rice', [{ locationId: l, quantity: 1 }]);
   await queryItems(f.db, { locationId: l, query: "x' OR '1'='1" });
-  // No match, but S9 still reads the names that could match: the item page,
-  // the page links, and the surviving locations. The payload stays a JS
-  // literal throughout — nothing is interpolated into the SQL.
+  // No match, but the read still covers the names that could match: the
+  // item page, the page links, and the page stock join. The payload stays
+  // a JS literal throughout — nothing is interpolated into the SQL.
   expect(f.calls).toHaveLength(3);
   const [first] = f.calls;
   expect(first.source).toContain('FROM items');
   expect(first.source).not.toContain('JOIN locations');
-  expect(first.source).toContain('WHERE i.location_id = ?');
+  expect(first.source).toContain('EXISTS');
+  expect(first.source).toContain('s.location_id = ?');
   expect(first.source).toContain('ORDER BY i.id ASC');
   expect(first.source).not.toContain("x' OR");
   expect(first.params).toEqual([l]);
@@ -329,17 +375,18 @@ test('SQL shape is fixed/parameterized; invalid filters never touch the driver',
   // A matching query exercises the same three batched reads with bound params.
   await queryItems(f.db, { locationId: l, query: 'rice' });
   expect(f.calls).toHaveLength(6);
-  const [, links, locs] = f.calls.slice(3);
+  const [, links, stockJoin] = f.calls.slice(3);
   expect(links.source).toContain('JOIN categories');
   expect(links.source).toContain('WHERE jc.item_id IN (');
   expect(links.source).toContain('ORDER BY jc.item_id ASC');
   expect(links.source).not.toContain('Rice');
   expect(links.params).toEqual([rice]);
-  expect(locs.source).toContain('FROM locations');
-  expect(locs.source).toContain('WHERE l.id IN (');
-  expect(locs.source).toContain('ORDER BY l.id ASC');
-  expect(locs.source).not.toContain('Pantry');
-  expect(locs.params).toEqual([l]);
+  expect(stockJoin.source).toContain('FROM stock');
+  expect(stockJoin.source).toContain('JOIN locations');
+  expect(stockJoin.source).toContain('WHERE s.item_id IN (');
+  expect(stockJoin.source).toContain('ORDER BY s.item_id ASC');
+  expect(stockJoin.source).not.toContain('Pantry');
+  expect(stockJoin.params).toEqual([rice]);
 
   const spy: RepositoryDb = {
     runAsync: jest.fn(),
@@ -414,18 +461,14 @@ test('driver failures map to generic storage query errors with cause', async () 
   expect(String(failure.cause ?? failure)).toMatch(/disk I\/O/);
 });
 
-test('dangling location drops the item while keeping the 3-read bound', async () => {
+test('sin-stock items stay listed: no stock rows is a legitimate result', async () => {
   const f = makeQueryFake();
   const l = f.loc();
-  const good = f.item('Rice', 1, l);
-  // Dangling: location 9999 has no location row. The unjoined items page
-  // returns it, but the batched location read cannot, so inner-join
-  // semantics drop it exactly as the pre-refactor JOIN did.
-  const dangling = f.item('Ghost', 1, 9999);
-  expect(dangling).not.toBe(good);
+  const stocked = f.item('Rice', [{ locationId: l, quantity: 1 }]);
+  const sin = f.item('Ghost', [], []);
   const page = await queryItems(f.db);
-  expect(page.map((i) => i.id)).toEqual([good]);
-  expect(page.find((i) => i.id === dangling)).toBeUndefined();
+  expect(page.map((i) => i.id)).toEqual([stocked, sin]);
+  expect(page.find((i) => i.id === sin)?.totalQuantity).toBe(0);
   expect(f.calls).toHaveLength(3);
 });
 
@@ -433,7 +476,7 @@ test('second and third read faults map to generic storage query errors with caus
   const seedOne = () => {
     const f = makeQueryFake();
     const l = f.loc();
-    f.item('Rice', 1, l);
+    f.item('Rice', [{ locationId: l, quantity: 1 }]);
     return f;
   };
   const faultOnRead = (
@@ -467,25 +510,25 @@ test('second and third read faults map to generic storage query errors with caus
   expect(linkFailure.message).not.toContain('link read boom');
   expect(String(linkFailure.cause ?? linkFailure)).toMatch(/link read boom/);
 
-  const locFault = seedOne();
-  faultOnRead(locFault, 3, 'location read boom');
-  const locFailure = (await queryItems(locFault.db).catch(
+  const stockFault = seedOne();
+  faultOnRead(stockFault, 3, 'stock read boom');
+  const stockFailure = (await queryItems(stockFault.db).catch(
     (e: unknown) => e,
   )) as StorageError;
-  expect(locFailure).toBeInstanceOf(StorageError);
-  expect(locFailure).toMatchObject({
+  expect(stockFailure).toBeInstanceOf(StorageError);
+  expect(stockFailure).toMatchObject({
     code: 'storage',
     entity: 'item',
     operation: 'query',
   });
-  expect(locFailure.message).not.toContain('location read boom');
-  expect(String(locFailure.cause ?? locFailure)).toMatch(/location read boom/);
+  expect(stockFailure.message).not.toContain('stock read boom');
+  expect(String(stockFailure.cause ?? stockFailure)).toMatch(/stock read boom/);
 });
 
-test('malformed location row throws StorageError with cause instead of dropping', async () => {
+test('malformed stock row throws StorageError with cause instead of dropping', async () => {
   const f = makeQueryFake();
   const l = f.loc();
-  f.item('Rice', 1, l);
+  f.item('Rice', [{ locationId: l, quantity: 1 }]);
   const inner = f.db.getAllAsync as jest.Mock;
   const orig = inner.getMockImplementation() as (
     ...args: never[]
@@ -493,10 +536,10 @@ test('malformed location row throws StorageError with cause instead of dropping'
   inner.mockImplementation(async (...args: never[]) => {
     const [source] = args as unknown as [string, unknown[]?];
     const rows = (await orig(...args)) as Record<string, unknown>[];
-    if (/FROM locations/i.test(source)) {
-      // Bare/unaliased shape: no `location_*` keys, so the aliased-shape
+    if (/FROM stock s/i.test(source)) {
+      // Unaliased/broken shape: no `stock_item_id` key, so the shape
       // requirement must reject it loudly rather than drop the item.
-      return [{ id: l, name: 'Pantry', address: null, created_at: `ts-${l}` }];
+      return [{ item_id: 1, quantity: 1 }];
     }
     return rows;
   });
@@ -510,18 +553,22 @@ test('malformed location row throws StorageError with cause instead of dropping'
     operation: 'query',
   });
   expect(String((failure as StorageError).cause ?? failure)).toMatch(
-    /malformed location row/,
+    /malformed stock row/,
   );
 });
 
-test('S9: query matches only the location name, only a category name, or the item name', async () => {
+test('query matches only a stocked location name, only a category name, or the item name', async () => {
   const f = makeQueryFake();
   const pantry = f.loc('Pantry');
   const garage = f.loc('Garage');
   const dairy = f.cat('Dairy');
   const tools = f.cat('Tools');
-  const rice = f.item('Rice', 1, pantry, [dairy]);
-  const hammer = f.item('Hammer', 2, garage, [tools]);
+  const rice = f.item('Rice', [{ locationId: pantry, quantity: 1 }], [dairy]);
+  const hammer = f.item(
+    'Hammer',
+    [{ locationId: garage, quantity: 2 }],
+    [tools],
+  );
 
   // Location-name-only: no item name or category name contains 'pantry'.
   expect(
@@ -540,29 +587,39 @@ test('S9: query matches only the location name, only a category name, or the ite
   ).toEqual([hammer]);
 });
 
-test('S9: item matching two ways appears exactly once with stable order', async () => {
+test('item matching two ways appears exactly once with stable order', async () => {
   const f = makeQueryFake();
   const pantry = f.loc('Pantry');
   const bulk = f.cat('Pantry Goods');
-  // Name AND location AND category all contain the folded query.
-  const beans = f.item('Pantry Beans', 1, pantry, [bulk]);
-  const other = f.item('Pantry Oats', 2, pantry, []);
+  // Name AND stocked-location AND category all contain the folded query.
+  const beans = f.item(
+    'Pantry Beans',
+    [{ locationId: pantry, quantity: 1 }],
+    [bulk],
+  );
+  const other = f.item(
+    'Pantry Oats',
+    [{ locationId: pantry, quantity: 2 }],
+    [],
+  );
   const page = await queryItems(f.db, { query: 'pantry' });
   expect(page.map((i) => i.id)).toEqual([beans, other]);
   expect(new Set(page.map((i) => i.id)).size).toBe(page.length);
   const detail = page.find((i) => i.id === beans);
-  expect(detail?.location.name).toBe('Pantry');
+  expect(detail?.stock[0].location.name).toBe('Pantry');
   expect(detail?.categories.map((c) => c.name)).toEqual(['Pantry Goods']);
 });
 
-test('S9: non-matching query returns nothing; folding applies to location/category names', async () => {
+test('non-matching query returns nothing; folding applies to stocked location/category names', async () => {
   const f = makeQueryFake();
   const panteon = f.loc('Panteón');
   const garage = f.loc('Garage');
   const grains = f.cat('GRANOS');
   const tools = f.cat('Tools');
-  const rice = f.item('Rice', 1, panteon, [grains]);
-  f.item('Hammer', 1, garage, [tools]);
+  const rice = f.item('Rice', [{ locationId: panteon, quantity: 1 }], [grains]);
+  f.item('Hammer', [{ locationId: garage, quantity: 1 }], [tools]);
+  // A sin-stock item matches by name but never by a location name.
+  const sin = f.item('Rice crackers', [], []);
 
   expect(await queryItems(f.db, { query: 'no-such-taste' })).toEqual([]);
   // Accent folding on the location name: 'panteon' matches 'Panteón'.
@@ -576,26 +633,35 @@ test('S9: non-matching query returns nothing; folding applies to location/catego
   expect(
     (await queryItems(f.db, { query: 'granos' })).map((i) => i.id),
   ).toEqual([rice]);
+  // 'rice' matches the stocked item by name AND the sin-stock item by name.
+  expect((await queryItems(f.db, { query: 'rice' })).map((i) => i.id)).toEqual([
+    rice,
+    sin,
+  ]);
   // Case-insensitive location substring: 'pantri' matches 'PANTRIES'.
   const g = makeQueryFake();
   const pantries = g.loc('PANTRIES');
   const other = g.loc('Garage');
-  const a = g.item('Rice', 1, pantries, []);
-  g.item('Hammer', 1, other, []);
+  const a = g.item('Rice', [{ locationId: pantries, quantity: 1 }], []);
+  g.item('Hammer', [{ locationId: other, quantity: 1 }], []);
   expect(
     (await queryItems(g.db, { query: 'pantri' })).map((i) => i.id),
   ).toEqual([a]);
 });
 
-test('S9: cross-entity text ANDs with the location filter and category-OR without changing their semantics', async () => {
+test('cross-entity text ANDs with the location filter and category-OR without changing their semantics', async () => {
   const f = makeQueryFake();
   const pantry = f.loc('Pantry');
   const garage = f.loc('Garage');
   const dairy = f.cat('Dairy');
   const tools = f.cat('Tools');
-  const rice = f.item('Rice', 1, pantry, [dairy]);
-  const milk = f.item('Milk', 1, garage, [dairy]);
-  const beans2 = f.item('Hammer', 1, garage, [tools]);
+  const rice = f.item('Rice', [{ locationId: pantry, quantity: 1 }], [dairy]);
+  const milk = f.item('Milk', [{ locationId: garage, quantity: 1 }], [dairy]);
+  const hammers = f.item(
+    'Hammer',
+    [{ locationId: garage, quantity: 1 }],
+    [tools],
+  );
 
   // Location filter still narrows: 'dairy' matches rice+milk by category,
   // but the pantry filter keeps only rice.
@@ -604,8 +670,8 @@ test('S9: cross-entity text ANDs with the location filter and category-OR withou
       (i) => i.id,
     ),
   ).toEqual([rice]);
-  // Category-OR still narrows: 'garage' matches milk+hammer by location,
-  // but the dairy filter keeps only milk.
+  // Category-OR still narrows: 'garage' matches milk+hammer by stocked
+  // location, but the dairy filter keeps only milk.
   expect(
     (await queryItems(f.db, { query: 'garage', categoryIds: [dairy] })).map(
       (i) => i.id,
@@ -615,6 +681,6 @@ test('S9: cross-entity text ANDs with the location filter and category-OR withou
   expect((await queryItems(f.db, { query: '   ' })).map((i) => i.id)).toEqual([
     rice,
     milk,
-    beans2,
+    hammers,
   ]);
 });

@@ -1,11 +1,15 @@
 /**
- * Approved M1 inventory domain types (no persistence, no queries).
+ * Inventory domain types: catalog identity plus per-location stock.
  *
- * Every item references exactly one location entity and zero or more
- * categories via the `item_categories` join (see `src/db/migrations.ts`).
- * Repository CRUD and filter queries arrive in M2/M3; this module only
- * describes shapes. `locationId`/`categoryIds` are the domain-side names of
- * the `location_id` / `item_id, category_id` columns.
+ * Identity is separate from storage (R1): `items` is the catalog (name
+ * only) and `stock(item_id, location_id, quantity)` records what is
+ * stored where. One item may have stock in many locations, each with its
+ * own quantity; a stock row means "hay algo acá" (`quantity > 0`), and an
+ * item with no stock rows anywhere stays visible as "sin stock" (R6).
+ * Repository CRUD and filter queries live in `./itemRepository` and
+ * `./itemQuery`; this module only describes shapes. `locationId` /
+ * `categoryIds` are the domain-side names of the `location_id` /
+ * `item_id, category_id` columns.
  */
 export interface Location {
   id: number;
@@ -20,13 +24,18 @@ export interface Category {
   created_at: string;
 }
 
+/** Catalog row: identity only, no quantity, no location. */
 export interface Item {
   id: number;
   name: string;
-  /** Zero means exhausted; distinct UI treatment is deferred past M1. */
-  quantity: number;
-  locationId: number;
   created_at: string;
+}
+
+/** One stock row: how much of an item sits at one location. */
+export interface StockLevel {
+  locationId: number;
+  location: Location;
+  quantity: number;
 }
 
 /** Input for creating a location: name required, address optional. */
@@ -40,38 +49,49 @@ export interface NewCategoryInput {
   name: string;
 }
 
-/** Input for creating an item: location required, categories optional. */
+/** One stock entry of an item input: location plus its quantity. */
+export interface NewItemStockInput {
+  locationId: number;
+  quantity: number;
+}
+
+/**
+ * Input for creating an item: name plus zero or more stock rows plus
+ * optional categories. Zero rows means catalog-only ("sin stock").
+ * A 0-quantity row is dropped rather than stored; duplicate location ids
+ * in one payload are rejected (see `./validation`).
+ */
 export interface NewItemInput {
   name: string;
-  quantity: number;
-  locationId: number;
+  stock?: NewItemStockInput[];
   categoryIds?: number[];
 }
 
 /**
- * Item read model: the stored row plus its resolved relations — the one
- * required location entity and the zero-to-many category list, with both
- * the foreign-key ids (`locationId`, `categoryIds`) and the entities.
+ * Item read model: the catalog row plus its per-location breakdown with
+ * the total, and the zero-to-many category list with both the
+ * foreign-key ids (`categoryIds`) and the entities. An item present in
+ * two locations is one row with a breakdown, never two rows (R2).
  */
 export interface ItemDetail {
   id: number;
   name: string;
-  /** Zero means exhausted; distinct UI treatment is deferred past M1. */
-  quantity: number;
-  locationId: number;
-  location: Location;
+  stock: StockLevel[];
+  /** Sum of the stock quantities; 0 when the item has no rows (sin stock). */
+  totalQuantity: number;
   categoryIds: number[];
   categories: Category[];
   created_at: string;
 }
 
 /**
- * Bounded P3a filter for `queryItems` (see `./itemQuery`).
+ * Bounded filter for `queryItems` (see `./itemQuery`).
  * `query` is an optional JS substring matched (case- and accent-folded,
- * literal) against the item name, its location name, and any of its
- * category names; `locationId` null/undefined means
- * all locations; `categoryIds` empty/undefined means no category filter
- * (OR across the selected ids, items deduped).
+ * literal) against the item name, the names of locations where the item
+ * has stock, and any of its category names; `locationId` null/undefined
+ * means all locations (membership: the item has stock there);
+ * `categoryIds` empty/undefined means no category filter (OR across the
+ * selected ids, items deduped).
  */
 export interface ItemFilter {
   query?: string;
@@ -80,13 +100,23 @@ export interface ItemFilter {
 }
 
 /**
- * Draft location selector for the add/edit form: exactly one of an
- * existing location id or a new location name/address. No synthetic
- * defaults; the form must supply one side.
+ * Draft location selector for one stock row of the add/edit form:
+ * exactly one of an existing location id or a new location
+ * name/address. No synthetic defaults; the form must supply one side.
  */
 export type ItemLocationDraft =
   | { kind: 'existing'; locationId: number }
   | { kind: 'new'; location: NewLocationInput };
+
+/**
+ * Draft stock row for the add/edit form: a location selector plus the
+ * quantity at that location. A 0 quantity means "no hay nada acá" and is
+ * dropped rather than stored.
+ */
+export interface ItemStockDraft {
+  location: ItemLocationDraft;
+  quantity: number;
+}
 
 /**
  * Draft category selector: each entry is either an existing category id
@@ -97,14 +127,28 @@ export type ItemCategoryDraft =
   | { kind: 'new'; category: NewCategoryInput };
 
 /**
- * Draft input for the add/edit form: item fields plus related-entity
- * selectors. The repository validates the whole draft, then creates the
- * new location/categories and the item (or item update) in one exclusive
- * transaction — any failure rolls back with no orphan rows.
+ * Draft input for the add/edit form: item name plus per-location stock
+ * rows plus related-entity selectors. The repository validates the whole
+ * draft, then creates the new locations/categories, the item, and its
+ * stock rows in one exclusive transaction — any failure rolls back with
+ * no orphan rows.
  */
 export interface ItemDraftInput {
   name: string;
-  quantity: number;
-  location: ItemLocationDraft;
+  stock?: ItemStockDraft[];
   categories?: ItemCategoryDraft[];
+}
+
+/** Impact of deleting a location, for the R3 confirmation copy. */
+export interface LocationDeleteImpact {
+  /** Stock rows that the delete removes (the DB cascades them). */
+  stockRows: number;
+  /** Items left with no stock anywhere afterwards (R6 sin stock). */
+  unstockedItems: number;
+}
+
+/** Impact of deleting a category, for the R4 confirmation copy. */
+export interface CategoryDeleteImpact {
+  /** Items that lose this association (items themselves survive). */
+  items: number;
 }

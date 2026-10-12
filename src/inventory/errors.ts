@@ -3,10 +3,12 @@
  *
  * Codes: `validation` (reuses `ValidationError` from `./validation`),
  * `not-found` (missing row, via `EntityNotFoundError` carrying the
- * `location` | `category` | `item` kind), `in-use` (location still
- * referenced by items), `conflict` (duplicate location/category name
- * after S11 trim/accent/case normalization, via `EntityConflictError`),
- * `storage` (any other SQLite/driver failure).
+ * `location` | `category` | `item` kind), `conflict` (duplicate
+ * location/category name after S11 trim/accent/case normalization, via
+ * `EntityConflictError`), `storage` (any other SQLite/driver failure).
+ * Deleting a location cascades its stock rows per the v4 schema (R3),
+ * so no `in-use` error exists: the delete flow counts the impact first
+ * (`locationDeleteImpact`) and the DB removes stock, never items.
  * Messages stay generic and never embed raw SQLite/driver text; the
  * original error travels as `cause`.
  */
@@ -25,20 +27,6 @@ export class EntityNotFoundError extends Error {
     this.name = 'EntityNotFoundError';
     this.entity = entity;
     this.id = id;
-  }
-}
-
-/** Thrown when a location delete is blocked by referencing item rows. */
-export class LocationInUseError extends Error {
-  readonly code = 'in-use';
-  readonly locationId: number;
-
-  constructor(locationId: number) {
-    super(
-      `Location ${locationId} is still referenced by items and cannot be deleted.`,
-    );
-    this.name = 'LocationInUseError';
-    this.locationId = locationId;
   }
 }
 

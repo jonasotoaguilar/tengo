@@ -13,6 +13,9 @@
  * (`DATABASE_NAME`) is always refused. Each case closes its database before
  * deleting the fixture file, in `finally`, so reruns never leak handles.
  *
+ * Cases target schema v4 (catalog `items` plus `stock`): the catalog
+ * survives a location delete while its stock rows cascade (R3).
+ *
  * This runs the REAL `expo-sqlite` driver with the ACTUAL
  * `initializeDatabase(db)` from `src/db` — no mocks here. Unit tests cover
  * orchestration with injected fakes only and never claim native proof.
@@ -190,13 +193,19 @@ export async function runNativeSqliteFixture(
         .map((r) => r.name)
         .sort()
         .join(',');
-      if (version !== 3) throw new Error(`user_version=${version}, want 3`);
-      for (const t of ['locations', 'categories', 'items', 'item_categories']) {
+      if (version !== 4) throw new Error(`user_version=${version}, want 4`);
+      for (const t of [
+        'locations',
+        'categories',
+        'items',
+        'item_categories',
+        'stock',
+      ]) {
         if (!tableNames.includes(t)) throw new Error(`missing table ${t}`);
       }
       return {
-        name: 'fresh database migrates to v2',
-        detail: `v2 tables: ${tableNames}`,
+        name: 'fresh database migrates to v4',
+        detail: `v4 tables: ${tableNames}`,
       };
     },
     checks,
@@ -214,8 +223,8 @@ export async function runNativeSqliteFixture(
           user_version: number;
         } | null
       )?.user_version;
-      if (version !== 3) throw new Error(`user_version=${version}, want 3`);
-      return { name: 'empty v1 migrates to v3', detail: 'user_version=3' };
+      if (version !== 4) throw new Error(`user_version=${version}, want 4`);
+      return { name: 'empty v1 migrates to v4', detail: 'user_version=4' };
     },
     checks,
   );
@@ -235,13 +244,24 @@ export async function runNativeSqliteFixture(
         db,
         "INSERT INTO locations (name) VALUES ('Casa')",
       );
-      await insert(
+      // The catalog holds identity only: no quantity, no location.
+      const itemId = await insert(
         db,
-        'INSERT INTO items (name, quantity, location_id) VALUES (?, ?, ?)',
-        ['Rice', 0, locId],
+        "INSERT INTO items (name) VALUES ('Rice')",
       );
       const items = await getCount(db, 'SELECT COUNT(*) AS count FROM items');
       if (items !== 1) throw new Error(`items=${items}, want 1`);
+      // Stock carries the quantity at the location.
+      await insert(
+        db,
+        'INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, ?)',
+        [itemId, locId, 2],
+      );
+      const stockRows = await getCount(
+        db,
+        'SELECT COUNT(*) AS count FROM stock',
+      );
+      if (stockRows !== 1) throw new Error(`stock=${stockRows}, want 1`);
       const catA = await insert(
         db,
         "INSERT INTO categories (name) VALUES ('Grains')",
@@ -250,12 +270,6 @@ export async function runNativeSqliteFixture(
         db,
         "INSERT INTO categories (name) VALUES ('Staples')",
       );
-      const itemRow = (await db.getFirstAsync(
-        'SELECT id AS id FROM items LIMIT 1',
-      )) as {
-        id: number;
-      } | null;
-      const itemId = itemRow?.id ?? 1;
       await insert(
         db,
         'INSERT INTO item_categories (item_id, category_id) VALUES (?, ?)',
@@ -276,29 +290,65 @@ export async function runNativeSqliteFixture(
         'INSERT INTO item_categories (item_id, category_id) VALUES (?, ?)',
         [itemId, catA],
       );
-      const nullError = await expectRejects(
+      // A stock row means something is stored there: zero is rejected.
+      const zeroError = await expectRejects(
         db,
-        "INSERT INTO items (name, quantity, location_id) VALUES ('NoLoc', 1, NULL)",
+        'INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, ?)',
+        [itemId, locId, 0],
       );
-      const absentError = await expectRejects(
+      const dupStockError = await expectRejects(
         db,
-        "INSERT INTO items (name, quantity, location_id) VALUES ('Ghost', 1, 9999)",
+        'INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, ?)',
+        [itemId, locId, 3],
+      );
+      const absentItemError = await expectRejects(
+        db,
+        'INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, ?)',
+        [9999, locId, 1],
+      );
+      const absentLocError = await expectRejects(
+        db,
+        'INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, ?)',
+        [itemId, 9999, 1],
       );
       const fracError = await expectRejects(
         db,
-        'INSERT INTO items (name, quantity, location_id) VALUES (?, ?, ?)',
-        ['Frac', 1.5, locId],
+        'INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, ?)',
+        [itemId, locId, 1.5],
       );
       const textError = await expectRejects(
         db,
-        'INSERT INTO items (name, quantity, location_id) VALUES (?, ?, ?)',
-        ['TextBad', 'not-a-number', locId],
+        'INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, ?)',
+        [itemId, locId, 'not-a-number'],
       );
+      // R3: deleting the location removes its stock rows; the catalog
+      // item survives (and keeps its category links). `locId` is a
+      // driver-returned integer from our own insert above, never user
+      // input; `execAsync` takes no params so interpolation is safe here.
+      await db.execAsync(`DELETE FROM locations WHERE id = ${locId}`);
+      const stockAfter = await getCount(
+        db,
+        'SELECT COUNT(*) AS count FROM stock',
+      );
+      const itemsAfter = await getCount(
+        db,
+        'SELECT COUNT(*) AS count FROM items',
+      );
+      const joinsAfter = await getCount(
+        db,
+        'SELECT COUNT(*) AS count FROM item_categories',
+      );
+      if (stockAfter !== 0 || itemsAfter !== 1 || joinsAfter !== 2) {
+        throw new Error(
+          `location delete: stock=${stockAfter} items=${itemsAfter} joins=${joinsAfter}, want 0/1/2`,
+        );
+      }
       return {
         name: 'constraints hold on device SQLite',
         detail:
-          `fk=ON, zero-qty ok, joins=${joins}, duplicate rejected (${dupError.slice(0, 40)}), ` +
-          `null/absent location rejected, 1.5 + text qty rejected (${fracError.slice(0, 30)} / ${textError.slice(0, 30)}; ${nullError.slice(0, 20)} / ${absentError.slice(0, 20)})`,
+          `fk=ON, catalog+stock ok, joins=${joins}, duplicate rejected (${dupError.slice(0, 40)}), ` +
+          `zero/dup stock rejected, absent item/location rejected, 1.5 + text qty rejected (${fracError.slice(0, 30)} / ${textError.slice(0, 30)}; ${zeroError.slice(0, 20)} / ${dupStockError.slice(0, 20)} / ${absentItemError.slice(0, 20)} / ${absentLocError.slice(0, 20)}), ` +
+          `location delete cascades stock only (stock=0 items=1 joins=2)`,
       };
     },
     checks,
@@ -367,14 +417,14 @@ export async function runNativeSqliteFixture(
         db,
         "SELECT COUNT(*) AS count FROM locations WHERE name = 'RollbackProbe'",
       );
-      if (version !== 3 || probes !== 0) {
+      if (version !== 4 || probes !== 0) {
         throw new Error(
-          `version=${version} probes=${probes}, want 3/0 rolled back`,
+          `version=${version} probes=${probes}, want 4/0 rolled back`,
         );
       }
       return {
         name: 'forced transaction failure rolls back',
-        detail: 'version=3 probes=0',
+        detail: 'version=4 probes=0',
       };
     },
     checks,

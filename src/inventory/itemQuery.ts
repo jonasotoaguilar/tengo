@@ -1,48 +1,52 @@
 /**
- * P3a bounded item query/read model (host-fake unit; real SQLite proof is P3b).
+ * Bounded item query/read model over catalog + stock (host-fake unit;
+ * real SQLite proof is isolated-fixture work).
  *
  * `queryItems(db, filter)` returns the `ItemDetail` read model with at most
- * three SQL reads regardless of N: one `items` select WITHOUT the location
- * join (`id, name, quantity, location_id, created_at`, optional
- * parameterized `location_id` WHERE, `ORDER BY item id ASC`), then — only
- * when the item page is non-empty — one batched
- * `item_categories JOIN categories` select constrained to the page ids
- * (`WHERE jc.item_id IN (?,…)` with generated placeholders and bound params,
- * `ORDER BY item/category id ASC`), then — only when rows survive the
- * category-OR predicate — one batched `locations` select for
- * the distinct surviving location ids (`WHERE l.id IN (?,…)` with generated
- * placeholders and bound params, `ORDER BY location id ASC`). No unbounded
- * full-table link/location scan is ever issued, and empty intermediate sets
- * skip their follow-up reads (no items → 1 read; category eliminates
- * all → 2 reads).
+ * three SQL reads regardless of N: one catalog `items` select (`id, name,
+ * created_at`, optional membership filter `EXISTS (SELECT 1 FROM stock s
+ * WHERE s.item_id = i.id AND s.location_id = ?)` for the location filter,
+ * `ORDER BY item id ASC`), then — only when the item page is non-empty —
+ * one batched `item_categories JOIN categories` select constrained to the
+ * page ids (`WHERE jc.item_id IN (?,…)` with generated placeholders and
+ * bound params, `ORDER BY item/category id ASC`), then — only when rows
+ * survive the category-OR predicate — one batched stock+locations join
+ * (`SELECT s.item_id, s.quantity, l.* FROM stock s JOIN locations l ON
+ * l.id = s.location_id WHERE s.item_id IN (…) ORDER BY s.item_id, l.id`)
+ * that delivers the breakdown AND the location names in a single read,
+ * so the bound stays three. No unbounded full-table scan is ever issued,
+ * and empty intermediate sets skip their follow-up reads (no items → 1
+ * read; category eliminates all → 2 reads).
  *
- * S9 cross-entity text matching means the name-only prefilter cannot decide
+ * Cross-entity text matching means the name-only prefilter cannot decide
  * the result set: a query matches when the folded query is a substring of
- * the folded item name, the folded location name, or any folded category
- * name, so the location/category names must be read before the text
- * predicate runs. The link read therefore covers the whole page (not just
- * name survivors) and the location read covers every category survivor
- * (an undecided row may still match through its location name). The worst
- * case per keystroke is the same full 3-read shape the unfiltered list
- * already pays; a name miss no longer short-circuits after read 1.
+ * the folded item name, the folded name of any location where the item
+ * has stock, or any folded category name, so the stock/location names
+ * must be read before the text predicate runs. The link read therefore
+ * covers the whole page (not just name survivors) and the stock read
+ * covers every category survivor (an undecided row may still match
+ * through a location name). The worst case per keystroke is the same
+ * full 3-read shape the unfiltered list already pays; a name miss no
+ * longer short-circuits after read 1.
  *
  * The text predicate, the category-OR target-set predicate, and the
  * location-name predicate are all decided on raw rows: name filtering runs
  * on the raw item rows, category membership on the raw link id pairs, and
- * location-name matching on the raw location rows. `ItemDetail` and
- * `Location` are allocated only for rows that survive all three.
+ * location-name matching on the raw stock rows. `ItemDetail`, `Location`,
+ * and `StockLevel` are allocated only for rows that survive all three.
  * `Category`/`categoryIds` are allocated for category survivors, which is
  * before the location-name drop, so a row dropped only by its location name
  * has already built its category list: one list per surviving row, discarded
  * by the drop. An item matching in more than one way still appears exactly
- * once (one row per item, stable `id ASC` page order).
- * Inner-join semantics are preserved exactly: an item whose location row is
- * missing from the batched location read is dropped, because the previous
- * `JOIN locations` shape excluded it.
+ * once (one row per item, stable `id ASC` page order), with its FULL
+ * breakdown — even under a location filter, the row shows every location,
+ * never just the filtered one. An item with no stock rows is a legitimate
+ * "sin stock" result with total 0; it matches no location filter (no
+ * membership) and no location-name query.
  *
  * Name matching is a verbatim-preserving JS substring with accent folding,
- * applied to the item name, the location name, and every category name:
- * both the trimmed query and each compared value are normalized with
+ * applied to the item name, each stocked location name, and every category
+ * name: both the trimmed query and each compared value are normalized with
  * Unicode NFD, combining marks (`\\p{Diacritic}`) are stripped, then the
  * folded text is lowercased and compared with literal `includes`. That keeps
  * ordinary Unicode case (`CAFÉ` matches `café`) and folds accents both
@@ -57,12 +61,10 @@
  * without touching the driver. `null`/`undefined` location means all
  * locations; `undefined`/empty categories mean no category filter.
  * Duplicate category ids are deduped; valid-but-unknown location or
- * category ids yield `[]`, never errors. Missing locations cannot be
- * synthesized (the v2 FK guarantees the join); dangling category links
- * follow the existing read behavior and drop from the list. The batched
- * locations read MUST return the aliased shape (`location_id`,
+ * category ids yield `[]`, never errors. The batched stock read MUST
+ * return the aliased shape (`stock_item_id`, `quantity`, `location_id`,
  * `location_name`, `location_address`, `location_created_at`); host fakes
- * return that same aliased shape. A location row that does not match the
+ * return that same aliased shape. A stock row that does not match the
  * aliased shape throws `StorageError('item', 'query')` with `cause`
  * instead of silently dropping items, so a dropped column or broken alias
  * surfaces as an error. Driver failures become generic
@@ -70,12 +72,18 @@
  */
 import type { RepositoryDb } from './database';
 import { StorageError } from './errors';
-import type { Category, ItemDetail, ItemFilter, Location } from './types';
+import type {
+  Category,
+  ItemDetail,
+  ItemFilter,
+  Location,
+  StockLevel,
+} from './types';
 import { ValidationError, validateId } from './validation';
 
 export type { ItemFilter } from './types';
 
-/** Validated P3a filter: trimmed query or null, resolved location, deduped cats. */
+/** Validated filter: trimmed query or null, resolved location, deduped cats. */
 export interface NormalizedItemFilter {
   query: string | null;
   locationId: number | null;
@@ -136,12 +144,12 @@ export function normalizeItemFilter(
 interface ItemRow {
   item_id: number;
   item_name: string;
-  item_quantity: number;
-  item_location_id: number;
   item_created_at: string;
 }
 
-interface LocationRow {
+interface StockRow {
+  stock_item_id: number;
+  quantity: number;
   location_id: number;
   location_name: string;
   location_address: string | null;
@@ -149,16 +157,18 @@ interface LocationRow {
 }
 
 /**
- * Require the aliased location shape the batched `locations` SELECT always
- * produces. Bare `{id, name, address, created_at}` rows are NOT accepted
- * (host fakes return the aliased shape too). Anything else throws
- * `StorageError('item', 'query')` with `cause` so a dropped column or a
- * broken alias fails loudly instead of silently dropping items. Note:
- * `location_address` must be present as `string | null`; a missing
- * (`undefined`) address is malformed, never coalesced to null.
+ * Require the aliased stock shape the batched stock+locations SELECT
+ * always produces. Anything else throws `StorageError('item', 'query')`
+ * with `cause` so a dropped column or a broken alias fails loudly
+ * instead of silently dropping items. Note: `location_address` must be
+ * present as `string | null`; a missing (`undefined`) address is
+ * malformed, never coalesced to null. `quantity` must be a number (the
+ * v4 CHECK guarantees positive integers in a real database).
  */
-function requireLocationRow(row: LocationRow): LocationRow {
+function requireStockRow(row: StockRow): StockRow {
   if (
+    typeof row.stock_item_id !== 'number' ||
+    typeof row.quantity !== 'number' ||
     typeof row.location_id !== 'number' ||
     typeof row.location_name !== 'string' ||
     (row.location_address !== null &&
@@ -168,7 +178,7 @@ function requireLocationRow(row: LocationRow): LocationRow {
     throw new StorageError(
       'item',
       'query',
-      new Error(`malformed location row: ${JSON.stringify(row)}`),
+      new Error(`malformed stock row: ${JSON.stringify(row)}`),
     );
   }
   return row;
@@ -182,14 +192,14 @@ interface CategoryLinkRow {
 }
 
 const ITEMS_SELECT =
-  'SELECT i.id AS item_id, i.name AS item_name, i.quantity AS item_quantity, ' +
-  'i.location_id AS item_location_id, i.created_at AS item_created_at ' +
+  'SELECT i.id AS item_id, i.name AS item_name, i.created_at AS item_created_at ' +
   'FROM items i';
 
-const LOCATIONS_SELECT_BASE =
-  'SELECT l.id AS location_id, l.name AS location_name, l.address AS location_address, ' +
+const STOCK_JOIN_SELECT_BASE =
+  'SELECT s.item_id AS stock_item_id, s.quantity AS quantity, ' +
+  'l.id AS location_id, l.name AS location_name, l.address AS location_address, ' +
   'l.created_at AS location_created_at ' +
-  'FROM locations l';
+  'FROM stock s JOIN locations l ON l.id = s.location_id';
 
 const CATEGORY_LINKS_SELECT_BASE =
   'SELECT jc.item_id AS link_item_id, c.id AS category_id, c.name AS category_name, ' +
@@ -214,17 +224,18 @@ function foldSearchText(value: string): string {
 
 /**
  * Query items with bounded reads (max three `getAllAsync` calls): the
- * unjoined item page, one batched category-link read for the page ids, and
- * one batched location read for the distinct category-surviving location
- * ids. JS accent-folded substring (NFD + strip Diacritic + lowercase,
- * literal `%_\\`) runs against the raw item, link, and location rows —
- * matching the item name, the location name, or any category name with
- * OR-with-dedup — and the category-OR runs on the raw link id pairs: all
- * decided on raw rows before any `ItemDetail`/`Location` allocation, with
+ * catalog item page (with an optional stock-membership location filter),
+ * one batched category-link read for the page ids, and one batched
+ * stock+locations join for the category survivors. JS accent-folded
+ * substring (NFD + strip Diacritic + lowercase, literal `%_\\`) runs
+ * against the raw item, link, and stock rows — matching the item name, a
+ * stocked location name, or any category name with OR-with-dedup — and
+ * the category-OR runs on the raw link id pairs: all decided on raw rows
+ * before any `ItemDetail`/`Location`/`StockLevel` allocation, with
  * category lists built for category survivors (before the location-name
- * drop). Item order is stable `id ASC`; categories
- * are `id ASC` with `categoryIds` matching the entity list. Quantity zero
- * is preserved. Items whose location row is absent stay excluded.
+ * drop). Item order is stable `id ASC`; categories and stock levels are
+ * `id ASC`. An item with no stock rows is a legitimate sin-stock result
+ * with total 0.
  */
 export async function queryItems(
   db: RepositoryDb,
@@ -239,7 +250,8 @@ export async function queryItems(
       );
     } else {
       itemRows = await db.getAllAsync<ItemRow>(
-        `${ITEMS_SELECT} WHERE i.location_id = ? ORDER BY i.id ASC`,
+        `${ITEMS_SELECT} WHERE EXISTS (SELECT 1 FROM stock s WHERE s.item_id = i.id AND s.location_id = ?) ` +
+          'ORDER BY i.id ASC',
         [normalized.locationId],
       );
     }
@@ -252,10 +264,10 @@ export async function queryItems(
   if (itemRows.length === 0) return [];
 
   // Cross-entity text predicate inputs, computed on raw rows only — no
-  // Location/Category/ItemDetail yet. Accent-folded literal substring: fold
-  // the query once, each item name once, each distinct category name once
-  // (cached by id), and each distinct location name once (cached by id) after
-  // the batched read.
+  // Location/Category/StockLevel/ItemDetail yet. Accent-folded literal
+  // substring: fold the query once, each item name once, each distinct
+  // category name once (cached by id), and each distinct stocked location
+  // name once (cached by id) after the batched read.
   const foldedQuery =
     normalized.query === null ? null : foldSearchText(normalized.query);
   const foldedItemName = new Map<number, string>();
@@ -263,8 +275,8 @@ export async function queryItems(
     foldedItemName.set(row.item_id, foldSearchText(row.item_name));
   }
 
-  // Category links batched to the whole page (id ASC order preserved). S9
-  // needs every row's category names before the text predicate can run, so
+  // Category links batched to the whole page (id ASC order preserved). The
+  // text predicate needs every row's category names before it can run, so
   // the read-1 name short-circuit is gone: the bound stays three reads and
   // the worst case is the full shape the unfiltered list already pays.
   const pageIds = itemRows.map((row) => row.item_id);
@@ -284,7 +296,7 @@ export async function queryItems(
 
   // Category-OR predicate on raw link id pairs — still no entity
   // allocation. Unchanged semantics: empty filter means no filtering, and
-  // a miss here still skips the location read (2 reads total).
+  // a miss here still skips the stock read (2 reads total).
   const wanted =
     normalized.categoryIds.length > 0 ? new Set(normalized.categoryIds) : null;
   const foldedCategoryName = new Map<number, string>();
@@ -340,19 +352,19 @@ export async function queryItems(
     byItem.set(link.link_item_id, list);
   }
 
-  // Locations batched to the distinct category-surviving location ids. A
-  // row undecided by name/category may still match through its location
-  // name, so this read cannot be skipped while survivors remain; a missing
-  // location row drops its item, preserving the old inner-join semantics.
-  const locationIds = [
-    ...new Set(categorySurvivors.map((row) => row.item_location_id)),
-  ].sort((a, b) => a - b);
-  let locationRows: LocationRow[];
+  // Stock + locations batched to the category survivors in one join. A
+  // row undecided by name/category may still match through a stocked
+  // location name, so this read cannot be skipped while survivors remain.
+  // The join is inner on the stock level: a stock row whose location is
+  // missing contributes no breakdown row, and an item with no stock rows
+  // at all is a legitimate sin-stock result (never dropped).
+  const survivorPageIds = categorySurvivors.map((row) => row.item_id);
+  let rawStockRows: StockRow[];
   try {
-    locationRows = await db.getAllAsync<LocationRow>(
-      `${LOCATIONS_SELECT_BASE} WHERE l.id IN (${inPlaceholders(locationIds.length)}) ` +
-        'ORDER BY l.id ASC',
-      [...locationIds],
+    rawStockRows = await db.getAllAsync<StockRow>(
+      `${STOCK_JOIN_SELECT_BASE} WHERE s.item_id IN (${inPlaceholders(survivorPageIds.length)}) ` +
+        'ORDER BY s.item_id ASC, l.id ASC',
+      [...survivorPageIds],
     );
   } catch (error) {
     if (error instanceof ValidationError || error instanceof StorageError) {
@@ -360,52 +372,61 @@ export async function queryItems(
     }
     throw new StorageError('item', 'query', error);
   }
-  const locationById = new Map<number, LocationRow>();
+  // Fail loudly on a malformed stock row (dropped column/broken alias):
+  // `requireStockRow` throws StorageError('item', 'query').
+  const stockRows = rawStockRows.map((row) => requireStockRow(row));
+  const stockByItem = new Map<number, StockRow[]>();
   const foldedLocationName = new Map<number, string>();
-  for (const raw of locationRows) {
-    // Fail loudly on a malformed location row (dropped column/broken
-    // alias): `requireLocationRow` throws StorageError('item', 'query').
-    // A merely missing location row still drops its item (inner join).
-    const locationRow = requireLocationRow(raw);
-    locationById.set(locationRow.location_id, locationRow);
-    // Fold once per distinct location, mirroring the category cache: the
-    // final loop compares every surviving row against its location name, so
-    // folding inside that loop would repeat the same work once per item.
-    foldedLocationName.set(
-      locationRow.location_id,
-      foldSearchText(locationRow.location_name),
-    );
+  for (const stockRow of stockRows) {
+    const list = stockByItem.get(stockRow.stock_item_id) ?? [];
+    list.push(stockRow);
+    stockByItem.set(stockRow.stock_item_id, list);
+    if (!foldedLocationName.has(stockRow.location_id)) {
+      // Fold once per distinct location, mirroring the category cache: the
+      // final loop compares every surviving row against its stocked
+      // location names, so folding inside that loop would repeat the same
+      // work once per item.
+      foldedLocationName.set(
+        stockRow.location_id,
+        foldSearchText(stockRow.location_name),
+      );
+    }
   }
 
   const details: ItemDetail[] = [];
   // One row per item in stable page (`id ASC`) order: an item matching in
   // more than one way (name, location, category) still appears exactly once.
   for (const row of categorySurvivors) {
-    const locationRow = locationById.get(row.item_location_id);
-    if (locationRow === undefined) continue;
+    const levels = stockByItem.get(row.item_id) ?? [];
     if (
       foldedQuery !== null &&
       !nameOrCategoryHit.has(row.item_id) &&
-      !(foldedLocationName.get(row.item_location_id) ?? '').includes(
-        foldedQuery,
+      !levels.some((level) =>
+        (foldedLocationName.get(level.location_id) ?? '').includes(foldedQuery),
       )
     ) {
       continue;
     }
     const categories = byItem.get(row.item_id) ?? [];
     const categoryIds = categories.map((category) => category.id);
-    const location: Location = {
-      id: locationRow.location_id,
-      name: locationRow.location_name,
-      address: locationRow.location_address,
-      created_at: locationRow.location_created_at,
-    };
+    const stock: StockLevel[] = levels.map((level) => {
+      const location: Location = {
+        id: level.location_id,
+        name: level.location_name,
+        address: level.location_address,
+        created_at: level.location_created_at,
+      };
+      return {
+        locationId: level.location_id,
+        location,
+        quantity: level.quantity,
+      };
+    });
     details.push({
       id: row.item_id,
       name: row.item_name,
-      quantity: row.item_quantity,
-      locationId: row.item_location_id,
-      location,
+      stock,
+      totalQuantity: stock.reduce((sum, level) => sum + level.quantity, 0),
       categoryIds,
       categories,
       created_at: row.item_created_at,

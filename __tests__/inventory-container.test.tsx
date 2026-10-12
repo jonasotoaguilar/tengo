@@ -65,34 +65,40 @@ interface PendingCall {
 const pending: PendingCall[] = [];
 
 interface FakeStore {
-  itemRows: Record<string, unknown>[];
-  linkRows: Record<string, unknown>[];
+  items: Record<string, unknown>[];
+  links: Record<string, unknown>[];
+  stock: Record<string, unknown>[];
   locations: Record<string, unknown>[];
   categories: Record<string, unknown>[];
 }
 
 const store: FakeStore = {
-  itemRows: [],
-  linkRows: [],
+  items: [],
+  links: [],
+  stock: [],
   locations: [],
   categories: [],
 };
 
 const closeAsync = jest.fn(async () => {});
 
-function itemRow(
-  id: number,
-  name: string,
+function itemRow(id: number, name: string): Record<string, unknown> {
+  return {
+    item_id: id,
+    item_name: name,
+    item_created_at: `created-${id}`,
+  };
+}
+
+function stockRow(
+  itemId: number,
   quantity: number,
   locationId: number,
   locationName: string,
 ): Record<string, unknown> {
   return {
-    item_id: id,
-    item_name: name,
-    item_quantity: quantity,
-    item_location_id: locationId,
-    item_created_at: `created-${id}`,
+    stock_item_id: itemId,
+    quantity,
     location_id: locationId,
     location_name: locationName,
     location_address: null,
@@ -101,11 +107,10 @@ function itemRow(
 }
 
 function seedPopulated(): void {
-  store.itemRows = [
-    itemRow(1, 'Rice', 2, 10, 'Pantry'),
-    itemRow(2, 'Lentils', 0, 11, 'Fridge'),
-  ];
-  store.linkRows = [];
+  store.items = [itemRow(1, 'Rice'), itemRow(2, 'Lentils')];
+  store.links = [];
+  // Rice lives in the Pantry; Lentils is catalog-only (sin stock, R6).
+  store.stock = [stockRow(1, 2, 10, 'Pantry')];
   store.locations = [
     { id: 10, name: 'Pantry', address: null, created_at: 'loc-created-10' },
     { id: 11, name: 'Fridge', address: null, created_at: 'loc-created-11' },
@@ -114,36 +119,10 @@ function seedPopulated(): void {
 }
 
 function valueFor(call: PendingCall): Record<string, unknown>[] {
-  if (call.sql.includes('item_categories')) return store.linkRows;
-  if (call.sql.includes('FROM items')) {
-    const params = call.params as number[] | undefined;
-    if (params !== undefined && params.length > 0) {
-      return store.itemRows.filter((row) => row.item_location_id === params[0]);
-    }
-    return store.itemRows;
-  }
-  if (call.sql.includes('FROM locations')) {
-    // `listLocations` selects the bare shape while the bounded `queryItems`
-    // batched read selects the `location_*` aliases: serve each caller the
-    // shape its SQL selected.
-    if (/l\.id IN/i.test(call.sql) || call.sql.includes('location_id')) {
-      return store.locations.map((loc) => {
-        const bare = loc as unknown as {
-          id: number;
-          name: string;
-          address: string | null;
-          created_at: string;
-        };
-        return {
-          location_id: bare.id,
-          location_name: bare.name,
-          location_address: bare.address,
-          location_created_at: bare.created_at,
-        };
-      });
-    }
-    return store.locations;
-  }
+  if (call.sql.includes('item_categories')) return store.links;
+  if (call.sql.includes('FROM stock')) return store.stock;
+  if (call.sql.includes('FROM items')) return store.items;
+  if (call.sql.includes('FROM locations')) return store.locations;
   if (call.sql.includes('FROM categories')) return store.categories;
   throw new Error(`unexpected SQL: ${call.sql}`);
 }
@@ -341,14 +320,14 @@ test('out-of-order filter completion lets the latest filter win', async () => {
     '2 of 2',
   );
 
-  // Filter A (Pantry) starts but its item read stays slow.
-  await fireEvent.press(screen.getByTestId('inventory-location-10'));
+  // Filter A (Rice) starts but its item read stays slow.
+  await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
   await act(async () => {});
   const roundA = pending.splice(0, pending.length);
   expect(roundA.length).toBeGreaterThan(0);
 
-  // Filter B (Fridge) starts on top of A.
-  await fireEvent.press(screen.getByTestId('inventory-location-11'));
+  // Filter B (Lentils) starts on top of A.
+  await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Lentils');
   await act(async () => {});
   const roundB = pending.splice(0, pending.length);
   expect(roundB.length).toBeGreaterThan(0);
@@ -379,11 +358,11 @@ test('a stale read error never replaces a newer ready list', async () => {
   await renderContainer();
   await settle();
 
-  await fireEvent.press(screen.getByTestId('inventory-location-10'));
+  await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
   await act(async () => {});
   const roundA = pending.splice(0, pending.length);
 
-  await fireEvent.press(screen.getByTestId('inventory-location-11'));
+  await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Lentils');
   await act(async () => {});
   const roundB = pending.splice(0, pending.length);
 
@@ -452,9 +431,33 @@ test('filtered zero with a nonzero total is no-results, not first-run', async ()
   expect(screen.getByTestId('inventory-add-noresults')).toBeDisabled();
 });
 
+test('selecting a location shows its quantity with sin-stock breakdowns', async () => {
+  initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+  await renderContainer();
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '2 of 2',
+  );
+
+  // Fridge holds no Rice and no Lentils stock: both rows stay visible
+  // (L9a), marked sin stock with the breakdown where stock exists.
+  await fireEvent.press(screen.getByTestId('inventory-location-11'));
+  await settle();
+  expect(screen.getByTestId('inventory-row-1-quantity')).toHaveTextContent(
+    /Quantity 0/,
+  );
+  expect(screen.getByTestId('inventory-row-1-exhausted')).toBeTruthy();
+  expect(screen.getByTestId('inventory-row-1-breakdown')).toHaveTextContent(
+    'Pantry 2',
+  );
+  expect(screen.getByTestId('inventory-row-2-exhausted')).toBeTruthy();
+  expect(screen.queryByTestId('inventory-noresults-message')).toBeNull();
+});
+
 test('empty inventory stays first-run while choices render', async () => {
-  store.itemRows = [];
-  store.linkRows = [];
+  store.items = [];
+  store.links = [];
+  store.stock = [];
   store.locations = [];
   store.categories = [];
   initializeDatabase.mockResolvedValueOnce(makeFakeDb());
@@ -522,14 +525,19 @@ describe('U2b opt-in mutations (enableMutations)', () => {
   const riceDetail = {
     id: 1,
     name: 'Rice',
-    quantity: 2,
-    locationId: 10,
-    location: {
-      id: 10,
-      name: 'Pantry',
-      address: null,
-      created_at: 'loc-created-10',
-    },
+    stock: [
+      {
+        locationId: 10,
+        location: {
+          id: 10,
+          name: 'Pantry',
+          address: null,
+          created_at: 'loc-created-10',
+        },
+        quantity: 2,
+      },
+    ],
+    totalQuantity: 2,
     categoryIds: [],
     categories: [],
     created_at: 'created-1',
@@ -565,8 +573,11 @@ describe('U2b opt-in mutations (enableMutations)', () => {
 
   async function fillValidCreateForm(): Promise<void> {
     await fireEvent.changeText(screen.getByTestId('item-form/name'), 'Quinoa');
-    await fireEvent.changeText(screen.getByTestId('item-form/quantity'), '1');
     await fireEvent.press(screen.getByTestId('item-form/location-10'));
+    await fireEvent.changeText(
+      screen.getByTestId('item-form/stock-0/quantity'),
+      '1',
+    );
   }
 
   test('Add opens the create route once the handle is ready', async () => {
@@ -692,14 +703,19 @@ describe('M4 transient feedback (Gap A)', () => {
   const riceDetail = {
     id: 1,
     name: 'Rice',
-    quantity: 2,
-    locationId: 10,
-    location: {
-      id: 10,
-      name: 'Pantry',
-      address: null,
-      created_at: 'loc-created-10',
-    },
+    stock: [
+      {
+        locationId: 10,
+        location: {
+          id: 10,
+          name: 'Pantry',
+          address: null,
+          created_at: 'loc-created-10',
+        },
+        quantity: 2,
+      },
+    ],
+    totalQuantity: 2,
     categoryIds: [],
     categories: [],
     created_at: 'created-1',
@@ -765,8 +781,11 @@ describe('M4 transient feedback (Gap A)', () => {
 
   async function fillValidCreateForm(): Promise<void> {
     await fireEvent.changeText(screen.getByTestId('item-form/name'), 'Quinoa');
-    await fireEvent.changeText(screen.getByTestId('item-form/quantity'), '1');
     await fireEvent.press(screen.getByTestId('item-form/location-10'));
+    await fireEvent.changeText(
+      screen.getByTestId('item-form/stock-0/quantity'),
+      '1',
+    );
   }
 
   test('no notice surface renders before anything happens', async () => {

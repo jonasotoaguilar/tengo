@@ -41,6 +41,11 @@ import type {
   ItemFilter,
   Location,
 } from '../inventory/types';
+import {
+  DARK as DARK_BASE,
+  LIGHT as LIGHT_BASE,
+  type PaletteBase,
+} from '../theme/tokens';
 
 export type InventoryListState = 'loading' | 'error' | 'ready';
 
@@ -59,40 +64,18 @@ export interface InventoryListProps {
   onOpenItem?: (id: number) => void;
 }
 
-interface Palette {
-  background: string;
-  text: string;
-  secondary: string;
-  surface: string;
-  border: string;
+interface Palette extends PaletteBase {
   skeleton: string;
-  accent: string;
-  accentOn: string;
-  error: string;
 }
 
 const LIGHT: Palette = {
-  background: '#FFFFFF',
-  text: '#1A1C19',
-  secondary: '#5C5F58',
-  surface: '#F4F2EC',
-  border: '#C9C5B8',
+  ...LIGHT_BASE,
   skeleton: '#E5E1D5',
-  accent: '#2F6B3A',
-  accentOn: '#FFFFFF',
-  error: '#B3261E',
 };
 
 const DARK: Palette = {
-  background: '#121212',
-  text: '#F2F1ED',
-  secondary: '#AEB0AD',
-  surface: '#1C1C1E',
-  border: '#38383A',
+  ...DARK_BASE,
   skeleton: '#2C2C2E',
-  accent: '#7BC79A',
-  accentOn: '#0B2E18',
-  error: '#FFB4AB',
 };
 
 function resolveOs(): 'android' | 'ios' {
@@ -120,7 +103,7 @@ function FilterChip({ testID, selected, onPress, palette, label }: ChipProps) {
       style={[
         styles.chip,
         {
-          borderColor: palette.border,
+          borderColor: palette.controlBorder,
           backgroundColor: selected ? palette.accent : 'transparent',
         },
       ]}
@@ -389,7 +372,7 @@ export default function InventoryList({
           accessibilityRole="text"
           accessibilityLabel={rowLabel}
           accessibilityHint={t('inventoryOpenUnavailableHint')}
-          style={[styles.row, { borderColor: palette.border }]}
+          style={[styles.row, { borderColor: palette.separator }]}
         >
           {body}
         </View>
@@ -404,7 +387,7 @@ export default function InventoryList({
         accessibilityHint={t('inventoryOpenItemHint')}
         accessibilityState={{ disabled: false }}
         onPress={() => open(item.id)}
-        style={[styles.row, { borderColor: palette.border }]}
+        style={[styles.row, { borderColor: palette.separator }]}
       >
         {body}
       </Pressable>
@@ -448,7 +431,7 @@ export default function InventoryList({
         returnKeyType="search"
         style={[
           styles.search,
-          { color: palette.text, borderColor: palette.border },
+          { color: palette.text, borderColor: palette.controlBorder },
         ]}
       />
       {query !== '' ? (

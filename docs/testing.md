@@ -382,10 +382,10 @@ than the one the device was set to.
 
 ## Recorded M5 contrast measurements (computed, not device-sampled)
 
-The M5 contrast floor is proposed in `DESIGN.md` section 5 and
-`ROADMAP.md` section 7: text at least 4.5:1, interactive controls and
-focus indicators at least 3:1. The values below are computed from the
-palette literals in the four production surfaces with the WCAG relative
+The M5 contrast floor is approved in `DESIGN.md` section 5 and
+`ROADMAP.md` section 7: text at least 4.5:1, interactive control
+boundaries at least 3:1. The values below are computed from the palette
+literals in the four production surfaces with the WCAG relative
 luminance formula. They are arithmetic on the committed token values,
 not a screenshot or device sample, and they do not measure focus
 indicators (which are drawn by the platform).
@@ -404,30 +404,31 @@ Text pairs, both schemes — all meet 4.5:1:
 | error text on surface | 5.84 | 10.02 |
 | inverse notice (`noticeText` on `noticeBackground`) | 17.16 | 16.58 |
 
-Control boundaries — the `border` token FAILS the proposed 3:1 floor in
-both schemes: 1.73 against the light background and 1.54 against the
-light surface; 1.60 against the dark background and 1.45 against the
-dark surface.
+Control boundaries — RESOLVED by the decision approved on 2026-10-12.
+One `border` token used to serve both roles and failed the 3:1 floor
+(light 1.73 against the background and 1.54 against the surface; dark
+1.60 and 1.45). `src/theme/tokens.ts` now carries the two roles
+separately, and it is the single source for every production surface:
 
-Disposition, recorded rather than waived:
+| Role | Light | Dark | Against background | Against surface |
+| --- | --- | --- | --- | --- |
+| `controlBorder` (interactive extent cue) | #8A8578 | #6E6E73 | 3.68 / 3.69 | 3.38 / 3.37 |
+| `separator` (decorative) | #C9C5B8 | #38383A | 1.73 / 1.60 | 1.54 / 1.45 |
 
-- Where the `border` token draws a decorative separator (item row
-  separators in `src/components/InventoryList.tsx`, the static draft-tag
-  outline in `src/components/ItemForm.tsx`), WCAG 1.4.11 does not apply
-  and the value is acceptable as-is.
-- Where it is the only cue for the extent of an interactive control —
-  the search field, the name/quantity/location/category inputs, the
-  quantity steppers, and the unselected filter/location/category chips —
-  the proposed 3:1 control floor is not met today.
-- The fix is a token change, not a layout change: add a
-  control-boundary token at or above 3:1 against both the background and
-  the surface, and use it for those controls while the decorative
-  separators keep the current value. That changes the visual weight of
-  every input outline, and `DESIGN.md` marks its token values "proposed
-  values, subject to approval", so the change needs an explicit decision
-  before it is implemented.
-- `src/screens/ItemFormScreen.tsx` defines `border` in both palettes but
-  never uses it; that is dead token surface, not a contrast failure.
+`controlBorder` draws the search field, the name/quantity/new-location/
+new-category inputs, the quantity steppers, and the location and category
+chips. `separator` keeps the lighter value for the item row separators
+and the static draft-tag outline, where WCAG 1.4.11 does not apply. The
+same two roles are the approved `DESIGN.md` section 5 table rows.
+
+Guard: `__tests__/contrast-floor.test.tsx` renders `ItemForm` and
+`InventoryList` in both schemes, reads the boundary color each control
+actually paints, and asserts at least 3:1 against the scheme's background
+and surface. The observed RED before the fix was 56 failing assertions
+(28 per scheme) carrying exactly the ratios above; the fix produced GREEN.
+A later token edit or a control that keeps the older role now fails the
+guard instead of passing unnoticed. Focus indicators stay platform-drawn
+and unmeasured.
 
 
 

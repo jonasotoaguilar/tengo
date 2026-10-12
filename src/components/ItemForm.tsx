@@ -46,6 +46,7 @@ import type {
   NewLocationInput,
 } from '../inventory/types';
 import { MAX_QUANTITY } from '../inventory/validation';
+import { DARK, LIGHT, type PaletteBase } from '../theme/tokens';
 
 export type ItemFormMode = 'add' | 'edit';
 
@@ -185,38 +186,7 @@ function focusNode(ref: RefObject<TextInput | View | null>) {
   if (typeof focusable.focus === 'function') focusable.focus();
 }
 
-interface Palette {
-  background: string;
-  text: string;
-  secondary: string;
-  surface: string;
-  border: string;
-  accent: string;
-  accentOn: string;
-  error: string;
-}
-
-const LIGHT: Palette = {
-  background: '#FFFFFF',
-  text: '#1A1C19',
-  secondary: '#5C5F58',
-  surface: '#F4F2EC',
-  border: '#C9C5B8',
-  accent: '#2F6B3A',
-  accentOn: '#FFFFFF',
-  error: '#B3261E',
-};
-
-const DARK: Palette = {
-  background: '#121212',
-  text: '#F2F1ED',
-  secondary: '#AEB0AD',
-  surface: '#1C1C1E',
-  border: '#38383A',
-  accent: '#7BC79A',
-  accentOn: '#0B2E18',
-  error: '#FFB4AB',
-};
+type Palette = PaletteBase;
 
 function FieldError({
   testID,
@@ -481,7 +451,7 @@ export default function ItemForm({
           returnKeyType="next"
           style={[
             styles.input,
-            { color: palette.text, borderColor: palette.border },
+            { color: palette.text, borderColor: palette.controlBorder },
           ]}
         />
         {errors?.name ? (
@@ -509,7 +479,7 @@ export default function ItemForm({
             style={[
               styles.stepper,
               {
-                borderColor: palette.border,
+                borderColor: palette.controlBorder,
                 backgroundColor: decrementDisabled
                   ? palette.surface
                   : 'transparent',
@@ -547,7 +517,7 @@ export default function ItemForm({
             returnKeyType="done"
             style={[
               styles.quantityInput,
-              { color: palette.text, borderColor: palette.border },
+              { color: palette.text, borderColor: palette.controlBorder },
             ]}
           />
           <Pressable
@@ -560,7 +530,7 @@ export default function ItemForm({
             style={[
               styles.stepper,
               {
-                borderColor: palette.border,
+                borderColor: palette.controlBorder,
                 backgroundColor: incrementDisabled
                   ? palette.surface
                   : 'transparent',
@@ -615,7 +585,7 @@ export default function ItemForm({
                 style={[
                   styles.chip,
                   {
-                    borderColor: palette.border,
+                    borderColor: palette.controlBorder,
                     backgroundColor: selected ? palette.accent : 'transparent',
                   },
                 ]}
@@ -643,7 +613,7 @@ export default function ItemForm({
             style={[
               styles.chip,
               {
-                borderColor: palette.border,
+                borderColor: palette.controlBorder,
                 backgroundColor:
                   values.location?.kind === 'new'
                     ? palette.accent
@@ -680,7 +650,7 @@ export default function ItemForm({
               autoCorrect={false}
               style={[
                 styles.input,
-                { color: palette.text, borderColor: palette.border },
+                { color: palette.text, borderColor: palette.controlBorder },
               ]}
             />
             <Text style={[styles.subLabel, { color: palette.text }]}>
@@ -699,7 +669,7 @@ export default function ItemForm({
               autoCorrect={false}
               style={[
                 styles.input,
-                { color: palette.text, borderColor: palette.border },
+                { color: palette.text, borderColor: palette.controlBorder },
               ]}
             />
           </View>
@@ -734,7 +704,7 @@ export default function ItemForm({
                 style={[
                   styles.chip,
                   {
-                    borderColor: palette.border,
+                    borderColor: palette.controlBorder,
                     backgroundColor: selected ? palette.accent : 'transparent',
                   },
                 ]}
@@ -755,7 +725,7 @@ export default function ItemForm({
             {newDrafts.map(({ name, index, key }) => (
               <View
                 key={key}
-                style={[styles.draftChip, { borderColor: palette.border }]}
+                style={[styles.draftChip, { borderColor: palette.separator }]}
               >
                 <Text
                   style={[styles.draftText, { color: palette.text }]}
@@ -803,7 +773,7 @@ export default function ItemForm({
             autoCorrect={false}
             style={[
               styles.newCategoryInput,
-              { color: palette.text, borderColor: palette.border },
+              { color: palette.text, borderColor: palette.controlBorder },
             ]}
           />
           <Pressable

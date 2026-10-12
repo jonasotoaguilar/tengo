@@ -25,6 +25,11 @@ import {
 import ItemForm, { type ItemFormErrors } from '../components/ItemForm';
 import type { RepositoryDb } from '../inventory/database';
 import type { Category, ItemDetail, Location } from '../inventory/types';
+import {
+  DARK as DARK_BASE,
+  LIGHT as LIGHT_BASE,
+  type PaletteBase,
+} from '../theme/tokens';
 import useItemFormController, {
   type ItemFormRoute,
 } from './useItemFormController';
@@ -43,25 +48,15 @@ export interface ItemFormScreenProps {
   onDismiss: () => void;
 }
 
-const LIGHT = {
-  background: '#FFFFFF',
-  text: '#1A1C19',
-  surface: '#F4F2EC',
-  border: '#C9C5B8',
-  accent: '#2F6B3A',
-  accentOn: '#FFFFFF',
-  error: '#B3261E',
+type Palette = PaletteBase & { overlay: string };
+
+const LIGHT: Palette = {
+  ...LIGHT_BASE,
   overlay: 'rgba(0, 0, 0, 0.4)',
 };
 
-const DARK = {
-  background: '#121212',
-  text: '#F2F1ED',
-  surface: '#1C1C1E',
-  border: '#38383A',
-  accent: '#7BC79A',
-  accentOn: '#0B2E18',
-  error: '#FFB4AB',
+const DARK: Palette = {
+  ...DARK_BASE,
   overlay: 'rgba(0, 0, 0, 0.6)',
 };
 

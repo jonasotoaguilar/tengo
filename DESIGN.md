@@ -224,26 +224,34 @@ confirm in section 4. Save confirms with transient feedback
   orchestrated load sequences; reduced-motion settings replace
   slides/parallax with crossfade or instant.
 
-## 5. Tokens, typography, spacing, touch (proposed)
+## 5. Tokens, typography, spacing, touch (approved)
 
 Semantic role tokens only — raw hex never drives UI, so light/dark
 resolve per theme:
 
-- Roles mapped per platform (proposed values, subject to approval):
+- Roles mapped per platform (approved values; `src/theme/tokens.ts` is
+  the single source, and raw hex never drives UI outside it):
 
-  | App role | Android M3 role | Light (proposed) | Dark (proposed) |
-  | -------- | --------------- | ---------------- | --------------- |
+  | App role | Android M3 role | Light | Dark |
+  | -------- | --------------- | ----- | ---- |
   | background | background | #FFFFFF | #121212 |
   | surface | surface | #F4F2EC | #1C1C1E |
   | primary action | primary / onPrimary | #2F6B3A / #FFFFFF | #7BC79A / #0B2E18 |
   | secondary container | secondaryContainer | #E5E1D5 | #2C2C2E |
-  | outline / separator | outline / outlineVariant | #C9C5B8 | #38383A |
+  | control outline | outline | #8A8578 | #6E6E73 |
+  | separator (decorative) | outlineVariant | #C9C5B8 | #38383A |
   | error | error / onError | #B3261E / #FFFFFF | #FFB4AB / #410002 |
   | label | onBackground | #1A1C19 | #F2F1ED |
   | secondary label | onSurfaceVariant | #5C5F58 | #AEB0AD |
-- Contrast floor (proposed, unmeasured until a device pass): text
-  at least 4.5:1 against its background; interactive controls and
-  focus indicators at least 3:1 against adjacent colors.
+- Contrast floor (approved): text at least 4.5:1 against its background;
+  interactive control boundaries at least 3:1 against both the background
+  and the surface. The `control outline` role carries the 3:1 floor —
+  light 3.68:1 on the background and 3.38:1 on the surface, dark 3.69:1
+  and 3.37:1 — while `separator` stays light because WCAG 1.4.11 does not
+  apply to decoration. `__tests__/contrast-floor.test.tsx` renders the
+  production surfaces in both schemes and fails if any control boundary
+  drops below the floor. Focus indicators are drawn by the platform and
+  are not measured.
 - Light: paper-neutral background, one tonal step for grouped
   headers/filter chips; dark: true dark scheme (not an invert),
   tonal elevation per Material 3.

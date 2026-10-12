@@ -296,10 +296,12 @@ Sections 3–5 record what is proposed.
 - Empty: first-run teaches adding the first item; location groups
   with zero items explain why rather than silently vanishing.
 - Accessibility: screen-reader names on all controls; 48dp minimum
-  touch targets on Android; visible focus; errors announced; reduced-motion
-  honored (crossfade/instant instead of slides/parallax). Proposed
-  contrast floor, unmeasured until a device pass: text at least
-  4.5:1, interactive controls at least 3:1 against adjacent colors.
+  touch targets on Android; visible focus; errors announced;
+  reduced-motion honored (crossfade/instant instead of slides/parallax).
+  Approved contrast floor, implemented and guarded: text at least
+  4.5:1, interactive control boundaries at least 3:1 against both the
+  background and the surface (`src/theme/tokens.ts`, guarded by
+  `__tests__/contrast-floor.test.tsx`).
 - i18n: every user-visible string in `src/i18n/resources.ts` with
   `es` parity; device locale detected at launch with English
   fallback; no hardcoded UI text.

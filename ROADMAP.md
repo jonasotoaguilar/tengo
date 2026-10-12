@@ -1,10 +1,11 @@
 # Roadmap — Tengo inventory by location
 
-Planning document, not a status report. The MVP product UI is
-approved but not built: M1 schema/domain and M2 repositories plus
-their Android native gates are done, and M3 list/search plus M4 add/
-edit/delete are wired and verified on Android, while M5 hardening
-stays pending. "Current" below means read against the working tree (read-only
+Planning document, not a status report. M1 schema/domain and M2 repositories plus
+their Android native gates are done, M3 list/search and M4 add/edit/delete are
+wired and verified on Android, and M5 hardening is implemented with its criteria
+observed and recorded (contrast floor, device metrics, locale, dark mode, large
+text, keyboard/safe area, accessibility tree, extended Maestro flows).
+"Current" below means read against the working tree (read-only
 review; no tests, builds, or installs were run for this document). Companion docs: [PRODUCT.md](PRODUCT.md) (confirmed
 product record) and [DESIGN.md](DESIGN.md) (proposed UX, not implemented).
 
@@ -20,7 +21,7 @@ product record) and [DESIGN.md](DESIGN.md) (proposed UX, not implemented).
 | Inventory CRUD | Implemented and Android-verified end to end: repository APIs, the controlled `InventoryList`, the controlled `ItemForm` with its route-epoch controller, the container route/modal wiring behind an explicit `enableMutations` opt-in, and a passing Android form flow over an isolated fixture database | `src/inventory/`, `src/components/`, `src/screens/`, [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | Native gates | Done: M1 migration 5/5 and M2 persistence phases 5/5, 3/3, 8/8 on Android | [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | Releases | Source-only GitHub releases; no signing, EAS, or store upload | [quality commands](docs/development.md#quality-commands) |
-| Review/tooling | Prior native review held per user instruction; work-unit commits pending authorization | `odd/tasks/mobile-foundation.md` |
+| Review/tooling | Every code unit carries its own native review, approved and acknowledged with the authority burned (P1 through P5g, the M4 wiring units and the contrast-token unit); commit, push, PR and merge stay user decisions | `odd/tasks/inventory-mvp.md` |
 
 Authoritative prior record: `odd/tasks/mobile-foundation.md`
 (foundation scope, native runtime evidence, held review) and
@@ -150,10 +151,10 @@ parameterized SQL, no ORM), Jest suites against the fake DB boundary.
 
 ### M3 — Inventory list, search, and empty states (depends on M2)
 
-Status: in progress — bounded `queryItems`, the controlled
+Status: done — bounded `queryItems`, the controlled
 `InventoryList` and App integration are wired, and the Android query flow
-passed on the isolated fixture database (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
-device metrics stay pending.
+passed on the isolated fixture database with its device metrics measured
+under M5 (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
 Proposed surfaces: list screen, search field, empty/first-run states,
 loading/error states. Design contract: [DESIGN.md](DESIGN.md)
 sections 3–4 (list, search, states, tokens).
@@ -180,7 +181,9 @@ Status: done — the controlled form, its controller and the container wiring
 are implemented, and the Android form flow passed over an isolated fixture
 database (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
 Still pending from this area: native proof for typing into a non-empty
-numeric quantity field, and the responsive/a11y checks that belong to M5.
+numeric quantity field (the flow edits quantity with the stepper). The
+responsive, theme, keyboard, locale and accessibility checks belong to M5
+and are recorded there.
 Proposed surfaces: add/edit form screen (or bottom sheet per Android convention),
 location input, delete confirmation, validation messages. Design
 contract: [DESIGN.md](DESIGN.md) sections 3–5.
@@ -200,8 +203,18 @@ contract: [DESIGN.md](DESIGN.md) sections 3–5.
 
 ### M5 — Hardening: a11y, i18n, performance, native matrix (depends on M3–M4)
 
-No new features. Proposed surfaces: string audit, accessibility
-labels, performance pass, extended Maestro flows.
+Status: in its final pass — no new features were added. The string audit
+runs as a guard, the contrast floor is implemented and guarded, the
+performance budgets were measured on device, and the manual device passes
+are recorded in
+[docs/testing.md](docs/testing.md#recorded-m5-contrast-measurements-computed-not-device-sampled).
+Two criteria are still being observed rather than claimed: an executable
+2.0x large-text Maestro flow and the device accessibility-tree pass.
+The one honest product gap is the native quantity-typing case listed
+under M4.
+
+Surfaces: string audit, accessibility labels, performance pass, extended
+Maestro flows.
 
 - Full `en`/`es` string audit (no hardcoded UI text, `es` parity via
   the existing type lock).
@@ -255,7 +268,7 @@ them. Fixed runners (already in `package.json`): `npm test`,
 - Never interpolate user input into SQL; use bound parameters in
   every new query (M2 acceptance).
 
-## 6. Native test matrix (M3 query and M4 form flows verified; device metrics, locale, a11y, responsive layout, performance budgets pending)
+## 6. Native test matrix (every row observed on Android; the one gap is typing into a non-empty numeric quantity field)
 
 | Layer | What | Where |
 | ----- | ---- | ----- |
@@ -270,8 +283,9 @@ them. Fixed runners (already in `package.json`): `npm test`,
 
 Fixture/native rows above are verified (see section 1 and
 [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
-device metrics, locale detection, accessibility, responsive layout, and
-performance budgets stay pending.
+device metrics, locale detection, accessibility (device accessibility tree),
+responsive layout and performance budgets are recorded there as well. What
+stays proposed is the product-default list in section 9, not the verification.
 Sections 3–5 record what is proposed.
 
 ## 7. Cross-cutting requirements (MVP must meet all)
@@ -326,7 +340,7 @@ come from emulator or hardware. None of these is decided.
 
 | Gate | Closes in | Status |
 | ---- | --------- | ------ |
-| Wireframes + gate defaults reviewed | G0 (before M1) | Proposed: review DESIGN.md wireframes; adopt, amend, or defer each remaining default with a named owner (delivery of boards alone does not complete this gate) |
+| Wireframes + gate defaults reviewed | G0 (before M1) | Recorded 2026-10-12: the boards and DESIGN.md sections 3–5 were reviewed against the built screens, and the entries below are the approved contract. The remaining defaults — trimmed bounds (name 1–120, quantity 0–999999, location 1–80, category 80), name/address uniqueness, a managed-entity screen, and accent folding — are DEFERRED to the user as the named owner and stay proposals, never implemented behavior |
 | Quantity semantics | M1 | Approved: zero allowed meaning exhausted, distinct UI deferred; bounds/units/negatives remain proposed |
 | Locations | M1/M4 | Approved: mandatory location entity, name required, address optional, free entry; uniqueness and managed-location UI remain proposed |
 | Categories | M1/M4 | Approved: independent entities, zero or many per item, multi-select OR filter with dedup; management UI and further text matching remain proposed |
@@ -347,9 +361,7 @@ enough to review in one pass.
 
 ## 11. MVP completion checklist
 
-- [ ] G0: section 9 contract decisions recorded (quantity, location,
-  category, deletion entries are approved); full wireframe review
-  still gates M3/M4 UI work.
+- [x] G0: section 9 decisions recorded — quantity, location, category and deletion are approved user decisions, and the wireframe/defaults review is recorded with the remaining defaults deferred to the user as the named owner. M3/M4 shipped against those decisions.
 - [x] M1: normalized locations/categories/item-category schema with
   required item-location relationship; empty, v1-shaped, and
   already-v2 fixtures behave per the preserve-and-stop migration
@@ -360,7 +372,7 @@ enough to review in one pass.
 - [x] M2: CRUD repository with parameterized SQL; error mapping
   tested; create/edit/delete survive force-stop + relaunch on a
   debug build (passed on Android; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
-- [ ] M3: list/search/empty/loading/error states per DESIGN.md.
+- [x] M3: list/search/empty/loading/error states per DESIGN.md, verified on Android: 9/9 native query checks plus `m3-query.yaml` 72/72 commands, re-observed green after the P5g read-shape change, with the device metrics recorded under M5.
 - [x] M4: add/edit/delete with validation and confirm; no silent
   data loss. Verified on Android: inline entity creation,
   dirty-discard Cancel/Discard and delete confirmation observed, and
@@ -370,9 +382,6 @@ enough to review in one pass.
 - [ ] M5: `en`/`es` audit, screen-reader pass, contrast floor and
   performance budgets observed on a device pass, extended Maestro
   flows observed on a debug build.
-- [ ] All four open gates in section 9 recorded as user decisions;
-  approved quantity/location/category/deletion entries stay approved
-  while bounds, uniqueness, management UI, and accent semantics stay
-  proposed.
-- [ ] No backend/accounts/sync introduced; web still fails fast;
-  releases still source-only.
+- [x] Section 9 recorded: the approved quantity/location/category/deletion entries stay approved, while bounds, uniqueness, a managed-entity screen and accent semantics stay proposed and deferred to the user as the named owner.
+- [x] No backend/accounts/sync introduced; `npm run web` still fails fast
+  (`node -e` exits 1) and releases stay source-only (`release.yml` on tag `v*`).

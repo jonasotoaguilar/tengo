@@ -7,7 +7,7 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "node -e \"console.error('Web is not installed: this project ships native Android/iOS only.');process.exit(1)\"",
+    "web": "node -e \"console.error('Web is not installed: this project ships native Android only.');process.exit(1)\"",
     "test": "jest",
     "test:ci": "jest --ci --runInBand",
     "typecheck": "tsc --noEmit",

@@ -1,11 +1,13 @@
 # Design — Tengo inventory by location
 
-Proposed planning design: no inventory screen is wired into the app
-yet. The working tree holds the readiness foundation (`App.tsx`
-default screen, `src/db/`, `src/i18n/`) plus implemented-but-unwired
-building blocks (`src/inventory/` repositories and bounded query,
-controlled `src/components/InventoryList.tsx`). This document plans
-the MVP UX so implementation can follow it later. Product truth lives in
+Design contract. The inventory UI is implemented and verified on Android:
+the list with search, location and category filters, the add/edit form with
+inline location/category creation, and the discard and delete
+confirmations. Section 3 therefore describes built behavior, and section 5
+carries the approved token values through `src/theme/tokens.ts`. Anything
+still marked proposed (trimmed bounds, name/address uniqueness, a
+managed-entity screen, accent folding) is a proposal, not implemented
+behavior. Product truth lives in
 [PRODUCT.md](PRODUCT.md); build order and acceptance live in
 [ROADMAP.md](ROADMAP.md) (M1–M5, gates, checklist).
 
@@ -107,7 +109,7 @@ location at a glance. Detail is justified only as the edit surface:
 no separate read-only detail screen is proposed; tapping an item
 opens it for editing.
 
-## 3. Screens and flows (proposed)
+## 3. Screens and flows (implemented; verified on Android)
 
 Conventions below: `[ ]` input, `( )` button, `>` row/tap target,
 `---` divider. All copy exists in `en` and `es` before build.

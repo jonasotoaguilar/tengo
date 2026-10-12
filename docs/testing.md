@@ -424,6 +424,19 @@ next tap after every `inputText`, and no waits on a transient state that a
 tap-settle window hides. It does not verify selectors against component
 source.
 
+Run artifacts: by default Maestro writes each run's `commands.json`,
+`manifest.json`, screenshots and `maestro.log` into
+`$HOME/.maestro/tests/<timestamp>/<flow>/`, outside the repository, and its
+default report format (`NOOP`) emits no JUnit file at all.
+`scripts/run-maestro.sh <flow.yaml>` keeps them inside the repository: it
+passes `--test-output-dir` pointing at `.maestro/runs/<timestamp>_<flow>/`
+(gitignored, evidence rather than source) and adds
+`--format JUNIT --output <run>/junit.xml`. Set `MAESTRO_REVERSE=1` to also
+apply `adb reverse tcp:8082 tcp:8083`, the known trap where the app's
+`debug_http_host` preference points at 8082 while the guarded CRUD bundle is
+served on 8083; `MAESTRO_RUN_DIR` overrides the artifact root and
+`MAESTRO_SERIAL` the device serial (default `emulator-5554`).
+
 ### M4 form flow — observed Android result
 
 The following was observed on the Android emulator (emulator-5554 (AVD Tengo_API34),

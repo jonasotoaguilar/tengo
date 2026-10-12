@@ -32,6 +32,17 @@ These rules exist because they were broken and the user reported the damage.
   Maestro's own artifacts already belong to `.maestro/runs/` (gitignored) via
   `scripts/run-maestro.sh`. "Scratch under `$HOME`" means a subdirectory, never
   `$HOME` itself.
+- **Prefer the Maestro MCP over `adb` for device interaction.** This project
+  enables it: `.pi/mcp.json` turns on the user-level `maestro` server
+  (`/home/sv-home/.maestro/bin/maestro mcp --no-viewer`), whose `env` already
+  carries `JAVA_HOME`, and the project is trusted. It is reachable through
+  codemode (`exposure: codemode`, so its tools are not in the direct tool list):
+  `mcp__maestro__list_devices`, `mcp__maestro__run`,
+  `mcp__maestro__inspect_screen`, `mcp__maestro__take_screenshot`, plus the
+  Maestro Cloud tools. `inspect_screen` returns the view hierarchy as compact
+  JSON, which replaces `adb shell uiautomator dump` — the command that wrote
+  `ui-*.xml` dumps into the home root. Verified working: `list_devices` reports
+  `emulator-5554` connected.
 - **Maestro needs `JAVA_HOME`.** There is no `java` on `PATH`, so the CLI exits
   with `ERROR: JAVA_HOME is not set and no 'java' command could be found in your
   PATH`. Use `JAVA_HOME=$HOME/.local/jdk-17.0.20.1+1`. Maestro itself is

@@ -182,7 +182,12 @@ appId: com.tengo.app
     timeout: 30000
 # A single-character search triggers one request, so later keystrokes
 # cannot consume the one-shot fault and then recover before the assertion.
-# Retrying H matches only Hammer in this fixture.
+# Search is a folded literal-substring OR over item name, location name,
+# and category names: H matches Café Grinder + CAFÉ filter through the
+# folded location Küche / category Kitchen, plus Hammer through its name
+# and its Tools + Kitchen categories, so the retried list is rows 1+2+4
+# (3 of 5), each once. Row 4 sits below the fold, so the retry scrolls
+# to it after proving the count and the above-fold rows.
 - tapOn:
     id: 'query-fixture-fail-next'
 - tapOn:
@@ -199,10 +204,31 @@ appId: com.tengo.app
     id: 'inventory-retry'
 - extendedWaitUntil:
     visible:
-      id: 'inventory-row-4'
+      id: 'inventory-count'
+      text: '^3 (of|de) 5$'
     timeout: 15000
 - assertVisible:
     id: 'inventory-count'
+    text: '^3 (of|de) 5$'
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-1'
+    direction: UP
+- assertVisible:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-2'
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-4'
+    direction: DOWN
+- assertVisible:
+    id: 'inventory-row-4'
+# Row 4 sits below the fold, so restore the header before clearing.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-search'
+    direction: UP
 - tapOn:
     id: 'inventory-search-clear'
 - assertVisible:

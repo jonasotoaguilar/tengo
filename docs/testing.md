@@ -270,6 +270,31 @@ These are single-sample numbers from one emulator; no repetition,
 percentile or second device is claimed. `tengo.db` was never created,
 opened or modified.
 
+#### Recorded device pass after the P5g read-shape change
+
+The search miss above came from reading the whole table and only then
+filtering. `queryItems` now reads the item page without the location
+join, then the category links only for the name survivors, then the
+locations only for the survivors that also pass the category filter —
+the predicates run before any `Location`/`ItemDetail` allocation. Same
+emulator, same AVD, same isolated database, same query:
+
+- `first list layout: 112.3ms (diagnostic, no budget)`
+- `seed 500 items (diagnostic setup, no budget): 26611.8ms — PASS`
+- `first-viewport data readiness (budget 1000ms): 193.3ms vs budget
+  1000ms: PASS`
+- `search per keystroke, data layer only (budget 200ms): 114.3ms vs
+  budget 200ms: PASS`
+- `single-row write (budget 100ms): 29.6ms vs budget 100ms: PASS`
+
+The search figure fell from 200.8 ms to 114.3 ms, so the proposed budget
+is met by measurement rather than by waiving it; the earlier FAIL stays
+recorded above as the reason the read shape changed. These are again
+single-sample numbers from one emulator — no percentile, repetition or
+second device — and the search figure is still the data-layer cost
+only, with UI render on top not separately instrumented. The seed figure
+is unbudgeted setup and varies run to run.
+
 Run the isolated Android form flow with the guarded CRUD bundle:
 
 ```sh

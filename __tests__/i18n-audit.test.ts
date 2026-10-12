@@ -51,6 +51,7 @@ import { en, es } from '../src/i18n/resources';
 /** Production surfaces this guard scans, relative to the repo root. */
 const PRODUCTION_SURFACES = [
   'src/components/InventoryList.tsx',
+  'src/components/EntityManager.tsx',
   'src/components/ItemForm.tsx',
   'src/screens/ItemFormScreen.tsx',
   'src/screens/InventoryContainer.tsx',

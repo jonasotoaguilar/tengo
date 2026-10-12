@@ -92,6 +92,7 @@ interface ListProps {
   onRetry: jest.Mock;
   onAdd?: (prefilledName?: string) => void;
   onOpenItem?: (id: number) => void;
+  onManageEntities?: () => void;
 }
 
 function baseProps(overrides: Partial<ListProps> = {}): ListProps {
@@ -726,5 +727,32 @@ describe('P5a accessibility labels and touch-target floors', () => {
       );
       expect(fab?.minHeight).toBeGreaterThanOrEqual(48);
     }
+  });
+});
+
+describe('entity-management entry point (D6)', () => {
+  test('the manage action emits exactly once when wired', async () => {
+    const onManageEntities = jest.fn();
+    const view = await renderList(
+      baseProps({
+        items: [makeItem({ id: 1 })],
+        totalCount: 1,
+        onAdd: jest.fn(),
+        onManageEntities,
+      }),
+    );
+    await fireEvent.press(view.getByTestId('inventory-manage-entities'));
+    expect(onManageEntities).toHaveBeenCalledTimes(1);
+  });
+
+  test('a missing manage entry point renders disabled with an honest hint', async () => {
+    const view = await renderList(
+      baseProps({ items: [makeItem({ id: 1 })], totalCount: 1 }),
+    );
+    const manage = view.getByTestId('inventory-manage-entities');
+    expect(manage.props.accessibilityState).toMatchObject({ disabled: true });
+    expect(String(manage.props.accessibilityHint ?? '')).toMatch(
+      /not available/i,
+    );
   });
 });

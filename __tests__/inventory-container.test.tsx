@@ -942,3 +942,79 @@ describe('M4 transient feedback (Gap A)', () => {
     expect(backgrounds[0]).not.toBe(backgrounds[1]);
   });
 });
+
+describe('Entity-management entry point (D6/S12 adopted)', () => {
+  async function renderMutations() {
+    return render(
+      <I18nextProvider i18n={i18n}>
+        <InventoryContainer enableMutations />
+      </I18nextProvider>,
+    );
+  }
+
+  test('the manage entry point opens the entity screen once the handle is ready', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+    expect(await screen.findByTestId('inventory-manage-entities')).toBeTruthy();
+    expect(screen.getByTestId('inventory-manage-entities')).not.toBeDisabled();
+
+    await fireEvent.press(screen.getByTestId('inventory-manage-entities'));
+    expect(await screen.findByTestId('entity-manager')).toBeTruthy();
+    expect(screen.getByTestId('entity-location-10')).toBeTruthy();
+    expect(screen.getByTestId('entity-category-20')).toBeTruthy();
+
+    await fireEvent.press(screen.getByTestId('entity-close'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('entity-manager')).toBeNull(),
+    );
+    await cleanup();
+  });
+
+  test('an entity write refreshes the list without blanking it', async () => {
+    const fake = makeFakeDb();
+    Object.assign(fake, {
+      runAsync: jest.fn(async () => ({ lastInsertRowId: 99, changes: 1 })),
+      getFirstAsync: jest.fn(async () => ({
+        id: 99,
+        name: 'Grains',
+        created_at: 'cat-created-99',
+      })),
+    });
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderMutations();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '2 of 2',
+    );
+
+    await fireEvent.press(screen.getByTestId('inventory-manage-entities'));
+    await screen.findByTestId('entity-manager');
+    const readsBefore = fake.getAllAsync.mock.calls.length;
+    await fireEvent.changeText(
+      screen.getByTestId('entity-new-category-name'),
+      'Grains',
+    );
+    await fireEvent.press(screen.getByTestId('entity-add-category'));
+    await waitFor(() =>
+      expect(fake.getAllAsync.mock.calls.length).toBeGreaterThan(readsBefore),
+    );
+    // The ready list stays visible through the background refresh.
+    expect(screen.queryByTestId('inventory-loading')).toBeNull();
+    expect(screen.getByTestId('inventory-count')).toBeTruthy();
+    await settle();
+    await cleanup();
+  });
+
+  test('the manage entry point stays disabled without opt-in mutations', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderContainer();
+    await settle();
+    const manage = await screen.findByTestId('inventory-manage-entities');
+    expect(manage).toBeDisabled();
+    expect(String(manage.props.accessibilityHint ?? '')).toMatch(
+      /not available/i,
+    );
+    await cleanup();
+  });
+});

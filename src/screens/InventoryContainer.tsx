@@ -22,6 +22,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AccessibilityInfo,
+  Modal,
   StyleSheet,
   Text,
   useColorScheme,
@@ -29,6 +30,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import EntityManager from '../components/EntityManager';
 import InventoryList, {
   type InventoryListState,
 } from '../components/InventoryList';
@@ -44,6 +46,7 @@ import type {
 } from '../inventory/types';
 import ItemFormScreen from './ItemFormScreen';
 import type { ItemFormRoute } from './useItemFormController';
+import useReducedMotion from './useReducedMotion';
 
 interface Palette {
   noticeBackground: string;
@@ -100,6 +103,7 @@ export default function InventoryContainer({
 }: InventoryContainerProps = {}) {
   const { t } = useTranslation();
   const scheme = useColorScheme();
+  const reduceMotion = useReducedMotion();
   const palette = scheme === 'dark' ? DARK : LIGHT;
   const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState<ItemFilter>({});
@@ -119,6 +123,11 @@ export default function InventoryContainer({
   // Open add/edit route. Independent of the read effect below so a
   // post-write refresh never unmounts the screen before dismissal.
   const [route, setRoute] = useState<ItemFormRoute | null>(null);
+  // Entity-management route (D6/S12 adopted): opened from the list's
+  // manage entry point, hosted in the same slide Modal pattern as the
+  // form screen. Independent of the read effect so a post-write refresh
+  // never unmounts it before dismissal.
+  const [entitiesOpen, setEntitiesOpen] = useState(false);
   // M4 Gap A transient confirmation: a small non-blocking notice near
   // the bottom of the container, rendered OUTSIDE the form modal so it
   // stays visible after the modal dismisses. The token lets a newer
@@ -162,6 +171,16 @@ export default function InventoryContainer({
   }, []);
   const handleDismiss = useCallback(() => {
     setRoute(null);
+  }, []);
+  const handleManageEntities = useCallback(() => {
+    setEntitiesOpen(true);
+  }, []);
+  const handleCloseEntities = useCallback(() => {
+    setEntitiesOpen(false);
+  }, []);
+  const handleEntitiesChanged = useCallback(() => {
+    backgroundRefreshRef.current = true;
+    setRefreshToken((token) => token + 1);
   }, []);
 
   // Write affordances arm only when opted in AND the handle is reactively
@@ -304,6 +323,7 @@ export default function InventoryContainer({
         onRetry={() => setRetryToken((token) => token + 1)}
         onAdd={mutationsReady ? handleAdd : undefined}
         onOpenItem={mutationsReady ? handleOpenItem : undefined}
+        onManageEntities={mutationsReady ? handleManageEntities : undefined}
       />
       {route !== null && dbHandle !== null ? (
         <ItemFormScreen
@@ -315,6 +335,22 @@ export default function InventoryContainer({
           onDeleted={handleDeleted}
           onDismiss={handleDismiss}
         />
+      ) : null}
+      {entitiesOpen && dbHandle !== null ? (
+        <Modal
+          testID="entity-manager-screen"
+          visible
+          animationType={reduceMotion ? 'none' : 'slide'}
+          onRequestClose={handleCloseEntities}
+        >
+          <EntityManager
+            db={dbHandle}
+            locations={locations}
+            categories={categories}
+            onChanged={handleEntitiesChanged}
+            onClose={handleCloseEntities}
+          />
+        </Modal>
       ) : null}
       {notice !== null ? (
         <View

@@ -62,6 +62,7 @@ export interface InventoryListProps {
   onRetry: () => void;
   onAdd?: (prefilledName?: string) => void;
   onOpenItem?: (id: number) => void;
+  onManageEntities?: () => void;
 }
 
 interface Palette extends PaletteBase {
@@ -230,6 +231,7 @@ export default function InventoryList({
   onRetry,
   onAdd,
   onOpenItem,
+  onManageEntities,
 }: InventoryListProps) {
   const { t } = useTranslation();
   const scheme = useColorScheme();
@@ -259,6 +261,7 @@ export default function InventoryList({
   const showPlatformAdd = state === 'ready' && !isFirstRun && !isNoResults;
   const showFab = showPlatformAdd && os === 'android';
   const addDisabled = onAdd === undefined;
+  const manageDisabled = onManageEntities === undefined;
 
   const emitSearch = (nextQuery: string) => {
     onFilterChange({ ...filter, query: nextQuery });
@@ -584,6 +587,18 @@ export default function InventoryList({
           palette={palette}
         />
       ) : null}
+      <TextAction
+        testID="inventory-manage-entities"
+        label={t('inventoryManageEntities')}
+        hint={
+          manageDisabled
+            ? t('inventoryManageEntitiesUnavailableHint')
+            : undefined
+        }
+        disabled={manageDisabled}
+        onPress={() => onManageEntities?.()}
+        palette={palette}
+      />
     </View>
   );
 

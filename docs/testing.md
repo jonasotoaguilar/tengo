@@ -23,6 +23,20 @@ atomicity). That is host evidence only: it does not prove
 
 ## Verified native evidence (Android only)
 
+**The inventory model changed after most of this evidence was recorded.** The
+records below were observed on the previous model — schema v3, one location per
+item, quantity stored on the item — and are kept as records of what was
+observed then, not as descriptions of the current model. Commit `a29ddf0`
+replaced it with schema v4: `items` is a catalog and
+`stock(item_id, location_id, quantity)` holds what is where, so one item can
+have stock in several locations with its own quantity in each. The DEV fixtures
+were adapted in code, but neither they nor the Maestro flows have been
+re-observed on a device — the flows still target the old model's testIDs and
+counts — so **the new model has no native proof yet and none is claimed here**. What does exist for it is host-side: `scripts/verify-inventory-schema.py`
+passing 36 checks against real host SQLite 3.46.1 (including the rebuild trap
+and the location cascade) and the Jest suites (27 suites / 437 tests).
+Re-observing the flows on emulator-5554 is the next unit.
+
 - M1 migration: verified on Android, 5/5.
 - M2 native persistence: verified on Android. Phase 1 passed 5/5,
   phase 2 passed 3/3, phase 3 passed 8/8, including scoped
@@ -151,6 +165,13 @@ list fakes. Only `m1-fixture-query-m3.db` (seeded) and
 anything else is refused before open. Seeding is idempotent via an
 exact-dataset marker and fails closed on partial state without
 overwriting; both files are retained on pass and fail for inspection.
+
+Model change: the seeded dataset and its checks were adapted to schema v4, so
+the fixture now seeds an item with stock in two locations (total 6) plus two
+items with no stock anywhere, and the checks moved to 2/2 groups. Every count
+quoted below therefore describes the PREVIOUS dataset, and the `.maestro/m3-query.yaml`
+flow still targets the old model's testIDs and counts: it has not been updated
+or re-observed since the model change.
 
 Launch on a separate Metro port so the normal `tengo.db` session is
 untouched:

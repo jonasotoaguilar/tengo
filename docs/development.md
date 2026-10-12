@@ -38,13 +38,13 @@ check, or proof is part of the current plan.
 | `App.tsx` | Inventory app shell + DEV fixture gates (default screen is the wired list via `InventoryContainer`) |
 | `src/screens/InventoryContainer.tsx` | Read-only M3 container: owns the `tengo.db` bootstrap, bounded `queryItems` reads, stale-safe filter/retry (Add/Open disabled until P4) |
 | `src/components/InventoryList.tsx` | Controlled presentational list (wired into the app via `InventoryContainer`) |
-| `src/db/` | `expo-sqlite` init + versioned migrations (schema v3) + managed exclusive-connection factory (`exclusive.ts`), no ORM |
+| `src/db/` | `expo-sqlite` init + versioned migrations (schema v4: items catalog plus stock(item_id, location_id, quantity) with composite PK, quantity > 0, both FKs ON DELETE CASCADE, idx_stock_location_id) + managed exclusive-connection factory (`exclusive.ts`), no ORM |
 | `src/inventory/` | Domain types, validation/normalization, location/category/item repositories, bounded `queryItems` read-model filter |
 | `src/i18n/` | i18next resources (`en`/`es`; `es` is typed as `typeof en`) |
 | `src/dev/` | DEV-only native fixtures (never product UI; protocol in [testing.md](testing.md)) |
 | `__tests__/` | Jest suites (`jest-expo` preset, see `jest.config.js`) |
 | `.maestro/smoke.yaml` | Native single-launch smoke flow |
-| `scripts/verify-inventory-schema.py` | Host SQLite check of the v2 SQL (host evidence only) |
+| `scripts/verify-inventory-schema.py` | Host SQLite check of the v4 migration SQL (host evidence only, not device proof) |
 
 ## Quality commands
 

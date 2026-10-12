@@ -14,11 +14,11 @@ product record) and [DESIGN.md](DESIGN.md) (design contract; its section 3 descr
 | Area | State | Evidence |
 | ---- | ----- | -------- |
 | App shell | Implemented: readiness screen with translated title, subtitle, DB state | `App.tsx` |
-| Database | Implemented: `tengo.db`, versioned migrations, schema v3 (locations, categories, items with required location reference and quantity, item-category join, unique indexes on the folded entity name) | `src/db/index.ts`, `src/db/migrations.ts` |
+| Database | Implemented: `tengo.db`, versioned migrations, schema v4 (items catalog plus stock(item_id, location_id, quantity) with composite PK, quantity > 0, both FKs ON DELETE CASCADE and idx_stock_location_id; locations, categories, item-category join, unique indexes on the folded entity name) | `src/db/index.ts`, `src/db/migrations.ts` |
 | i18n | Implemented: `en`/`es`, device-locale detection, English fallback, type-locked keys | `src/i18n/index.ts`, `src/i18n/resources.ts` |
 | Unit tests | Implemented scaffolding: native boundary mocked, never touches a real DB | `jest.setup.ts`, `__tests__/`, `jest.config.js` |
 | Native smoke | Minimal: one launch reaches readiness; no restart-persistence or locale proof | `.maestro/smoke.yaml`, [Maestro boundary](docs/testing.md#maestro-boundary) |
-| Inventory CRUD | Implemented and Android-verified end to end: repository APIs, the controlled `InventoryList`, the controlled `ItemForm` with its route-epoch controller, the container route/modal wiring behind an explicit `enableMutations` opt-in, and a passing Android form flow over an isolated fixture database | `src/inventory/`, `src/components/`, `src/screens/`, [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
+| Inventory CRUD | Implemented and Android-verified end to end on the previous model (device re-observation on v4 is pending): repository APIs, the controlled `InventoryList`, the controlled `ItemForm` with its route-epoch controller, the container route/modal wiring behind an explicit `enableMutations` opt-in, and a passing Android form flow over an isolated fixture database | `src/inventory/`, `src/components/`, `src/screens/`, [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | Native gates | Done: M1 migration 5/5 and M2 persistence phases 5/5, 3/3, 8/8 on Android | [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | Releases | Source-only GitHub releases; no signing, EAS, or store upload | [quality commands](docs/development.md#quality-commands) |
 | Review/tooling | Every code unit carries its own native review, approved and acknowledged with the authority burned (P1 through P5g, the M4 wiring units and the contrast-token unit); commit, push, PR and merge stay user decisions | `odd/tasks/inventory-mvp.md` |
@@ -31,12 +31,16 @@ Authoritative prior record: `odd/tasks/mobile-foundation.md`
 
 Goals (approved MVP "Inventory by location"):
 
-1. Create, edit, and delete items carrying name, quantity
-   (zero means exhausted), a required location-entity reference,
-   and zero or more categories; search items with name search
+1. Create, edit, and delete items carrying a name, per-location stock
+   (one quantity per location, 1–999999 each; the total is the sum;
+   no stock anywhere shows as "sin stock"),
+   and zero or more categories; an item may hold stock in zero, one,
+   or several locations. Search items with name search
    as the approved baseline plus multi-category OR filtering with
 dedup, extended by the adopted location/category text matching
-   (section 9). Deletion always confirms with no trash; domain
+   (section 9). Deletion always confirms with no trash (location
+   deletion cascades stock but never items, each confirmation stating
+   the impact); domain
    and database both enforce integrity.
 2. Browse and search organized around location.
 3. Fully offline, on-device, in English and Spanish.
@@ -92,42 +96,57 @@ Surfaces: `src/db/migrations.ts` (v2 migration), domain types
 plus validation (`src/inventory/`), Jest suites for migration
 and validation.
 
-- Normalized M1 schema (approved): `locations` (id, name required,
+- Normalized schema (approved, now v4): `locations` (id, name required,
   address optional, free-entry names such as Casa/Bodega),
-  `categories` (independent entities), `items` with a required
-  `location_id` foreign key plus `quantity` (zero allowed and
-  meaning exhausted), and an `item_categories` join (one row per
+  `categories` (independent entities), the `items` catalog (id, name,
+  created_at) plus `stock(item_id, location_id, quantity)` with a
+  composite primary key, `quantity > 0`, both foreign keys
+  `ON DELETE CASCADE` and `idx_stock_location_id`, so one item may
+  hold stock in several locations each with its own quantity (the total
+  is the sum; no rows anywhere shows as "sin stock"), and an
+  `item_categories` join (one row per
   item-category pair, no duplicates) so an item has zero or many
-  categories. Integrity is enforced by both domain validation and
+  categories. (M1 built the v2 shape with a single location plus
+  `quantity` on `items`; v4 replaced it.) Integrity is enforced by both domain validation and
   database constraints (foreign keys, required fields, join
   uniqueness). Adopted and implemented on 2026-10-12 (section 9):
-  numeric/string bounds (name 1–120, quantity 0–999999, location
+  numeric/string bounds (name 1–120, quantity 1–999999 per stock row
+  with 0-quantity rows dropped, location
   1–80, category 80), name uniqueness, accent-folding semantics,
   and the index choices that carry them (the v3 unique indexes on
   the folded name). Address uniqueness was never adopted and is not
   implemented: only entity names are unique.
-- Migration policy (approved): v1 rows carry only
+- Migration policy (approved; the v1→v2 entry stands as the record of
+  that earlier migration): v1 rows carry only
   `id`/`name`/`created_at` with no location, and no production v1
   rows have been observed on any device (fixture rows are throwaway). Fixture migration must never silently
   lose rows or fabricate a location (no synthetic `Unassigned`).
   An empty v1 database migrates cleanly and an already-v2 database
-  is a no-op; nonempty v1 rows that cannot satisfy the required
-  location preserve rows/version and stop with a clear
+  is a no-op; nonempty v1 rows lacking a location preserve rows/version
+  and stop with a clear
   migration-required error instead of inventing a location.
+  The v4 rebuild carries one stock row per old item with `quantity > 0`
+  (an old zero-quantity item becomes catalog-only, "sin stock"),
+  aborts with rows and version untouched on any count/sum mismatch,
+  and bumps the version in the same transaction with no downgrade
+  (`SCHEMA_VERSION = 4`).
 - Acceptance: empty, v1-shaped, and already-v2 fixtures behave as
   above with zero silent loss; invalid/missing location or category
-  references and duplicate associations are rejected; zero quantity
-  is accepted and invalid quantity rejected; downgrade is out of
+  references and duplicate associations are rejected; a 0-quantity
+  stock row is dropped rather than stored and invalid quantity rejected; v4 preserves catalog count
+  and quantity sum or aborts with rows/version untouched;
+  downgrade is out of
   scope and documented.
 - Test-first: RED with a migration test on a v1-shaped fixture,
   then GREEN with the migration; TRIANGULATE with empty DB, v1
   rows, already-v2 DB, invalid/missing relationships, duplicate
-  associations, and zero quantity. Distinct from the fake-boundary
+  associations, 0-quantity rows dropped, and "sin stock" items staying
+  visible. Distinct from the fake-boundary
   Jest tests, the migration SQL also runs once against a real
   native SQLite v1 fixture (isolated check, not the Jest suite)
   before M2; that native gate passed on Android and host SQLite
   evidence does not replace it (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
-- Risk: a `NOT NULL` location reference without a satisfiable value
+- Risk (v1→v2 record): a `NOT NULL` single-location column without a satisfiable value
   makes the migration statement fail; the failure alone does not
   wipe existing data, but careless retries, table rebuilds, or
   fabricated backfills can. See section 5.
@@ -163,8 +182,11 @@ Surfaces: list screen, search field, empty/first-run states,
 loading/error states. Design contract: [DESIGN.md](DESIGN.md)
 sections 3–4 (list, search, states, tokens).
 
-- List grouped or filterable by location entities; search matches the
-  item name, its location name or any of its category names (adopted and
+- List with a general view (each item once, total plus per-location
+  breakdown), location views showing that location's quantity (the
+  filter is a membership test), and a trailing group for items with
+  no stock anywhere ("sin stock"); search matches the
+  item name, any location name where it has stock, or any of its category names (adopted and
   implemented on 2026-10-12, section 9) plus the approved multi-category
   OR filtering with dedup.
 - Acceptance: empty DB teaches the user how to add the first item
@@ -184,23 +206,25 @@ sections 3–4 (list, search, states, tokens).
 Status: done — the controlled form, its controller and the container wiring
 are implemented, and the Android form flow passed over an isolated fixture
 database (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
-Still pending from this area: native proof for typing into a non-empty
-numeric quantity field (the flow edits quantity with the stepper). The
+Still pending from this area on the previous form: native proof for typing into a non-empty
+numeric quantity field (the flow edits quantity with the stepper). All flows await re-run on the new model. The
 responsive, theme, keyboard, locale and accessibility checks belong to M5
 and are recorded there.
 Surfaces: add/edit form screen (or bottom sheet per Android convention),
 location input, delete confirmation, validation messages. Design
 contract: [DESIGN.md](DESIGN.md) sections 3–5.
 
-- Fields: name, quantity stepper/input, required location entity
-  (name required, address optional), zero or more categories via
+- Fields: name, per-location stock editor (one row per location with
+  its quantity stepper/input plus remove, add-location with inline
+  location creation while saving the item),
+  zero or more categories via
   multi-select.
 - Acceptance: validation blocks empty names and invalid quantities
   with inline messages in the current language; delete requires
   explicit confirmation and announces the result; form state
   survives keyboard show/hide and rotation without data loss.
 - Test-first: RED with validation and delete-confirm component
-  tests; GREEN minimal; TRIANGULATE zero quantity, whitespace-only
+  tests; GREEN minimal; TRIANGULATE 0-quantity row dropped, whitespace-only
   name, and cancel-mid-edit cases.
 - Risk: data loss on dismiss without save; destructive tap without
   confirm.
@@ -254,16 +278,18 @@ them. Fixed runners (already in `package.json`): `npm test`,
 ## 5. Migration and data-loss risks
 
 - v1→v2 normalizes to locations, categories, and the item-category
-  join with a required item-location reference; v1 rows predate
+  join with a single location per item (v2 shape; v4 replaces it with
+  catalog plus stock); v1 rows predate
   those tables and no production v1 rows have been observed on any
   device (fixture rows are throwaway). Never
   silently discard rows and never fabricate a location (no synthetic
-  `Unassigned`): nonempty v1 data that cannot satisfy the required
-  location preserves rows/version and blocks migration with an
+  `Unassigned`): nonempty v1 data lacking a location preserves rows/version and blocks migration with an
   explicit migration-required error. Mitigation: fixture-driven
   migration with explicit preserve-and-stop behavior, exercised by
   v1-fixture Jest tests plus the real native SQLite fixture check
-  on Android (passed before M2; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
+  on Android (passed before M2 on the previous model; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
+  The v4 rebuild follows the same never-lose/never-fabricate rule under
+  its preserve-and-stop guard; its native gate is pending.
 - No downgrade path is proposed; document that a v2 database does
   not open cleanly on older code.
 - The app provides no backup or sync of its own, so an in-app
@@ -273,7 +299,7 @@ them. Fixed runners (already in `package.json`): `npm test`,
 - Never interpolate user input into SQL; use bound parameters in
   every new query (M2 acceptance).
 
-## 6. Native test matrix (every row observed on Android; the one gap is typing into a non-empty numeric quantity field)
+## 6. Native test matrix (every row observed on Android on the previous model; the one gap is typing into a non-empty numeric quantity field; re-observation on the v4 model is pending)
 
 | Layer | What | Where |
 | ----- | ---- | ----- |
@@ -303,20 +329,24 @@ approved tokens.
   2026-10-12 (section 9); case- and accent-insensitive in both
   languages with NFD accent folding (adopted and implemented, section
   9); no-match state names the query and offers a clear path.
-- Validation (approved): every item references a valid location
-  entity (name required, address optional); zero or more categories
-  per item with no duplicate associations; quantity zero accepted
-  as exhausted; invalid quantity and missing/invalid references
+- Validation (approved): stock rows each reference a valid location
+  entity (name required, address optional) with a per-row quantity;
+  an item may hold stock in zero, one, or several locations; zero or more categories
+  per item with no duplicate associations; a 0-quantity row is dropped
+  rather than stored (no-stock items show as "sin stock"); invalid quantity and missing/invalid references
   rejected with inline errors in the current language, next to the
   field. Adopted and implemented on 2026-10-12 (section 9): trimmed
-  length/numeric bounds (name 1–120, quantity 0–999999, location
+  length/numeric bounds (name 1–120, quantity 1–999999 per stock row
+  with 0 dropped, location
   1–80, category 80) and name uniqueness, enforced in the domain and
   backed by the v3 unique indexes. Address uniqueness was never
   adopted and is not implemented.
 - Errors: typed domain errors mapped to translated UI copy; DB
   failure shows retry, never raw SQLite text or a blank screen.
-- Empty: first-run teaches adding the first item; location groups
-  with zero items explain why rather than silently vanishing.
+- Empty: first-run teaches adding the first item; location views
+  with zero matches explain why rather than silently vanishing, and
+  items with no stock anywhere appear in the trailing "sin stock"
+  group rather than disappearing.
 - Accessibility: screen-reader names on all controls; 48dp minimum
   touch targets on Android; visible focus; errors announced;
   reduced-motion honored (crossfade/instant instead of slides/parallax).
@@ -352,10 +382,10 @@ come from emulator or hardware. None of these is decided.
 | Gate | Closes in | Status |
 | ---- | --------- | ------ |
 | Wireframes + gate defaults reviewed | G0 (before M1) | Recorded 2026-10-12: the boards and DESIGN.md sections 3–5 were reviewed against the built screens, and the entries below are the approved contract. The defaults deferred here were then adopted by the user as the named owner and implemented on 2026-10-12: trimmed bounds, name uniqueness, accent folding, and location/category text matching, each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen stays deferred and unimplemented, and address uniqueness was never adopted |
-| Quantity semantics | M1 | Approved: zero allowed meaning exhausted, distinct UI deferred. Bounds adopted and implemented (0–999999, typed `out-of-range`); negatives are rejected by that same bound; units stay out of MVP scope |
-| Locations | M1/M4 | Approved: mandatory location entity, name required, address optional, free entry. Name uniqueness adopted and implemented (accent-aware domain check plus the v3 unique index); the managed-location UI stays deferred and unimplemented |
-| Categories | M1/M4 | Approved: independent entities, zero or many per item, multi-select OR filter with dedup. Location/category text matching adopted and implemented; the management UI stays deferred and unimplemented |
-| Deletion/backup | M4 | Approved: confirm every delete, no trash/undo in MVP, irreversibility stated in the dialog; anything beyond that undecided |
+| Quantity semantics | M1 | Approved: each stock row carries 1–999999; a 0-quantity row is dropped rather than stored and an item with no rows shows as "sin stock". Bounds adopted and implemented (1–999999 per row with 0 dropped, typed `out-of-range`); negatives are rejected by that same bound; units stay out of MVP scope |
+| Locations | M1/M4 | Approved: location entity, name required, address optional, free entry; one item may hold stock in several locations and zero locations is a valid state. Name uniqueness adopted and implemented (accent-aware domain check plus the v3 unique index); deleting a location cascades its stock rows and never deletes items, with the confirmation stating the impact; `LocationInUseError` no longer exists; the managed-location UI stays deferred and unimplemented |
+| Categories | M1/M4 | Approved: independent entities, zero or many per item, multi-select OR filter with dedup. Location/category text matching adopted and implemented; deleting a category removes only the association with items (confirmation states the impact); the management UI stays deferred and unimplemented |
+| Deletion/backup | M4 | Approved: confirm every delete, no trash/undo in MVP, irreversibility stated in the dialog; location deletion states how many existencias go (items survive) and category deletion states the association removal; an item is deleted only explicitly, never as a side effect; anything beyond that undecided |
 
 No milestone is complete while its gate decision is unrecorded.
 
@@ -378,22 +408,25 @@ accumulated branch.
 ## 11. MVP completion checklist
 
 - [x] G0: section 9 decisions recorded — quantity, location, category and deletion are approved user decisions, and the wireframe/defaults review is recorded with the remaining defaults deferred to the user as the named owner. M3/M4 shipped against those decisions.
-- [x] M1: normalized locations/categories/item-category schema with
-  required item-location relationship; empty, v1-shaped, and
+- [x] M1: normalized locations/categories/item-category schema (v2 shape
+  with a single location per item, since replaced by the v4
+  catalog-plus-stock schema; see section 1); empty, v1-shaped, and
   already-v2 fixtures behave per the preserve-and-stop migration
   policy on the fake boundary and in the real native SQLite fixture
-  check on Android (passed; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
-  validation rules tested including zero quantity,
+  check on Android (passed on the previous model; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
+  validation rules tested including 0-quantity rows dropped with
+  "sin stock" staying visible,
   invalid/missing references, and duplicate associations.
 - [x] M2: CRUD repository with parameterized SQL; error mapping
   tested; create/edit/delete survive force-stop + relaunch on a
   debug build (passed on Android; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
-- [x] M3: list/search/empty/loading/error states per DESIGN.md, verified on Android: 9/9 native query checks plus `m3-query.yaml` 72/72 commands, re-observed green after the P5g read-shape change and again at 78/78 after the cross-entity search change, with the device metrics recorded under M5.
+- [x] M3: list/search/empty/loading/error states per DESIGN.md, verified on Android on the previous model (re-observation on v4 is pending): 9/9 native query checks plus `m3-query.yaml` 72/72 commands, re-observed green after the P5g read-shape change and again at 78/78 after the cross-entity search change, with the device metrics recorded under M5.
 - [x] M4: add/edit/delete with validation and confirm; no silent
   data loss. Verified on Android: inline entity creation,
   dirty-discard Cancel/Discard and delete confirmation observed, and
   create, edit and delete all survived force-stop + relaunch on an
-  isolated fixture database (no production data touched); see
+  isolated fixture database (no production data touched; previous model,
+  re-observation on v4 pending); see
   [verified native evidence](docs/testing.md#verified-native-evidence-android-only).
 - [x] M5: `en`/`es` audit (guard), accessibility-tree pass with 48dp targets, contrast floor implemented and guarded, performance budgets observed on a device pass, and extended Maestro flows (1.0x 97/97, 2.0x 78/78) observed on a debug build. TalkBack speech is a stated boundary, not claimed.
 - [x] Section 9 recorded and then closed by adoption: the approved quantity/location/category/deletion entries stay approved, and the defaults deferred to the user as the named owner were adopted on 2026-10-12 and implemented — trimmed bounds, name uniqueness, accent folding, and location/category text matching — each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen is the one deferred item still unimplemented.

@@ -1,9 +1,9 @@
 # Design — Tengo inventory by location
 
-Design contract. The inventory UI is implemented and verified on Android:
+Design contract. The inventory UI is implemented on the v4 model:
 the list with search, location and category filters, the add/edit form with
-inline location/category creation, and the discard and delete
-confirmations. Section 3 therefore describes built behavior, and section 5
+per-location stock editing and inline location/category creation, and the discard and delete
+confirmations. The Android verification cited below was observed on the previous model; device re-observation on the new model is pending (flows not yet re-run). Section 3 therefore describes built behavior, and section 5
 carries the approved token values through `src/theme/tokens.ts`. The
 defaults that were deferred — trimmed bounds, name uniqueness, accent
 folding, and location/category text matching — were adopted and implemented
@@ -64,9 +64,14 @@ Reading notes:
 - All recommended defaults shown on the boards (quantity range,
   free-text locations, single optional category, irreversible delete)
   were proposed when drawn and the boards are unchanged in this
-  slice. Approved contract now governs over those sketches: quantity
-  zero means exhausted, locations are mandatory entities, categories
-  are zero-or-many entities, deletion always confirms with no trash.
+  slice. Approved contract now governs over those sketches: per-location
+  stock rows (one quantity per location, the total is the sum), items with
+  no stock shown as "sin stock", stock in zero, one, or several
+  locations per item, categories
+  as zero-or-many entities, location deletion cascading stock but never
+  items (category deletion removing only the association, each
+  confirmation stating the impact), and deletion
+  always confirming with no trash.
   The remaining defaults were adopted at the ROADMAP.md §9 gate on
   2026-10-12; §10 lists what is still open.
 
@@ -98,19 +103,22 @@ filter. No forced tab bar: the MVP is shallow enough for a single
 stack.
 
 ```text
-Inventory (list, grouped/filterable by location)
+Inventory (list, general view plus per-location views)
 ├── Search (filter on the list, not a separate destination)
-├── Add item (name, quantity, required location, zero or more categories)
+├── Add item (name, per-location stock, zero or more categories)
 └── Item (edit fields; delete behind explicit confirm)
 ```
 
 Location is the organizing principle: the list groups or filters by
-place (e.g. Kitchen, Pantry, Garage), and every item shows its
-location at a glance. Detail is justified only as the edit surface:
+place (e.g. Kitchen, Pantry, Garage). The general view shows each item
+once with its total and per-location breakdown; a location view shows
+that location's quantity (the filter is a membership test: "has stock
+there"); a trailing group holds items with no stock anywhere
+("sin stock"). Detail is justified only as the edit surface:
 no separate read-only detail screen is proposed; tapping an item
 opens it for editing.
 
-## 3. Screens and flows (implemented; verified on Android)
+## 3. Screens and flows (implemented; Android re-observation on the new model pending)
 
 Conventions below: `[ ]` input, `( )` button, `>` row/tap target,
 `---` divider. All copy exists in `en` and `es` before build.
@@ -122,18 +130,25 @@ Conventions below: `[ ]` input, `( )` button, `>` row/tap target,
 [Search field: Search name, place…    ]
 [Location filter chips: All | Kitchen | Pantry | Garage | …]
 ------------------------------------------
-KITCHEN                          12 items
-> Rice · x2 · Kitchen                48dp
-> Olive oil · x1 · Kitchen           48dp
+General view: one row per item, total plus breakdown
+> Rice · x6 total (Kitchen x2 · Pantry x4)   48dp
+> Olive oil · x1 · Kitchen                   48dp
 ------------------------------------------
-PANTRY                            8 items
-> Lentils · x4 · Pantry              48dp
+Location view (e.g. Pantry): that location's quantity
+> Rice · x4 · Pantry                         48dp
+------------------------------------------
+NO STOCK
+> Quinoa · sin stock                         48dp
 ------------------------------------------
 ( + Add item )  one primary action: the FAB on Android.
 ```
 
 - Behavior: list opens focused on browse; search filters in place;
-  chips filter by location; counts are honest (they reflect the
+  the location filter is a membership test (the item has stock there);
+  the general view shows each item once with its total and per-location
+  breakdown, a location view shows that location's quantity, and a
+  trailing group holds items with no stock anywhere ("sin stock");
+  counts are honest (they reflect the
   current filter).
 - Search has exactly one affordance: the inline search field. No
   separate search icon or second entry point.
@@ -148,7 +163,8 @@ PANTRY                            8 items
 ### 3.2 Search
 
 - Typing filters the visible list; an item matches when the folded
-  query is a substring of its name, its location name, or any of its
+  query is a substring of its name, any location name where it has
+  stock, or any of its
   category names (adopted and implemented 2026-10-12, ROADMAP.md
   section 9), and multi-category selection filters with OR semantics
   and deduplicated results; an item matching several ways appears once.
@@ -165,8 +181,10 @@ PANTRY                            8 items
 [Top bar: < Back | New item | (Save)]
 (Position follows §6; B2/B6 top-bar placement is a historical alternative, not the active Android target.)
 Name        [ Rice             ]
-Quantity    [ (–)  2  (+)      ]
-Location    [ Pantry         v ]
+Stock by location (optional)
+  Kitchen   [ (–)  2  (+)      ]  (Remove)
+  Pantry    [ (–)  4  (+)      ]  (Remove)
+  (Add location — may create a location inline while saving)
 Category    [ Grains (optional)]
 [Inline error under the field when invalid]
 ```
@@ -174,14 +192,19 @@ Category    [ Grains (optional)]
 - Save stays enabled except while submitting; validation runs on
   submit and on blur, with inline errors in the current language.
   On a submit with invalid fields, focus moves to the first error.
-- Quantity starts empty, never defaulted to 1 (implemented:
-  `blankItemFormValues` in `src/screens/useItemFormController.ts`), so the
-  user types or steps a value; zero is approved and means exhausted, with
-  distinct exhausted UI deferred to UI milestones.
-- Location is a required entity: name required, address optional,
-  free-entry names such as Casa/Bodega. Categories are zero or many
+- Stock is edited per location: one row per location with its quantity
+  (typed or stepped, starting blank via
+  `blankItemFormValues` in `src/screens/useItemFormController.ts`),
+  a remove action per row, and an add-location action; a blank or
+  zero quantity means "no stock there" and drops the row rather than
+  storing it. A new location can still be created inline while saving
+  the item.
+- An item may hold stock in zero, one, or several locations: locations
+  are entities (name required, address optional,
+  free-entry names such as Casa/Bodega). Categories are zero or many
   per item via multi-select (selecting several filters with OR and
-  dedup). Bounds (name 1–120, quantity 0–999999, location 1–80,
+  dedup). Bounds (name 1–120, quantity 1–999999 per stock row with 0
+  dropped, location 1–80,
   category 80) and name uniqueness are adopted and implemented; the
   category-management UI remains deferred.
 - Cancel/Back with unsaved changes asks to discard (no silent loss).
@@ -195,11 +218,11 @@ confirm in section 4. Save confirms with transient feedback
 
 ### 3.5 Location and category handling (approved entities)
 
-- Locations are mandatory entities, not free-text columns: every
-  item references exactly one valid location (name required,
-  address optional, free entry). The form therefore selects or
-  creates a location instead of accepting an unbound string; the
-  boards sketch free-text entry and are unchanged, so the approved
+- Locations are entities, not free-text columns: an item may hold stock
+  in zero, one, or several locations (name required,
+  address optional, free entry). The form therefore edits one row per
+  location instead of a single quantity field; the
+  boards sketch single-quantity free-text entry and are unchanged, so the approved
   entity contract governs.
 - Categories are independent entities joined to items: zero or many
   per item, no duplicate associations. Multi-select filters with OR
@@ -208,10 +231,13 @@ confirm in section 4. Save confirms with transient feedback
   check produces the typed conflict error and the v3 unique index is
   the backstop. Normalization beyond trim, address uniqueness, recency
   or suggestion behavior, and any managed-list/category admin UI remain
-  unimplemented. Because locations are entities, an empty place can exist
-  without items only if a future gate approves it; until then, a
+  unimplemented. Deleting a location cascades its stock rows and never
+  deletes items; deleting a category removes only the association with
+  items. Each confirmation states the impact; `LocationInUseError` no
+  longer exists. A
   location filter with zero matches shows the contextual zero-match
-  state in section 4.
+  state in section 4, and items with no stock anywhere appear in the
+  trailing "sin stock" group rather than disappearing.
 
 ## 4. Interaction, loading, empty, error, destructive states
 
@@ -228,7 +254,10 @@ confirm in section 4. Save confirms with transient feedback
   SQLite text never reaches the screen.
 - Destructive: delete opens a confirm dialog naming the item
   ("Delete 'Rice'? This cannot be undone.") with `( Cancel )` /
-  `( Delete )`; success is announced transiently. Approved: every
+  `( Delete )`; success is announced transiently. Deleting a location
+  or category likewise confirms and states the impact (how many
+  existencias go; the items themselves are never deleted that way).
+  Approved: every
   delete confirms and there is no trash/undo in the MVP.
 - Feedback motion: 150–250 ms state transitions only; no
   orchestrated load sequences; reduced-motion settings replace
@@ -288,7 +317,7 @@ resolve per theme:
 ## 7. Accessibility, reduced motion, i18n
 
 - Every interactive element has a localized screen-reader name;
-  quantity steppers expose value and increment/decrement actions;
+  per-location quantity steppers expose value and increment/decrement actions;
   errors are announced, not color-only.
 - Type follows system font-scale settings;
   layout is verified at a large size without truncation.
@@ -307,11 +336,11 @@ resolve per theme:
   stateless filtering owned by the list.
 - `LocationChips`: `locations`, `selected`, `onSelect`; horizontal
   scroll, 48dp minimum targets.
-- `ItemForm`: fields name/quantity/location-entity/categories
+- `ItemForm`: fields name/per-location stock/categories
   (multi-select), `errors`, `onSubmit`, `submitting`; validation
   messages inline.
-- `QuantityStepper`: integer value, min 0 (zero approved as
-  exhausted) plus/minus plus direct
+- `QuantityStepper`: integer value per stock row (blank or zero means
+  "no stock there" and drops the row) plus/minus plus direct
   entry; exposes a11y value.
 - `DeleteConfirm`: item name, `( Cancel )`, `( Delete )`; returns
   an explicit choice, never deletes on dismiss.
@@ -326,11 +355,12 @@ resolve per theme:
   sections 3–4 on Android.
 - Touch targets, type scaling, screen reader, dark scheme, keyboard
   behavior, and safe-area handling meet sections 5–7.
-- Search matches the item name, its location name or any category name
+- Search matches the item name, any location name where it has stock, or any category name
   with accent folding (adopted and implemented; stored text verbatim)
   plus multi-category OR filtering with dedup. Delete always confirms
-  and dismissing a dirty form never silently loses input; quantity zero
-  is accepted as exhausted with distinct UI deferred.
+  and dismissing a dirty form never silently loses input; a 0-quantity
+  row is dropped rather than stored and items with no stock appear in
+  the trailing "sin stock" group.
 - Text contrast meets the 4.5:1 floor and control boundaries the 3:1
   floor, implemented in `src/theme/tokens.ts` and guarded by
   `__tests__/contrast-floor.test.tsx`; ROADMAP.md section 7 performance
@@ -345,14 +375,19 @@ resolve per theme:
   stated boundary); schema/validation gates → M1–M2 (done; see
   [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
 - Approved contract (overrides the single-text sketches above):
-  mandatory location entities (name required, address optional,
-  free entry), independent category entities with zero or many per
-  item and OR-plus-dedup multi-select filtering, quantity zero
-  meaning exhausted with UI deferred, and confirmed deletion with no
+  location entities (name required, address optional,
+  free entry) with stock in zero, one, or several locations per item,
+  independent category entities with zero or many per
+  item and OR-plus-dedup multi-select filtering, a stock row always
+  meaning something stored there (0-quantity rows dropped; no-stock
+  items shown as "sin stock"), location deletion cascading stock but
+  never items (category deletion removing only the association, each
+  confirmation stating the impact), and confirmed deletion with no
   trash. Closed by adoption on 2026-10-12: numeric/string bounds, name
   uniqueness, accent-folding semantics, and location/category text
   matching. Still needing a gate: the managed-entity screen, address
-  uniqueness, category management and suggestion behavior, and v1
-  backfill values — never fabricate a location; nonempty v1 rows
-  lacking a location preserve rows and stop with a migration-required
-  error per ROADMAP.md.
+  uniqueness, category management and suggestion behavior, and the v4
+  rebuild rule — never fabricate a location; the v4 migration carries
+  one stock row per old item with `quantity > 0` under a
+  preserve-and-stop guard per ROADMAP.md (the v1 backfill rule stands
+  as the record of that earlier migration).

@@ -1,0 +1,268 @@
+# Tengo M6 entity-management flow: DEV-only real-Android verification of the
+# managed-entity screen (D6/R11), the last unverified device surface.
+# Scope: proves the isolated `m1-fixture-crud-m4.db` entity screen end to end
+# in one guarded launch — reach it from the list, create a location (with the
+# optional address) and a category, rename the location through its dialog,
+# and delete one of each through its impact confirmation. It does NOT prove
+# production `tengo.db` behavior: the first assertion fail-closes on
+# `crud-fixture-screen`, so this flow can never accidentally pass against
+# production.
+# Run locally against an installed debug build on a separate Metro port:
+#   EXPO_PUBLIC_NATIVE_FIXTURE=1 EXPO_PUBLIC_NATIVE_CRUD=1 npx expo start --port 8083
+#   MAESTRO_REVERSE=1 scripts/run-maestro.sh .maestro/m6-entities.yaml
+# (`MAESTRO_REVERSE=1` is REQUIRED here: the CRUD bundle is served on host
+# 8083 while the app's `debug_http_host` points at 8082. It is the WRONG flag
+# for the QUERY bundle on 8082.)
+# Deterministic start: the flow taps `crud-fixture-reset` so every run begins
+# from the empty isolated database; with no items ever created, the created
+# location takes id 1 and the created category takes id 1, which makes the
+# `entity-location-1` / `entity-category-1` selectors below safe instead of
+# accidental, and the delete impacts are deterministically 0 (no stock rows,
+# no linked items). After the tap the flow waits on the first-run call to
+# action (`inventory-add-empty`); the transient `running` status is
+# deliberately NOT awaited (a `tapOn` waits for the app to settle, which
+# outlasts the reset).
+# Every selector and every expected string below is DERIVED from the component
+# source, never guessed:
+# - `inventory-manage-entities` (reach the screen): src/components/InventoryList.tsx:591
+# - `entity-manager`, `entity-manager-title`, `entity-close`: src/components/EntityManager.tsx:300,315,323
+# - `entity-locations-empty` / `entity-categories-empty`: src/components/EntityManager.tsx:339,469
+# - `entity-new-location-name`, `entity-new-location-address`, `entity-add-location`:
+#   src/components/EntityManager.tsx:399,417,441
+# - `entity-new-category-name`, `entity-add-category`: src/components/EntityManager.tsx:528,552
+# - `entity-location-1`, `entity-location-1-rename`, `entity-location-1-delete`:
+#   src/components/EntityManager.tsx:348,355,377 (id-suffixed per row)
+# - `entity-category-1`, `entity-category-1-delete`: src/components/EntityManager.tsx:477,505
+# - `entity-edit-dialog`, `entity-edit-title`, `entity-edit-name`, `entity-edit-save`,
+#   `entity-edit-cancel`: src/components/EntityManager.tsx:577,590,595,636,620
+# - `entity-delete-dialog`, `entity-delete-title`, `entity-delete-message`,
+#   `entity-delete-confirm`: src/components/EntityManager.tsx:678,691,698,705
+# - location impact copy (R3+R6: how many existencias, items NOT deleted, how many
+#   left visible as sin stock): src/i18n/resources.ts:126-127 (en) / 251-252 (es)
+# - category impact copy (R4: only the association removed, items NOT deleted):
+#   src/i18n/resources.ts:129-130 (en) / 253-254 (es)
+# - rename dialog title naming the entity: src/i18n/resources.ts:124 (en) / 250 (es)
+# Below-the-fold taps carry an explicit `scrollUntilVisible` on the same stable
+# testID (a no-op when already visible), because the manager scrolls and Maestro
+# does not auto-scroll. `eraseText: 40` clears the short rename field before the
+# new value so it never appends.
+appId: com.tengo.app
+---
+- launchApp
+# Fail-closed gate: never test production by accident.
+- assertVisible:
+    id: 'crud-fixture-screen'
+- extendedWaitUntil:
+    visible:
+      id: 'crud-fixture-status'
+      text: 'ready'
+    timeout: 30000
+- assertVisible:
+    id: 'crud-fixture-status'
+# 0. Reset-first deterministic start: every run begins from the empty isolated
+# database, so the created location/category take ids 1 and the delete impacts
+# are deterministically 0 (no items are ever created by this flow).
+- tapOn:
+    id: 'crud-fixture-reset'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-add-empty'
+    timeout: 30000
+- assertVisible:
+    id: 'inventory-empty-title'
+# 1. Reach the entity screen from the list.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-manage-entities'
+- tapOn:
+    id: 'inventory-manage-entities'
+- assertVisible:
+    id: 'entity-manager'
+- assertVisible:
+    id: 'entity-manager-title'
+- assertVisible:
+    id: 'entity-locations-empty'
+- assertVisible:
+    id: 'entity-categories-empty'
+# 2. Create a location with its optional address, assert the row appears.
+- tapOn:
+    id: 'entity-new-location-name'
+- inputText: 'Entity Loc'
+- hideKeyboard
+- tapOn:
+    id: 'entity-new-location-address'
+- inputText: 'Main Street 12'
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: 'entity-add-location'
+- tapOn:
+    id: 'entity-add-location'
+- extendedWaitUntil:
+    visible:
+      id: 'entity-location-1'
+    timeout: 15000
+- assertVisible:
+    id: 'entity-location-1'
+# 3. Create a category, assert the row appears.
+- scrollUntilVisible:
+    element:
+      id: 'entity-new-category-name'
+- tapOn:
+    id: 'entity-new-category-name'
+- inputText: 'Entity Cat'
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: 'entity-add-category'
+- tapOn:
+    id: 'entity-add-category'
+- extendedWaitUntil:
+    visible:
+      id: 'entity-category-1'
+    timeout: 15000
+- assertVisible:
+    id: 'entity-category-1'
+# 4. Rename the location: the dialog names the entity, the new name is proven
+# by re-opening the dialog and reading its title (a directly-addressable Text).
+- scrollUntilVisible:
+    element:
+      id: 'entity-location-1-rename'
+- tapOn:
+    id: 'entity-location-1-rename'
+- assertVisible:
+    id: 'entity-edit-dialog'
+- assertVisible:
+    id: 'entity-edit-title'
+    text: '.*Entity Loc.*'
+- tapOn:
+    id: 'entity-edit-name'
+- eraseText: 40
+- inputText: 'Entity Loc R'
+- hideKeyboard
+- tapOn:
+    id: 'entity-edit-save'
+- assertNotVisible:
+    id: 'entity-edit-dialog'
+- scrollUntilVisible:
+    element:
+      id: 'entity-location-1-rename'
+- tapOn:
+    id: 'entity-location-1-rename'
+- assertVisible:
+    id: 'entity-edit-title'
+    text: '.*Entity Loc R.*'
+- tapOn:
+    id: 'entity-edit-cancel'
+- assertNotVisible:
+    id: 'entity-edit-dialog'
+# 5. Delete the category through its confirmation: the dialog appears, names
+# the category, states that only the association is removed and that the items
+# are NOT deleted (R4). Impact is deterministically 0 items: the database was
+# reset and this flow never creates items.
+- scrollUntilVisible:
+    element:
+      id: 'entity-category-1-delete'
+- tapOn:
+    id: 'entity-category-1-delete'
+- extendedWaitUntil:
+    visible:
+      id: 'entity-delete-dialog'
+    timeout: 15000
+- assertVisible:
+    id: 'entity-delete-dialog'
+- assertVisible:
+    id: 'entity-delete-title'
+    text: '.*Entity Cat.*'
+- assertVisible:
+    id: 'entity-delete-message'
+    text: '.*(association|asociación).*'
+- assertVisible:
+    id: 'entity-delete-message'
+    text: '.*(NOT be deleted|NO se eliminarán).*'
+- assertVisible:
+    id: 'entity-delete-message'
+    text: '.*0 (items|artículos).*'
+- tapOn:
+    id: 'entity-delete-confirm'
+- assertNotVisible:
+    id: 'entity-delete-dialog'
+- assertNotVisible:
+    id: 'entity-category-1'
+- assertVisible:
+    id: 'entity-categories-empty'
+# 6. Delete the location through its confirmation: the dialog appears, names
+# the location, states how many existencias are removed, that the items are
+# NOT deleted, and how many are left visible as sin stock (R3+R6). Impacts are
+# deterministically 0: the database was reset and this flow never creates items.
+- scrollUntilVisible:
+    element:
+      id: 'entity-location-1-delete'
+- tapOn:
+    id: 'entity-location-1-delete'
+- extendedWaitUntil:
+    visible:
+      id: 'entity-delete-dialog'
+    timeout: 15000
+- assertVisible:
+    id: 'entity-delete-dialog'
+- assertVisible:
+    id: 'entity-delete-title'
+    text: '.*Entity Loc R.*'
+- assertVisible:
+    id: 'entity-delete-message'
+    text: '.*(stock entries|existencias).*'
+- assertVisible:
+    id: 'entity-delete-message'
+    text: '.*(NOT be deleted|NO se eliminarán).*'
+- assertVisible:
+    id: 'entity-delete-message'
+    text: '.*(out of stock|sin stock).*'
+- assertVisible:
+    id: 'entity-delete-message'
+    text: '.*0 (stock entries|existencias).*'
+- tapOn:
+    id: 'entity-delete-confirm'
+- assertNotVisible:
+    id: 'entity-delete-dialog'
+- assertNotVisible:
+    id: 'entity-location-1'
+- assertVisible:
+    id: 'entity-locations-empty'
+# 7. Close the screen: back on the list, which is still empty (no items made).
+- scrollUntilVisible:
+    element:
+      id: 'entity-close'
+- tapOn:
+    id: 'entity-close'
+- assertNotVisible:
+    id: 'entity-manager'
+- assertVisible:
+    id: 'inventory-empty-title'
+# 8. Force-stop/relaunch: the deletions persisted on the isolated database.
+- stopApp
+- launchApp
+- assertVisible:
+    id: 'crud-fixture-screen'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-empty-title'
+    timeout: 30000
+- assertVisible:
+    id: 'inventory-empty-title'
+- scrollUntilVisible:
+    element:
+      id: 'inventory-manage-entities'
+- tapOn:
+    id: 'inventory-manage-entities'
+- assertVisible:
+    id: 'entity-locations-empty'
+- assertVisible:
+    id: 'entity-categories-empty'
+- scrollUntilVisible:
+    element:
+      id: 'entity-close'
+- tapOn:
+    id: 'entity-close'
+- assertNotVisible:
+    id: 'entity-manager'

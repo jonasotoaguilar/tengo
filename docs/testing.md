@@ -23,19 +23,22 @@ atomicity). That is host evidence only: it does not prove
 
 ## Verified native evidence (Android only)
 
-**The inventory model changed after most of this evidence was recorded.** The
-records below were observed on the previous model — schema v3, one location per
-item, quantity stored on the item — and are kept as records of what was
-observed then, not as descriptions of the current model. Commit `a29ddf0`
+**The inventory model changed, and the device evidence has been re-observed on it.**
+The earlier records below were observed on the previous model — schema v3, one
+location per item, quantity stored on the item — and are kept as records of what
+was observed then, not as descriptions of the current model. Commit `a29ddf0`
 replaced it with schema v4: `items` is a catalog and
 `stock(item_id, location_id, quantity)` holds what is where, so one item can
 have stock in several locations with its own quantity in each. The DEV fixtures
-were adapted in code, but neither they nor the Maestro flows have been
-re-observed on a device — the flows still target the old model's testIDs and
-counts — so **the new model has no native proof yet and none is claimed here**. What does exist for it is host-side: `scripts/verify-inventory-schema.py`
+and the Maestro flows were both adapted, and all four flows were re-observed on
+emulator-5554 against the new model: `.maestro/m3-query.yaml` 108 steps with
+zero failures, `.maestro/m4-forms.yaml` 107, `.maestro/m4-forms-large-text.yaml`
+85 at 2.0x, and `.maestro/p5b-measure.yaml` 12. The measurement pass is recorded
+in full below and carries one honest miss: the search figure rose from 174.6 ms
+to 292.6 ms against the 200 ms budget, recorded as FAIL rather than waived.
+Host-side evidence for the new model is `scripts/verify-inventory-schema.py`
 passing 36 checks against real host SQLite 3.46.1 (including the rebuild trap
-and the location cascade) and the Jest suites (27 suites / 437 tests).
-Re-observing the flows on emulator-5554 is the next unit.
+and the location cascade) plus the Jest suites (31 suites / 461 tests).
 
 - M1 migration: verified on Android, 5/5.
 - M2 native persistence: verified on Android. Phase 1 passed 5/5,
@@ -383,6 +386,36 @@ single-sample numbers from one emulator — no percentile, repetition or
 second device — and the search figure is the data-layer cost only, with
 UI render on top not separately instrumented. The seed figure is
 unbudgeted setup and varies run to run.
+
+#### Recorded device pass on the v4 catalog-and-stock model
+
+The model change split identity from storage, so a search no longer reads
+one row per item: it reads the item page, the category links for the page,
+the locations for the category survivors, and then one `stock JOIN
+locations` read for the page's breakdown. Same emulator, same AVD, same
+isolated database, same query, driven by `.maestro/p5b-measure.yaml`
+through `scripts/run-maestro.sh` (artifacts in `.maestro/runs/`):
+
+- `first list layout: 100.1ms (diagnostic, no budget)`
+- `seed 500 items (diagnostic setup, no budget): 23640.5ms — PASS`
+- `first-viewport data readiness (budget 1000ms): 222.4ms vs budget
+  1000ms: PASS`
+- `search per keystroke, data layer only (budget 200ms): 292.6ms vs
+  budget 200ms: FAIL`
+- `single-row write (budget 100ms): 44.9ms vs budget 100ms: PASS`
+
+The search figure is a real miss: it rose from 174.6 ms to 292.6 ms, so
+the budget the previous change was allowed to spend is now exceeded by the
+storage read this model needs. It is recorded as FAIL and left unwaived,
+and like every figure above it is a single sample from one emulator. The
+honest next step is a repeated measurement before the cost is attributed
+to a specific read, and then either a proportional fix or a recorded
+limitation — raising the budget is not on the table, because the number
+comes from the product's own section 7 and a miss is evidence about the
+model rather than about the budget. The seed figure is unbudgeted setup
+and varies run to run. `tengo.db` was never created, opened or modified;
+the run cleared one stale WIP-seeded fixture database and touched only
+isolated fixture files.
 
 #### Recorded M5 manual-device passes (emulator-5554, dark / large text / keyboard / locale)
 

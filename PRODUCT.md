@@ -66,8 +66,9 @@ app, which is unknown and must not be promised.
   (plus a trailing "sin stock" group); the form edits per-location
   stock rows and can still create a location inline while saving the
   item. The new-model UI is host-verified (unit suites,
-  `npm run check`); device re-observation on the new model is pending
-  (Maestro flows not yet re-run).
+  `npm run check`) and the four Maestro flows were re-observed on it, all
+  passing; the search budget miss of the new model is recorded in
+  `docs/testing.md`.
 
 ## Capabilities and Constraints
 
@@ -85,7 +86,8 @@ Confirmed foundation (implemented foundation, see Evidence and ROADMAP.md baseli
   and the `item_categories` join.
   See `src/db/migrations.ts`. The M1/M2 native gates passed on
   Android on the previous model (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
-  device re-observation on v4 is pending.
+  on v4 the schema is verified by 36 checks against real host SQLite, and
+  the M1/M2 gate scripts themselves have not been re-run on a device.
 - English/Spanish i18n with device-locale detection and English
   fallback. See `src/i18n/`.
 - Jest/`jest-expo` unit-test scaffolding with the native boundary

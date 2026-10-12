@@ -3,7 +3,10 @@
 Design contract. The inventory UI is implemented on the v4 model:
 the list with search, location and category filters, the add/edit form with
 per-location stock editing and inline location/category creation, and the discard and delete
-confirmations. The Android verification cited below was observed on the previous model; device re-observation on the new model is pending (flows not yet re-run). Section 3 therefore describes built behavior, and section 5
+confirmations. The Android verification cited below now includes a pass on the
+catalog-and-stock model: the four Maestro flows were re-run on it and all pass,
+with the search figure missing its budget as recorded in `docs/testing.md`.
+Section 3 therefore describes built behavior, and section 5
 carries the approved token values through `src/theme/tokens.ts`. The
 defaults that were deferred — trimmed bounds, name uniqueness, accent
 folding, and location/category text matching — were adopted and implemented
@@ -119,7 +122,7 @@ there"); a trailing group holds items with no stock anywhere
 no separate read-only detail screen is proposed; tapping an item
 opens it for editing.
 
-## 3. Screens and flows (implemented; Android re-observation on the new model pending)
+## 3. Screens and flows (implemented; the four Maestro flows re-observed on the new model, with the search budget miss recorded in `docs/testing.md`)
 
 Conventions below: `[ ]` input, `( )` button, `>` row/tap target,
 `---` divider. All copy exists in `en` and `es` before build.

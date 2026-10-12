@@ -12,9 +12,10 @@ Current state is honest: the default app screen is the wired inventory
 list (search over item, location and category names, location/category
 filters, loading/empty/no-results with retry) backed by the on-device
 database, with add, edit and delete wired through the same container
-(`enableMutations`). M1–M5 are implemented and their native gates were
-observed on Android on the previous model; re-observation on the v4
-model is pending (flows not yet re-run); the recorded boundaries live in
+(`enableMutations`). M1–M5 are implemented; their native gates were
+observed on Android on the previous model, and the four Maestro flows were
+re-observed on the v4 model, where all of them pass and the search budget is
+missed. The recorded boundaries live in
 [docs/testing.md](docs/testing.md) — screen-reader speech is not claimed
 and the device figures are single-sample.
 

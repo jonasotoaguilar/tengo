@@ -18,7 +18,7 @@ product record) and [DESIGN.md](DESIGN.md) (design contract; its section 3 descr
 | i18n | Implemented: `en`/`es`, device-locale detection, English fallback, type-locked keys | `src/i18n/index.ts`, `src/i18n/resources.ts` |
 | Unit tests | Implemented scaffolding: native boundary mocked, never touches a real DB | `jest.setup.ts`, `__tests__/`, `jest.config.js` |
 | Native smoke | Minimal: one launch reaches readiness; no restart-persistence or locale proof | `.maestro/smoke.yaml`, [Maestro boundary](docs/testing.md#maestro-boundary) |
-| Inventory CRUD | Implemented and Android-verified end to end on the previous model (device re-observation on v4 is pending): repository APIs, the controlled `InventoryList`, the controlled `ItemForm` with its route-epoch controller, the container route/modal wiring behind an explicit `enableMutations` opt-in, and a passing Android form flow over an isolated fixture database | `src/inventory/`, `src/components/`, `src/screens/`, [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
+| Inventory CRUD | Implemented and Android-verified end to end: repository APIs, the controlled `InventoryList`, the controlled `ItemForm` with its route-epoch controller, the container route/modal wiring behind an explicit `enableMutations` opt-in, and a passing Android form flow over an isolated fixture database. The four Maestro flows were re-observed on the catalog-and-stock model and all pass; the search budget miss of that model is recorded in `docs/testing.md` | `src/inventory/`, `src/components/`, `src/screens/`, [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | Native gates | Done: M1 migration 5/5 and M2 persistence phases 5/5, 3/3, 8/8 on Android | [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | Releases | Source-only GitHub releases; no signing, EAS, or store upload | [quality commands](docs/development.md#quality-commands) |
 | Review/tooling | Every code unit carries its own native review, approved and acknowledged with the authority burned (P1 through P5g, the M4 wiring units and the contrast-token unit); commit, push, PR and merge stay user decisions | `odd/tasks/inventory-mvp.md` |
@@ -206,8 +206,9 @@ sections 3–4 (list, search, states, tokens).
 Status: done — the controlled form, its controller and the container wiring
 are implemented, and the Android form flow passed over an isolated fixture
 database (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
-Still pending from this area on the previous form: native proof for typing into a non-empty
-numeric quantity field (the flow edits quantity with the stepper). All flows await re-run on the new model. The
+Still pending from this area: native proof for typing into a non-empty
+numeric quantity field (the flow edits quantity with the stepper). The flows have
+since been re-run on the new model and all four pass. The
 responsive, theme, keyboard, locale and accessibility checks belong to M5
 and are recorded there.
 Surfaces: add/edit form screen (or bottom sheet per Android convention),
@@ -299,7 +300,7 @@ them. Fixed runners (already in `package.json`): `npm test`,
 - Never interpolate user input into SQL; use bound parameters in
   every new query (M2 acceptance).
 
-## 6. Native test matrix (every row observed on Android on the previous model; the one gap is typing into a non-empty numeric quantity field; re-observation on the v4 model is pending)
+## 6. Native test matrix (every row observed on Android, including the v4 re-observation of the four flows; the one gap is typing into a non-empty numeric quantity field)
 
 | Layer | What | Where |
 | ----- | ---- | ----- |
@@ -429,10 +430,11 @@ accumulated branch.
   data loss. Verified on Android: inline entity creation,
   dirty-discard Cancel/Discard and delete confirmation observed, and
   create, edit and delete all survived force-stop + relaunch on an
-  isolated fixture database (no production data touched; previous model,
-  re-observation on v4 pending); see
+  isolated fixture database (no production data touched; the flows were
+  re-observed on v4 and all pass, with the search budget miss recorded in
+  `docs/testing.md`); see
   [verified native evidence](docs/testing.md#verified-native-evidence-android-only).
-- [x] M5: `en`/`es` audit (guard), accessibility-tree pass with 48dp targets, contrast floor implemented and guarded, performance budgets observed on a device pass, and extended Maestro flows (1.0x 97/97, 2.0x 78/78) observed on a debug build. TalkBack speech is a stated boundary, not claimed.
+- [x] M5: `en`/`es` audit (guard), accessibility-tree pass with 48dp targets, contrast floor implemented and guarded, performance budgets measured on a device pass where the search budget is currently MISSED and recorded as a FAIL rather than waived, and extended Maestro flows (1.0x 97/97, 2.0x 78/78) observed on a debug build. TalkBack speech is a stated boundary, not claimed.
 - [x] Section 9 recorded and then closed by adoption: the approved quantity/location/category/deletion entries stay approved, and the defaults deferred to the user as the named owner were adopted on 2026-10-12 and implemented — trimmed bounds, name uniqueness, accent folding, and location/category text matching — each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen was then adopted by the user and implemented on 2026-10-12, so no adopted proposal remains unimplemented; address uniqueness was never adopted.
 - [x] No backend/accounts/sync introduced; `npm run web` still fails fast
   (`node -e` exits 1) and releases stay source-only (`release.yml` on tag `v*`).

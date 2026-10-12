@@ -172,9 +172,10 @@ overwriting; both files are retained on pass and fail for inspection.
 Model change: the seeded dataset and its checks were adapted to schema v4, so
 the fixture now seeds an item with stock in two locations (total 6) plus two
 items with no stock anywhere, and the checks moved to 2/2 groups. Every count
-quoted below therefore describes the PREVIOUS dataset, and the `.maestro/m3-query.yaml`
-flow still targets the old model's testIDs and counts: it has not been updated
-or re-observed since the model change.
+quoted in the paragraphs immediately below describes the PREVIOUS dataset and is
+kept as history. The flow itself was rewritten for v4 and re-observed on a
+device: `.maestro/m3-query.yaml` now runs 108 commands with zero failures
+against this fixture, and that pass is recorded at the end of this document.
 
 Launch on a separate Metro port so the normal `tengo.db` session is
 untouched:
@@ -416,6 +417,44 @@ model rather than about the budget. The seed figure is unbudgeted setup
 and varies run to run. `tengo.db` was never created, opened or modified;
 the run cleared one stale WIP-seeded fixture database and touched only
 isolated fixture files.
+
+A repeated measurement on the same protocol, same seed, same emulator and a
+clean tree gave **263.3 ms, 234.2 ms and 242.1 ms** — every one a FAIL, each
+with at least 34 ms of margin, and every one below the 292.6 ms single sample
+above. The figure is therefore a stable miss with roughly ±15 ms of noise rather
+than one unlucky run, and headroom to 200 ms does not appear in any sample.
+
+The cost was then attributed rather than assumed. Reads 1 and 2 keep the shape
+they had on the previous model (the item page, then the category links over the
+page's ids). Only read 3 changed: the previous model read `locations` by the
+distinct survivor location ids, which returns about five rows for this seed,
+while v4 reads `stock JOIN locations` over every survivor item id, which returns
+about five hundred rows and repeats the location payload per item. That is the
+shape the model requires — the text predicate cannot be decided until the
+location names are in hand, and a search with no category filter leaves every
+item a survivor — so the bridge pays one five-hundred-row join where it paid a
+five-row lookup, a delta of about +70 to +90 ms over the previous 174.6 ms.
+
+No proportional fix exists inside the query. Narrowing read 3 needs the
+location-name verdict that read 3 itself produces; a SQL `LIKE` prefilter would
+miss the accent-folded matches the product pins (`cafe` must find `café`);
+splitting the read breaks the asserted three-read bound and adds the bridge
+round trip that dominates on a device; and trimming the join's column list drops
+data the display path needs. Recovery therefore needs an index- or
+migration-level change — a folded generated column with an index, or full-text
+search — which is a product decision carrying its own migration, not a query
+edit. Until that decision is taken the budget stays MISSED and recorded as such:
+it was not waived, rounded, or moved.
+
+The figures above, and the three repeats that follow, are read from the device
+screen during the pass, which is how every measurement figure in this document
+was captured. They are **not** persisted as artifacts: the flow asserts the
+visibility of `check-0..3` and never their values, `junit.xml` carries only step
+counts, `commands.json` only completion, and the run log only RUNNING and
+COMPLETED. A later reader can therefore re-derive the four step counts and the
+zero-failure result from `.maestro/runs/`, and cannot re-derive the
+milliseconds. That limitation applies to every recorded pass here, not only to
+this one.
 
 #### Recorded M5 manual-device passes (emulator-5554, dark / large text / keyboard / locale)
 

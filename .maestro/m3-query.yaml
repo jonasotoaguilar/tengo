@@ -1,18 +1,29 @@
 # Tengo M3 query-fixture flow: DEV-only real-Android read-model verification.
 # Scope: proves the seeded `m1-fixture-query-m3.db` pass summary plus the
-# real embedded inventory list (Unicode/accent-folding/literal search,
-# location-AND category-OR, dedup, group counts, exhausted labels,
-# no-results + clear, seeded FAB, first-run empty CTA, error + retry) in
-# one guarded launch. It does NOT prove production `tengo.db` behavior:
-# the first assertion fail-closes on `query-fixture-screen`, so this flow
-# can never accidentally pass against production.
+# real embedded inventory list on the v4 catalog+stock model (one row per
+# product with its total plus per-location breakdown, a trailing "sin stock"
+# group, Unicode/accent-folding/literal search, location-view AND
+# category-OR, dedup, group counts, exhausted labels, no-results + clear,
+# seeded FAB, first-run empty CTA, error + retry) in one guarded launch.
+# It does NOT prove production `tengo.db` behavior: the first assertion
+# fail-closes on `query-fixture-screen`, so this flow can never accidentally
+# pass against production.
 # Run locally against an installed debug build on a separate Metro port:
 #   EXPO_PUBLIC_NATIVE_FIXTURE=1 EXPO_PUBLIC_NATIVE_QUERY=1 npx expo start --port 8082
 #   maestro test .maestro/m3-query.yaml
-# Stable numeric IDs below assume the fixture-verified fresh-seed order:
-# locations Küche=1, Garage=2; categories Tools=1, Kitchen=2, 100%_stock=3;
-# items 1=Café Grinder, 2=CAFÉ filter, 3=100%_literal\blend, 4=Hammer,
-# 5=Cafe Napkin.
+# Stable numeric IDs below assume the fixture-verified fresh-seed order
+# (`src/dev/nativeQueryFixture.ts`: seedExactDataset): locations Küche=1,
+# Garage=2; categories Tools=1, Kitchen=2, 100%_stock=3; items 1=Café Grinder
+# (Küche 2, Kitchen), 2=CAFÉ filter (sin stock, Tools), 3=100%_literal\blend
+# (Garage 1, 100%_stock), 4=Hammer (Küche 1 + Garage 5 = total 6,
+# Tools+Kitchen), 5=Cafe Napkin (sin stock, no categories).
+# General-view grouping (`src/components/InventoryList.tsx`: group by first
+# stock row, stock ordered by location id per `src/inventory/itemQuery.ts`
+# `ORDER BY s.item_id ASC, l.id ASC`): Küche group = rows 1+4 (Hammer's first
+# stock row is Küche id 1), Garage group = row 3, trailing sin-stock group =
+# rows 2+5. The location chips only switch the viewed quantity
+# (`src/screens/InventoryContainer.tsx`: locationId is never sent to the
+# query, L9a), so a location view keeps every category-filtered row.
 # Selectors use stable testIDs; count regexes accept the existing en/es copy.
 # Disabled states (FAB, empty CTA) are visible-only here; disabled itself
 # is unit-proven. This flow is not native proof until a separate verifier
@@ -38,7 +49,7 @@ appId: com.tengo.app
     id: 'query-check-0'
 - tapOn:
     id: 'query-fixture-details-close'
-# Embedded real list loaded.
+# Embedded real list loaded: one row per product, 5 of 5.
 - assertVisible:
     id: 'inventory-list'
 - extendedWaitUntil:
@@ -50,6 +61,8 @@ appId: com.tengo.app
 - assertVisible:
     id: 'inventory-count'
     text: '^5 (of|de) 5$'
+# General view groups: Küche holds rows 1+4, Garage holds row 3, and the
+# trailing sin-stock group holds rows 2+5.
 - assertVisible:
     id: 'inventory-row-1'
 - assertVisible:
@@ -57,7 +70,14 @@ appId: com.tengo.app
 - assertVisible:
     id: 'inventory-group-1-count'
     text: '^2 (items|artículos)$'
-# Assert the first group before scrolling to the later virtualized rows.
+# Total plus breakdown: row 1 totals 2 with its Küche breakdown.
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+2$'
+- assertVisible:
+    id: 'inventory-row-1-location'
+    text: '.*Küche 2.*'
+# Sin-stock rows render the explicit exhausted label with total 0.
 - assertVisible:
     id: 'inventory-row-2-exhausted'
 - scrollUntilVisible:
@@ -66,11 +86,28 @@ appId: com.tengo.app
     direction: DOWN
 - assertVisible:
     id: 'inventory-row-4'
+# Hammer is one row with total 6 and the two-site breakdown (stock ordered
+# by location id: Küche 1, then Garage 5).
+- assertVisible:
+    id: 'inventory-row-4-quantity'
+    text: '^(Quantity|Cantidad)\s+6$'
+- assertVisible:
+    id: 'inventory-row-4-location'
+    text: '.*Küche 1.*Garage 5.*'
 - assertVisible:
     id: 'inventory-group-2'
 - assertVisible:
     id: 'inventory-group-2-count'
-    text: '^3 (items|artículos)$'
+    text: '^1 (item|artículo)$'
+# Trailing sin-stock group: rows 2+5 under the translated group name.
+- assertVisible:
+    id: 'inventory-group-nostock'
+- assertVisible:
+    id: 'inventory-group-nostock-name'
+    text: '^(No stock|Sin stock)$'
+- assertVisible:
+    id: 'inventory-group-nostock-count'
+    text: '^2 (items|artículos)$'
 # Zero quantities render the explicit exhausted label, not color alone.
 - scrollUntilVisible:
     element:
@@ -104,9 +141,42 @@ appId: com.tengo.app
     id: 'inventory-row-1'
 - assertVisible:
     id: 'inventory-row-2'
-# Literal search: 100% is verbatim, never a LIKE wildcard.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-5'
+    direction: DOWN
+- assertVisible:
+    id: 'inventory-row-5'
+- scrollUntilVisible:
+    element:
+      id: 'inventory-search'
+    direction: UP
+# Folded variants hit the same 3 rows (fixture: CAFÉ and cafe each match 3).
 - tapOn:
     id: 'inventory-search-clear'
+- tapOn:
+    id: 'inventory-search'
+- inputText: 'CAFÉ'
+- hideKeyboard
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-count'
+      text: '^3 (of|de) 5$'
+    timeout: 15000
+- tapOn:
+    id: 'inventory-search-clear'
+- tapOn:
+    id: 'inventory-search'
+- inputText: 'cafe'
+- hideKeyboard
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-count'
+      text: '^3 (of|de) 5$'
+    timeout: 15000
+- tapOn:
+    id: 'inventory-search-clear'
+# Literal search: 100% is verbatim, never a LIKE wildcard.
 - tapOn:
     id: 'inventory-search'
 - inputText: '100%'
@@ -124,34 +194,49 @@ appId: com.tengo.app
     id: 'inventory-row-3'
 - tapOn:
     id: 'inventory-search-clear'
-# Location AND category-OR: Garage x (Tools OR 100%_stock) = rows 3+4,
-# Hammer once despite two categories, group-2 count holds.
+# Location view AND category-OR: the location chip switches the viewed
+# quantity without dropping rows (L9a), while the category OR filters
+# server-side. Garage view x Tools = rows 2+4 (CAFÉ filter is stockless but
+# stays visible, exhausted at Garage); adding 100%_stock adds row 3.
+# Hammer carries both Tools and Kitchen yet still appears once.
 - tapOn:
     id: 'inventory-location-2'
+- assertVisible:
+    id: 'inventory-count'
+    text: '^5 (of|de) 5$'
+- assertVisible:
+    id: 'inventory-group-2-count'
+    text: '^5 (items|artículos)$'
 - tapOn:
     id: 'inventory-category-1'
-- tapOn:
-    id: 'inventory-category-2'
-# Hammer matches both selected categories but must still appear once.
-- extendedWaitUntil:
-    visible:
-      id: 'inventory-count'
-      text: '^1 (of|de) 5$'
-    timeout: 15000
-- tapOn:
-    id: 'inventory-category-3'
 - extendedWaitUntil:
     visible:
       id: 'inventory-count'
       text: '^2 (of|de) 5$'
     timeout: 15000
 - assertVisible:
-    id: 'inventory-row-3'
+    id: 'inventory-row-2'
 - assertVisible:
     id: 'inventory-row-4'
 - assertVisible:
     id: 'inventory-group-2-count'
     text: '^2 (items|artículos)$'
+- tapOn:
+    id: 'inventory-category-3'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-count'
+      text: '^3 (of|de) 5$'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-row-2'
+- assertVisible:
+    id: 'inventory-row-3'
+- assertVisible:
+    id: 'inventory-row-4'
+- assertVisible:
+    id: 'inventory-group-2-count'
+    text: '^3 (items|artículos)$'
 - tapOn:
     id: 'inventory-filters-clear'
 # No-results names the miss and clears back to the full list.
@@ -182,12 +267,13 @@ appId: com.tengo.app
     timeout: 30000
 # A single-character search triggers one request, so later keystrokes
 # cannot consume the one-shot fault and then recover before the assertion.
-# Search is a folded literal-substring OR over item name, location name,
-# and category names: H matches Café Grinder + CAFÉ filter through the
-# folded location Küche / category Kitchen, plus Hammer through its name
-# and its Tools + Kitchen categories, so the retried list is rows 1+2+4
-# (3 of 5), each once. Row 4 sits below the fold, so the retry scrolls
-# to it after proving the count and the above-fold rows.
+# Search is a folded literal-substring OR over item name, category names,
+# and stocked location names: H matches Café Grinder through its Kitchen
+# category and its stocked Küche location, plus Hammer through its name and
+# its Tools + Kitchen categories, so the retried list is rows 1+4 (2 of 5),
+# each once. The stockless CAFÉ filter matches nothing under H on the v4
+# model (no stock, Tools has no H). Row 4 sits below the fold, so the retry
+# scrolls to it after proving the count and the above-fold row.
 - tapOn:
     id: 'query-fixture-fail-next'
 - tapOn:
@@ -205,19 +291,17 @@ appId: com.tengo.app
 - extendedWaitUntil:
     visible:
       id: 'inventory-count'
-      text: '^3 (of|de) 5$'
+      text: '^2 (of|de) 5$'
     timeout: 15000
 - assertVisible:
     id: 'inventory-count'
-    text: '^3 (of|de) 5$'
+    text: '^2 (of|de) 5$'
 - scrollUntilVisible:
     element:
       id: 'inventory-row-1'
     direction: UP
 - assertVisible:
     id: 'inventory-row-1'
-- assertVisible:
-    id: 'inventory-row-2'
 - scrollUntilVisible:
     element:
       id: 'inventory-row-4'

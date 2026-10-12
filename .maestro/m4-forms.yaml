@@ -19,16 +19,24 @@
 # Selectors use stable testIDs verified against the source (see the report);
 # count regexes accept the existing en/es copy, and quantity assertions
 # anchor the full `Quantity|Cantidad <n>` label so `5` never matches `15`.
+# The form has no single quantity field on the v4 model: it has one row per
+# location (`src/components/ItemForm.tsx`), so the create step taps
+# `item-form/location-new` to add stock row 0, types the inline-new location
+# name into `item-form/stock-0/location-new/name` and its quantity into
+# `item-form/stock-0/quantity`, and the list asserts the created row with
+# its total plus breakdown (`Maestro Pantry 3`). Quantity edits use the
+# per-row steppers (`item-form/stock-0/increment`).
 # `eraseText: 40` replaces the name field contents before edit inputs (40
 # backspaces clears that short text safely) so the new value never appends.
 # It is deliberately NOT used on the numeric quantity field: tapping a short
 # centred number places the caret inside it, so backspace clears nothing and
 # the new digit lands before the old one. The first quantity edit uses the
-# stepper; a second edit session (4b) then proves typing a new value into the
-# non-empty numeric field via double-tap-select plus inputText replace:
-# Maestro 2.11.0 `pressKey` only accepts its `KeyCode` enum (no caret-move
-# key exists), so caret moves and backspace clears cannot be deterministic,
-# while a double-tap selects the whole numeric token wherever the caret is.
+# row stepper; a second edit session (4b) then proves typing a new value
+# into the non-empty numeric field via long-press-select plus inputText
+# replace: Maestro 2.11.0 `pressKey` only accepts its `KeyCode` enum (no
+# caret-move key exists), so caret moves and backspace clears cannot be
+# deterministic, while a long-press selects the whole numeric token wherever
+# the caret is.
 # This flow PASSED on the Android emulator (97/97 commands, 0 failures); the
 # recorded result and its exact scope live in docs/testing.md, and each run
 # must still be observed there rather than inferred from this comment.
@@ -72,22 +80,23 @@ appId: com.tengo.app
     id: 'inventory-add-empty'
 - assertVisible:
     id: 'item-form-screen'
-# 2. Create an item with a name, a quantity via the input, a NEW inline
-# location and a NEW inline category, then save and assert the created
-# row with its location is visible.
+# 2. Create an item with a name, one per-location stock row (a NEW inline
+# location with its quantity typed into that row) and a NEW inline
+# category, then save and assert the created row with its total and
+# breakdown is visible.
 - tapOn:
     id: 'item-form/name'
 - inputText: 'Maestro Tomato'
 - hideKeyboard
 - tapOn:
-    id: 'item-form/quantity'
-- inputText: '3'
-- hideKeyboard
-- tapOn:
     id: 'item-form/location-new'
 - tapOn:
-    id: 'item-form/location-new/name'
+    id: 'item-form/stock-0/location-new/name'
 - inputText: 'Maestro Pantry'
+- hideKeyboard
+- tapOn:
+    id: 'item-form/stock-0/quantity'
+- inputText: '3'
 - hideKeyboard
 - tapOn:
     id: 'item-form/new-category/name'
@@ -105,7 +114,7 @@ appId: com.tengo.app
     id: 'inventory-row-1'
 - assertVisible:
     id: 'inventory-row-1-location'
-    text: '.*Maestro Pantry.*'
+    text: '.*Maestro Pantry 3.*'
 - assertVisible:
     id: 'inventory-row-1-quantity'
     text: '^(Quantity|Cantidad)\s+3$'
@@ -125,8 +134,8 @@ appId: com.tengo.app
     id: 'inventory-row-1'
 - assertVisible:
     id: 'inventory-row-1-location'
-    text: '.*Maestro Pantry.*'
-# 4. Open the row, edit the name and quantity, save, assert the updated row.
+    text: '.*Maestro Pantry 3.*'
+# 4. Open the row, edit the name and the row quantity, save, assert the updated row.
 - tapOn:
     id: 'inventory-row-1'
 - assertVisible:
@@ -136,16 +145,16 @@ appId: com.tengo.app
 - eraseText: 40
 - inputText: 'Maestro Tomato Edited'
 - hideKeyboard
-# Quantity is edited with the stepper, never by clearing the numeric field.
+# Quantity is edited with the row stepper, never by clearing the numeric field.
 # Tapping a short centered number places the caret inside it, so a
 # backspace-based clear is cursor-dependent: it erased nothing and the new
 # digit landed before the old one (observed `53` where `5` was expected).
-# Typing a quantity into an EMPTY field is already covered by the create
+# Typing a quantity into an EMPTY row field is already covered by the create
 # step above, so this edit proves the stepper path instead.
 - tapOn:
-    id: 'item-form/increment'
+    id: 'item-form/stock-0/increment'
 - tapOn:
-    id: 'item-form/increment'
+    id: 'item-form/stock-0/increment'
 - tapOn:
     id: 'item-form/save'
 - extendedWaitUntil:
@@ -157,7 +166,7 @@ appId: com.tengo.app
 - assertVisible:
     id: 'inventory-row-1-quantity'
     text: '^(Quantity|Cantidad)\s+5$'
-# 4b. Typed quantity edit into the NON-EMPTY numeric field (the recorded gap).
+# 4b. Typed quantity edit into the NON-EMPTY numeric row field (the recorded gap).
 # The stepper edit above is kept as the stepper proof; this session proves
 # typing instead. `tapOn` focuses the field, `longPressOn` selects the whole
 # single-token number (Android long-press selects the word under the press
@@ -170,9 +179,9 @@ appId: com.tengo.app
 - assertVisible:
     id: 'item-form-screen'
 - tapOn:
-    id: 'item-form/quantity'
+    id: 'item-form/stock-0/quantity'
 - longPressOn:
-    id: 'item-form/quantity'
+    id: 'item-form/stock-0/quantity'
 - inputText: '7'
 - hideKeyboard
 - tapOn:
@@ -203,7 +212,7 @@ appId: com.tengo.app
     text: '^(Quantity|Cantidad)\s+7$'
 - assertVisible:
     id: 'inventory-row-1-location'
-    text: '.*Maestro Pantry.*'
+    text: '.*Maestro Pantry 7.*'
 # 6. Dirty-discard: change the name, trigger Close, take the Cancel path
 # (edit still on screen), trigger Close again, take the Discard path and
 # assert the stored values are unchanged.

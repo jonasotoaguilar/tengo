@@ -1,6 +1,6 @@
 # Tengo M4 large-text form-fixture flow: DEV-only 2.0x font-scale CRUD verification.
 # Scope: proves the isolated `m1-fixture-crud-m4.db` add/edit form flows at
-# 2.0x font scale, where `item-form/save` sits below the fold and Maestro
+# 2.0x font scale, where below-the-fold controls sit out of view and Maestro
 # does NOT auto-scroll. Every below-the-fold tap is preceded by an explicit
 # `scrollUntilVisible` on the same stable testID; on an already-visible
 # element that step is a no-op pass, so the flow stays valid if layout shifts.
@@ -24,7 +24,12 @@
 # outlasts the reset, so `running` is already gone when sampled).
 # Selectors use the same stable testIDs as `.maestro/m4-forms.yaml`; count
 # regexes accept the existing en/es copy, and quantity assertions anchor the
-# full `Quantity|Cantidad <n>` label so `5` never matches `15`. `eraseText: 40`
+# full `Quantity|Cantidad <n>` label so `5` never matches `15`. The form has
+# no single quantity field on the v4 model: the create step adds stock row 0
+# via `item-form/location-new`, types the inline-new location name into
+# `item-form/stock-0/location-new/name` and its quantity into
+# `item-form/stock-0/quantity`, with an explicit `scrollUntilVisible` before
+# every below-the-fold tap. `eraseText: 40`
 # replaces the name field contents before edit inputs (40 backspaces clears
 # that short text safely) so the new value never appends. The item name is
 # deliberately SHORT (`LT Tomato`, single-line even at 2.0x) so the tap
@@ -37,8 +42,9 @@
 # cleared. It is deliberately
 # NOT used on the numeric quantity field: tapping a short centred number
 # places the caret inside it, so a backspace-based clear is cursor-dependent.
-# The quantity edit uses the stepper. The 1.0x `.maestro/m4-forms.yaml` flow
-# is left untouched as the 1.0x regression proof.
+# The quantity edit uses the row stepper (`item-form/stock-0/increment`).
+# The 1.0x `.maestro/m4-forms.yaml` flow is left untouched as the 1.0x
+# regression proof.
 appId: com.tengo.app
 ---
 - launchApp
@@ -71,25 +77,32 @@ appId: com.tengo.app
     id: 'inventory-add-empty'
 - assertVisible:
     id: 'item-form-screen'
-# 2. Create an item with a name, a quantity via the input, a NEW inline
-# location and a NEW inline category, then scroll Save into view, save, and
-# assert the created row with its location is visible.
+# 2. Create an item with a name, one per-location stock row (a NEW inline
+# location with its quantity typed into that row) and a NEW inline category,
+# then scroll Save into view, save, and assert the created row with its
+# total and breakdown is visible.
 - tapOn:
     id: 'item-form/name'
 - inputText: 'LT Tomato'
 - hideKeyboard
-- tapOn:
-    id: 'item-form/quantity'
-- inputText: '3'
-- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: 'item-form/location-new'
 - tapOn:
     id: 'item-form/location-new'
 - scrollUntilVisible:
     element:
-      id: 'item-form/location-new/name'
+      id: 'item-form/stock-0/location-new/name'
 - tapOn:
-    id: 'item-form/location-new/name'
+    id: 'item-form/stock-0/location-new/name'
 - inputText: 'Large Text Pantry'
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: 'item-form/stock-0/quantity'
+- tapOn:
+    id: 'item-form/stock-0/quantity'
+- inputText: '3'
 - hideKeyboard
 - scrollUntilVisible:
     element:
@@ -98,6 +111,9 @@ appId: com.tengo.app
     id: 'item-form/new-category/name'
 - inputText: 'Large Text Greens'
 - hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: 'item-form/new-category/add'
 - tapOn:
     id: 'item-form/new-category/add'
 - scrollUntilVisible:
@@ -113,7 +129,7 @@ appId: com.tengo.app
     id: 'inventory-row-1'
 - assertVisible:
     id: 'inventory-row-1-location'
-    text: '.*Large Text Pantry.*'
+    text: '.*Large Text Pantry 3.*'
 - assertVisible:
     id: 'inventory-row-1-quantity'
     text: '^(Quantity|Cantidad)\s+3$'
@@ -138,9 +154,9 @@ appId: com.tengo.app
       id: 'inventory-row-1-location'
 - assertVisible:
     id: 'inventory-row-1-location'
-    text: '.*Large Text Pantry.*'
-# 4. Open the row, edit the name and quantity, scroll Save into view, save,
-# assert the updated row.
+    text: '.*Large Text Pantry 3.*'
+# 4. Open the row, edit the name and the row quantity, scroll Save into view,
+# save, assert the updated row.
 - tapOn:
     id: 'inventory-row-1'
 - assertVisible:
@@ -150,12 +166,15 @@ appId: com.tengo.app
 - eraseText: 40
 - inputText: 'LT Tomato Edited'
 - hideKeyboard
-# Quantity is edited with the stepper, never by clearing the numeric field
+# Quantity is edited with the row stepper, never by clearing the numeric field
 # (cursor-dependent clear, same rationale as the 1.0x flow).
+- scrollUntilVisible:
+    element:
+      id: 'item-form/stock-0/increment'
 - tapOn:
-    id: 'item-form/increment'
+    id: 'item-form/stock-0/increment'
 - tapOn:
-    id: 'item-form/increment'
+    id: 'item-form/stock-0/increment'
 - scrollUntilVisible:
     element:
       id: 'item-form/save'
@@ -191,7 +210,7 @@ appId: com.tengo.app
       id: 'inventory-row-1-location'
 - assertVisible:
     id: 'inventory-row-1-location'
-    text: '.*Large Text Pantry.*'
+    text: '.*Large Text Pantry 5.*'
 # 6. Delete: scroll the destructive zone into view, trigger Delete, assert
 # the confirmation names the item, confirm, and assert the row is gone and
 # the empty state returns, leaving the isolated database empty.

@@ -1,0 +1,38 @@
+# Tengo P5b measurement flow: DEV-only on-demand performance pass.
+# Scope: taps `crud-fixture-measure` on the isolated CRUD fixture screen
+# and waits for the pass to report, so the data-layer budgets (viewport
+# 1000ms, search 200ms, write 100ms) plus the unbudgeted seed diagnostic
+# are observable on device. It does NOT assert PASS/FAIL itself: the
+# verifier reads the raw `crud-fixture-measure-check-<index>` lines
+# verbatim from the screen (a recorded FAIL is an acceptable outcome).
+# Fail-closes on `crud-fixture-screen`, so this flow can never pass
+# against production. Run with the guarded CRUD bundle:
+#   EXPO_PUBLIC_NATIVE_FIXTURE=1 EXPO_PUBLIC_NATIVE_CRUD=1 npx expo start --port 8083
+#   MAESTRO_REVERSE=1 scripts/run-maestro.sh .maestro/p5b-measure.yaml
+appId: com.tengo.app
+---
+- launchApp
+# Fail-closed gate: never test production by accident.
+- assertVisible:
+    id: 'crud-fixture-screen'
+- extendedWaitUntil:
+    visible:
+      id: 'crud-fixture-status'
+      text: 'ready'
+    timeout: 30000
+- assertVisible:
+    id: 'crud-fixture-first-layout'
+- tapOn:
+    id: 'crud-fixture-measure'
+- extendedWaitUntil:
+    visible:
+      id: 'crud-fixture-measure-results'
+    timeout: 180000
+- assertVisible:
+    id: 'crud-fixture-measure-check-0'
+- assertVisible:
+    id: 'crud-fixture-measure-check-1'
+- assertVisible:
+    id: 'crud-fixture-measure-check-2'
+- assertVisible:
+    id: 'crud-fixture-measure-check-3'

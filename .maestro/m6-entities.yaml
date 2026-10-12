@@ -28,20 +28,20 @@
 # - deterministic start: `inventory-add-empty` (:652), `inventory-empty-title`
 #   (:643): src/components/InventoryList.tsx:652,643
 # - `inventory-manage-entities` (reach the screen): src/components/InventoryList.tsx:591
-# - `entity-manager`, `entity-manager-title`, `entity-close`: src/components/EntityManager.tsx:322,337,343
-# - `entity-locations-empty` / `entity-categories-empty`: src/components/EntityManager.tsx:361,490
+# - `entity-manager`, `entity-manager-title`, `entity-close`: src/components/EntityManager.tsx:321,336,342
+# - `entity-locations-empty` / `entity-categories-empty`: src/components/EntityManager.tsx:360,489
 # - `entity-new-location-name`, `entity-new-location-address`, `entity-add-location`:
-#   src/components/EntityManager.tsx:421,439,462
-# - `entity-new-category-name`, `entity-add-category`: src/components/EntityManager.tsx:550,573
+#   src/components/EntityManager.tsx:420,438,461
+# - `entity-new-category-name`, `entity-add-category`: src/components/EntityManager.tsx:549,572
 # - `entity-location-1`, `entity-location-1-rename`, `entity-location-1-delete`:
-#   src/components/EntityManager.tsx:370,380,400 (id-suffixed per row)
+#   src/components/EntityManager.tsx:369,379,399 (id-suffixed per row)
 # - `entity-category-1`, `entity-category-1-rename`, `entity-category-1-delete`:
-#   src/components/EntityManager.tsx:499,509,529 (id-suffixed per row)
+#   src/components/EntityManager.tsx:498,508,528 (id-suffixed per row)
 # - `entity-edit-dialog`, `entity-edit-title`, `entity-edit-name`, `entity-edit-cancel`,
-#   `entity-edit-save`: src/components/EntityManager.tsx:599,611,617,642,657
+#   `entity-edit-save`: src/components/EntityManager.tsx:598,610,616,641,656
 # - `entity-delete-dialog`, `entity-delete-title`, `entity-delete-message`,
 #   `entity-delete-cancel`, `entity-delete-confirm`:
-#   src/components/EntityManager.tsx:692,702,708,714,726
+#   src/components/EntityManager.tsx:691,701,707,713,725
 # - location impact copy, singular/plural pair per clause with the caller choosing
 #   (R3+R6: how many stock entries/existencias, items NOT deleted, how many left
 #   visible as out of stock / sin stock): stock
@@ -52,7 +52,7 @@
 #   src/i18n/resources.ts:134-138 (en) / 266-269 (es)
 # - rename dialog title naming the entity: src/i18n/resources.ts:124 (en) / 257 (es)
 # - RENAME THROUGH THE ROW: the location row renders its name as a plain Text
-#   with NO testID (src/components/EntityManager.tsx:375, inside the
+#   with NO testID (src/components/EntityManager.tsx:374, inside the
 #   `entity-location-1` row at :370), so the flow asserts the visible text
 #   `Entity Loc R` directly instead of editing `src/`; the dialog-title
 #   re-read is kept as a second proof, not the only one.

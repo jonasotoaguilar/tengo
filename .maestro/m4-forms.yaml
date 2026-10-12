@@ -23,7 +23,12 @@
 # backspaces clears that short text safely) so the new value never appends.
 # It is deliberately NOT used on the numeric quantity field: tapping a short
 # centred number places the caret inside it, so backspace clears nothing and
-# the new digit lands before the old one. The quantity edit uses the stepper.
+# the new digit lands before the old one. The first quantity edit uses the
+# stepper; a second edit session (4b) then proves typing a new value into the
+# non-empty numeric field via double-tap-select plus inputText replace:
+# Maestro 2.11.0 `pressKey` only accepts its `KeyCode` enum (no caret-move
+# key exists), so caret moves and backspace clears cannot be deterministic,
+# while a double-tap selects the whole numeric token wherever the caret is.
 # This flow PASSED on the Android emulator (97/97 commands, 0 failures); the
 # recorded result and its exact scope live in docs/testing.md, and each run
 # must still be observed there rather than inferred from this comment.
@@ -152,6 +157,35 @@ appId: com.tengo.app
 - assertVisible:
     id: 'inventory-row-1-quantity'
     text: '^(Quantity|Cantidad)\s+5$'
+# 4b. Typed quantity edit into the NON-EMPTY numeric field (the recorded gap).
+# The stepper edit above is kept as the stepper proof; this session proves
+# typing instead. `tapOn` focuses the field, `longPressOn` selects the whole
+# single-token number (Android long-press selects the word under the press
+# wherever the caret landed), and `inputText` replaces the selection — caret-
+# independent, with no `clearText` (forbidden) and no `eraseText`.
+# (A `doubleTapOn`-select variant was tried on device and failed honestly:
+# the new digit inserted before the old one, observed `Quantity 75`.)
+- tapOn:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'item-form-screen'
+- tapOn:
+    id: 'item-form/quantity'
+- longPressOn:
+    id: 'item-form/quantity'
+- inputText: '7'
+- hideKeyboard
+- tapOn:
+    id: 'item-form/save'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+7$'
 # 5. Edit persistence across a restart: the UPDATED values survive a
 # force-stop/relaunch, not just the created row.
 - stopApp
@@ -166,7 +200,7 @@ appId: com.tengo.app
     id: 'inventory-row-1'
 - assertVisible:
     id: 'inventory-row-1-quantity'
-    text: '^(Quantity|Cantidad)\s+5$'
+    text: '^(Quantity|Cantidad)\s+7$'
 - assertVisible:
     id: 'inventory-row-1-location'
     text: '.*Maestro Pantry.*'
@@ -204,7 +238,7 @@ appId: com.tengo.app
     id: 'inventory-row-1'
 - assertVisible:
     id: 'inventory-row-1-quantity'
-    text: '^(Quantity|Cantidad)\s+5$'
+    text: '^(Quantity|Cantidad)\s+7$'
 - assertNotVisible:
     text: 'Unsaved Change'
 # 7. Delete: trigger Delete, assert the confirmation names the item, take

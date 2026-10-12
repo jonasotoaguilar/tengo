@@ -92,7 +92,28 @@ function makeDeps(store: Store, calls: string[]): QueryFixtureDeps {
         }
         return store.itemRows;
       }
-      if (sql.includes('FROM locations')) return store.locations;
+      // `listLocations`/`listCategories` select the bare shape while the
+      // bounded `queryItems` batched location read selects the
+      // `location_*` aliases: serve each caller the shape its SQL selected.
+      if (sql.includes('FROM locations')) {
+        if (/l\.id IN/i.test(sql) || sql.includes('location_id')) {
+          return store.locations.map((loc) => {
+            const bare = loc as unknown as {
+              id: number;
+              name: string;
+              address: string | null;
+              created_at: string;
+            };
+            return {
+              location_id: bare.id,
+              location_name: bare.name,
+              location_address: bare.address,
+              location_created_at: bare.created_at,
+            };
+          });
+        }
+        return store.locations;
+      }
       if (sql.includes('FROM categories')) return store.categories;
       throw new Error(`unexpected SQL: ${sql}`);
     }),

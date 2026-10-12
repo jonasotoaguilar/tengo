@@ -5,7 +5,7 @@
  * trim, cafe≠café, literal %_\\), location all/existing/unknown/invalid,
  * category []/single/OR/overlap/dedup/duplicate/unknown/invalid, AND
  * cross-filters, zero/many categories, stable id order, validation before
- * SQL, generic storage errors, and the 2-read bound at N=101. Real
+ * SQL, generic storage errors, and the 3-read bound at N=101. Real
  * expo-sqlite behavior is P3b isolated-fixture work.
  */
 import type { RepositoryDb } from '../src/inventory/database';
@@ -44,33 +44,44 @@ function makeQueryFake() {
         const onlyLoc = /WHERE i\.location_id/i.test(source)
           ? (params[0] as number)
           : null;
+        // Raw item page without the location join: dangling items are
+        // returned here and dropped by the batched location read instead.
         return [...items.values()]
           .filter((it) =>
             onlyLoc === null ? true : it.location_id === onlyLoc,
           )
-          .filter((it) => locations.has(it.location_id))
           .sort((a, b) => a.id - b.id)
-          .map((it) => {
-            const loc = locations.get(it.location_id);
-            if (loc === undefined) throw new Error('fake: missing location');
-            return {
-              item_id: it.id,
-              item_name: it.name,
-              item_quantity: it.quantity,
-              item_location_id: it.location_id,
-              item_created_at: it.created_at,
-              location_id: loc.id,
-              location_name: loc.name,
-              location_address: loc.address,
-              location_created_at: loc.created_at,
-            };
-          });
+          .map((it) => ({
+            item_id: it.id,
+            item_name: it.name,
+            item_quantity: it.quantity,
+            item_location_id: it.location_id,
+            item_created_at: it.created_at,
+          }));
+      }
+      if (/FROM locations/i.test(source)) {
+        const onlyLocs = /id IN/i.test(source) ? (params as number[]) : null;
+        return [...locations.values()]
+          .filter((loc) =>
+            onlyLocs === null ? true : onlyLocs.includes(loc.id),
+          )
+          .sort((a, b) => a.id - b.id)
+          .map((loc) => ({
+            location_id: loc.id,
+            location_name: loc.name,
+            location_address: loc.address,
+            location_created_at: loc.created_at,
+          }));
       }
       if (/FROM item_categories/i.test(source)) {
+        const onlyItems = /item_id IN/i.test(source)
+          ? (params as number[])
+          : null;
         return [...joins]
           .map((k) => k.split(':').map(Number) as [number, number])
           .filter(([, c]) => categories.has(c))
           .filter(([i]) => items.has(i))
+          .filter(([i]) => (onlyItems === null ? true : onlyItems.includes(i)))
           .sort((a, b) => a[0] - b[0] || a[1] - b[1])
           .map(([i, c]) => {
             const catRow = categories.get(c);
@@ -224,7 +235,7 @@ test('location: all/existing/unknown + categories OR/dedup/unknown + AND cross-f
   expect(detail.location).toMatchObject({ id: fridge, name: 'Fridge' });
 });
 
-test('stable order, many-category model, empty skips second read, 101 items stay bounded', async () => {
+test('stable order, many-category model, empty skips follow-up reads, 101 items stay bounded', async () => {
   const f = makeQueryFake();
   const l = f.loc();
   const c2 = f.cat('b');
@@ -239,19 +250,36 @@ test('stable order, many-category model, empty skips second read, 101 items stay
   if (manyDetail === undefined) throw new Error('test: many item missing');
   expect(manyDetail.categoryIds).toEqual([c2, c1]);
   expect(manyDetail.categories.map((x) => x.id)).toEqual([c2, c1]);
-  expect(f.calls).toHaveLength(2);
+  // Three batched reads: items, links for the surviving ids, locations.
+  expect(f.calls).toHaveLength(3);
+  expect(f.calls[1].source).toContain('WHERE jc.item_id IN');
+  expect(f.calls[2].source).toContain('WHERE l.id IN');
 
   const empty = makeQueryFake();
   empty.loc();
   expect(await queryItems(empty.db)).toEqual([]);
   expect(empty.calls).toHaveLength(1);
 
+  // Selective predicates skip follow-up reads: a name miss stops after
+  // the item page, a category miss stops after the batched link read.
+  const selective = makeQueryFake();
+  const sl = selective.loc();
+  const sc = selective.cat('Bulk');
+  selective.item('Rice', 1, sl, [sc]);
+  expect(await queryItems(selective.db, { query: 'no-such-item' })).toEqual([]);
+  expect(selective.calls).toHaveLength(1);
+  expect(await queryItems(selective.db, { categoryIds: [9999] })).toEqual([]);
+  expect(selective.calls).toHaveLength(3);
+
   const big = makeQueryFake();
   const bl = big.loc();
   for (let n = 0; n < 101; n++) big.item(`item-${n}`, n % 3, bl, []);
   const all = await queryItems(big.db);
   expect(all).toHaveLength(101);
-  expect(big.calls).toHaveLength(2);
+  // Still one batched links read + one batched locations read, never N+1.
+  expect(big.calls).toHaveLength(3);
+  expect(big.calls[1].params).toHaveLength(101);
+  expect(big.calls[2].params).toEqual([bl]);
   expect(all.map((i) => i.id)).toEqual(
     [...all.map((i) => i.id)].sort((x, y) => x - y),
   );
@@ -260,16 +288,32 @@ test('stable order, many-category model, empty skips second read, 101 items stay
 test('SQL shape is fixed/parameterized; invalid filters never touch the driver', async () => {
   const f = makeQueryFake();
   const l = f.loc();
-  f.item('Rice', 1, l);
+  const rice = f.item('Rice', 1, l);
   await queryItems(f.db, { locationId: l, query: "x' OR '1'='1" });
+  // No match: only the item page is read; the payload stays a JS literal.
+  expect(f.calls).toHaveLength(1);
   const [first] = f.calls;
-  expect(first.source).toContain('JOIN locations');
+  expect(first.source).toContain('FROM items');
+  expect(first.source).not.toContain('JOIN locations');
   expect(first.source).toContain('WHERE i.location_id = ?');
   expect(first.source).toContain('ORDER BY i.id ASC');
   expect(first.source).not.toContain("x' OR");
   expect(first.params).toEqual([l]);
-  expect(f.calls[1].source).toContain('JOIN categories');
-  expect(f.calls[1].source).toContain('ORDER BY jc.item_id ASC');
+
+  // A matching query exercises all three batched reads with bound params.
+  await queryItems(f.db, { locationId: l, query: 'rice' });
+  expect(f.calls).toHaveLength(4);
+  const [, links, locs] = f.calls.slice(1);
+  expect(links.source).toContain('JOIN categories');
+  expect(links.source).toContain('WHERE jc.item_id IN (');
+  expect(links.source).toContain('ORDER BY jc.item_id ASC');
+  expect(links.source).not.toContain('Rice');
+  expect(links.params).toEqual([rice]);
+  expect(locs.source).toContain('FROM locations');
+  expect(locs.source).toContain('WHERE l.id IN (');
+  expect(locs.source).toContain('ORDER BY l.id ASC');
+  expect(locs.source).not.toContain('Pantry');
+  expect(locs.params).toEqual([l]);
 
   const spy: RepositoryDb = {
     runAsync: jest.fn(),
@@ -342,4 +386,104 @@ test('driver failures map to generic storage query errors with cause', async () 
   });
   expect(failure.message).not.toContain('disk I/O');
   expect(String(failure.cause ?? failure)).toMatch(/disk I\/O/);
+});
+
+test('dangling location drops the item while keeping the 3-read bound', async () => {
+  const f = makeQueryFake();
+  const l = f.loc();
+  const good = f.item('Rice', 1, l);
+  // Dangling: location 9999 has no location row. The unjoined items page
+  // returns it, but the batched location read cannot, so inner-join
+  // semantics drop it exactly as the pre-refactor JOIN did.
+  const dangling = f.item('Ghost', 1, 9999);
+  expect(dangling).not.toBe(good);
+  const page = await queryItems(f.db);
+  expect(page.map((i) => i.id)).toEqual([good]);
+  expect(page.find((i) => i.id === dangling)).toBeUndefined();
+  expect(f.calls).toHaveLength(3);
+});
+
+test('second and third read faults map to generic storage query errors with cause', async () => {
+  const seedOne = () => {
+    const f = makeQueryFake();
+    const l = f.loc();
+    f.item('Rice', 1, l);
+    return f;
+  };
+  const faultOnRead = (
+    fake: ReturnType<typeof makeQueryFake>,
+    readIndex: number,
+    message: string,
+  ) => {
+    const inner = fake.db.getAllAsync as jest.Mock;
+    const orig = inner.getMockImplementation() as (
+      ...args: never[]
+    ) => Promise<unknown>;
+    let calls = 0;
+    inner.mockImplementation(async (...args: never[]) => {
+      calls += 1;
+      if (calls === readIndex) throw new Error(message);
+      return orig(...args);
+    });
+  };
+
+  const linkFault = seedOne();
+  faultOnRead(linkFault, 2, 'link read boom');
+  const linkFailure = (await queryItems(linkFault.db).catch(
+    (e: unknown) => e,
+  )) as StorageError;
+  expect(linkFailure).toBeInstanceOf(StorageError);
+  expect(linkFailure).toMatchObject({
+    code: 'storage',
+    entity: 'item',
+    operation: 'query',
+  });
+  expect(linkFailure.message).not.toContain('link read boom');
+  expect(String(linkFailure.cause ?? linkFailure)).toMatch(/link read boom/);
+
+  const locFault = seedOne();
+  faultOnRead(locFault, 3, 'location read boom');
+  const locFailure = (await queryItems(locFault.db).catch(
+    (e: unknown) => e,
+  )) as StorageError;
+  expect(locFailure).toBeInstanceOf(StorageError);
+  expect(locFailure).toMatchObject({
+    code: 'storage',
+    entity: 'item',
+    operation: 'query',
+  });
+  expect(locFailure.message).not.toContain('location read boom');
+  expect(String(locFailure.cause ?? locFailure)).toMatch(/location read boom/);
+});
+
+test('malformed location row throws StorageError with cause instead of dropping', async () => {
+  const f = makeQueryFake();
+  const l = f.loc();
+  f.item('Rice', 1, l);
+  const inner = f.db.getAllAsync as jest.Mock;
+  const orig = inner.getMockImplementation() as (
+    ...args: never[]
+  ) => Promise<unknown>;
+  inner.mockImplementation(async (...args: never[]) => {
+    const [source] = args as unknown as [string, unknown[]?];
+    const rows = (await orig(...args)) as Record<string, unknown>[];
+    if (/FROM locations/i.test(source)) {
+      // Bare/unaliased shape: no `location_*` keys, so the aliased-shape
+      // requirement must reject it loudly rather than drop the item.
+      return [{ id: l, name: 'Pantry', address: null, created_at: `ts-${l}` }];
+    }
+    return rows;
+  });
+  const failure = (await queryItems(f.db).catch((e: unknown) => e)) as
+    | StorageError
+    | unknown;
+  expect(failure).toBeInstanceOf(StorageError);
+  expect(failure).toMatchObject({
+    code: 'storage',
+    entity: 'item',
+    operation: 'query',
+  });
+  expect(String((failure as StorageError).cause ?? failure)).toMatch(
+    /malformed location row/,
+  );
 });

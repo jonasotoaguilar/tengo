@@ -122,7 +122,28 @@ function valueFor(call: PendingCall): Record<string, unknown>[] {
     }
     return store.itemRows;
   }
-  if (call.sql.includes('FROM locations')) return store.locations;
+  if (call.sql.includes('FROM locations')) {
+    // `listLocations` selects the bare shape while the bounded `queryItems`
+    // batched read selects the `location_*` aliases: serve each caller the
+    // shape its SQL selected.
+    if (/l\.id IN/i.test(call.sql) || call.sql.includes('location_id')) {
+      return store.locations.map((loc) => {
+        const bare = loc as unknown as {
+          id: number;
+          name: string;
+          address: string | null;
+          created_at: string;
+        };
+        return {
+          location_id: bare.id,
+          location_name: bare.name,
+          location_address: bare.address,
+          location_created_at: bare.created_at,
+        };
+      });
+    }
+    return store.locations;
+  }
   if (call.sql.includes('FROM categories')) return store.categories;
   throw new Error(`unexpected SQL: ${call.sql}`);
 }
@@ -223,8 +244,9 @@ test('filter change during pending bootstrap opens only once and reads the curre
   );
   expect(screen.getByTestId('inventory-row-1')).toBeTruthy();
   expect(screen.queryByTestId('inventory-row-2')).toBeNull();
-  // One round of bounded reads: stale round A publishes nothing.
-  expect(fake.getAllAsync).toHaveBeenCalledTimes(6);
+  // Two rounds of three bounded reads (items + links + locations each)
+  // plus the shared entity reads: stale round A publishes nothing.
+  expect(fake.getAllAsync).toHaveBeenCalledTimes(8);
   expect(initializeDatabase).toHaveBeenCalledTimes(1);
 });
 

@@ -339,6 +339,76 @@ not a product regression; `m4-forms.yaml` is left untouched as the
 1.0x regression proof. A large-text variant would need explicit scroll
 steps before below-the-fold taps.
 
+#### Recorded 2.0x large-text Maestro pass (closes the flow limitation above)
+
+`.maestro/m4-forms-large-text.yaml` is a separate DEV-only flow for
+`font_scale 2.0`, where `item-form/save` and the row detail lines sit
+below the fold and Maestro does not auto-scroll. Every below-the-fold tap
+is preceded by an explicit `scrollUntilVisible` on the same stable
+testID; on an already-visible element that step is a no-op, so the flow
+stays valid if layout shifts. It fail-closes on `crud-fixture-screen`, so
+it can never pass against production, and it starts by tapping
+`crud-fixture-reset` so item ids are deterministic. The 1.0x
+`m4-forms.yaml` stays untouched as its own regression proof.
+
+Observed on emulator-5554 (AVD `Tengo_API34`, Android 14, installed debug
+build, guarded CRUD bundle on Metro 8083, isolated
+`m1-fixture-crud-m4.db`; `tengo.db` never created, opened or modified):
+
+| Run | Command | Result |
+| --- | --- | --- |
+| 1 | `maestro --udid emulator-5554 test .maestro/m4-forms-large-text.yaml` at `font_scale 2.0` | exit 1 — 60/61 commands COMPLETED, step-061 FAILED: `assertVisible inventory-row-1-location` in the edit-persistence section (the row detail sits below the fold at 2.0x) |
+| 2 | same command after the flow-only fix | exit 0 — 78/78 commands COMPLETED, 0 failed, 8/8 `scrollUntilVisible` steps COMPLETED |
+
+Run 1 also exposed a second flow-side defect: `eraseText` on a WRAPPED
+two-line name is caret-dependent (the tap lands mid-word, so backspaces
+delete only the text before the caret and the remainder survives —
+observed `Large Text Tomato Editedmato`), the same class as the numeric
+field limitation in the 1.0x flow. The fix keeps the item name short and
+single-line at 2.0x (`LT Tomato`) while location/category names stay long
+because they are display-only, and adds the missing scroll steps. No
+product code changed and the flow was not weakened.
+
+Covered at 2.0x: fixture reset, create with inline new location and
+category, create persistence across restart, edit of name and quantity
+(stepper), edit persistence across restart, delete confirmation naming
+the item, empty-state return, and delete persistence. Device state was
+restored afterwards (`font_scale 1.0` verified, night mode `no`, app
+locales empty, app force-stopped, Metro 8083 stopped).
+
+#### Recorded device accessibility tree (M5 screen-reader criterion)
+
+Every surface was dumped with `adb shell uiautomator dump` on
+emulator-5554 at 1.0x (density 420 → ÷2.625; 48dp = 126px), on the
+list-empty, add-form, populated-list, edit-form, discard-dialog and
+delete-dialog states. Every `Button` carries a `content-desc` label, every
+`EditText` carries a hint plus its visible label, and both dialogs expose
+title/message text with labeled buttons; `enabled` is `true` for every
+enabled control and `false` for the disabled steppers on an empty add
+form.
+
+Production touch targets, all at or above 48dp in their smaller axis
+(width × height in dp): search 379.4×48.0; chips All 49.9×48.0, location
+92.2×48.0, category 95.6×48.0; row 379.4×115.8 with the accessible name
+`C3Beans, Quantity 2, C3Pantry, C3Greens`; FAB 70.9×48.0; Close
+67.4×48.0; name 379.4×48.0; quantity 267.4×48.0; steppers 48.0×48.0;
+location/category chips ≥91.8×48.0; Save 379.4×48.0; Delete 379.4×48.0;
+discard Cancel/Confirm and delete Cancel/Confirm 331.4×48.0. Static text
+lines (counts, labels, row sub-lines) are shorter than 48dp but are not
+touch targets. Only the DEV-only fixture buttons `crud-fixture-reset`
+(112.8×44.2dp) and `crud-fixture-measure` (173.0×43.8dp) miss 48dp
+height; that surface never ships. The delete dialog named the stored item
+(`Delete "C3Beans"?`) even with a dirty `C3BeansX` draft in the field.
+
+Boundary, stated rather than glossed: this is the on-device accessibility
+tree (roles, labels, enabled state, bounds). It is NOT a TalkBack speech
+pass — TalkBack speech was not verified, and no screen-reader utterance is
+claimed. A 2.0x observation worth noting: a wrapped row name scrolls under
+the floating Add button while scrolling mid-list, which is the intended
+Material overlay behavior; the last row keeps the existing
+`insets.bottom + 96` list bottom padding, so nothing is permanently
+obscured.
+
 Run the isolated Android form flow with the guarded CRUD bundle:
 
 ```sh

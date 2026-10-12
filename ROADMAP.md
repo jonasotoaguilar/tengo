@@ -203,15 +203,16 @@ contract: [DESIGN.md](DESIGN.md) sections 3–5.
 
 ### M5 — Hardening: a11y, i18n, performance, native matrix (depends on M3–M4)
 
-Status: in its final pass — no new features were added. The string audit
-runs as a guard, the contrast floor is implemented and guarded, the
-performance budgets were measured on device, and the manual device passes
-are recorded in
+Status: done — no new features were added. The string audit runs as a
+guard, the contrast floor is implemented and guarded, the performance
+budgets were measured on device, and the extended Maestro flows (1.0x and
+2.0x) plus the manual device passes and the device accessibility tree are
+recorded in
 [docs/testing.md](docs/testing.md#recorded-m5-contrast-measurements-computed-not-device-sampled).
-Two criteria are still being observed rather than claimed: an executable
-2.0x large-text Maestro flow and the device accessibility-tree pass.
 The one honest product gap is the native quantity-typing case listed
-under M4.
+under M4, and TalkBack speech itself is not automatable on this host: the
+accessibility evidence is the device tree, stated as such rather than
+glossed as a screen-reader pass.
 
 Surfaces: string audit, accessibility labels, performance pass, extended
 Maestro flows.
@@ -277,6 +278,7 @@ them. Fixed runners (already in `package.json`): `npm test`,
 | Compat/export | `expo install --check`, unsigned Android export smoke | `npm run compat`, `npm run export:smoke` |
 | Device smoke | Single-launch readiness | Maestro on debug build (`com.tengo.app`); see [Maestro boundary](docs/testing.md#maestro-boundary) |
 | Add/search/edit/delete flows | Passed on Android: `.maestro/m4-forms.yaml` 97/97 commands, 0 failures, covering empty first-run, create with inline location/category, edit, dirty-discard, delete confirmation and force-stop/relaunch persistence for create, edit and delete | Isolated CRUD fixture; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
+| Large-text flow (2.0x) | Passed on Android: `.maestro/m4-forms-large-text.yaml` 78/78 commands, 0 failures, with 8 explicit `scrollUntilVisible` steps before below-the-fold taps; one honest earlier FAIL (60/61, step-061) exposed the missing scrolls and a caret-dependent `eraseText` on a wrapped name | Isolated CRUD fixture at `font_scale 2.0`; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | Native migration | Passed on Android: M1 fixture 5/5 | Isolated native check (not Jest); see [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | CRUD persistence | Passed on Android: phases 5/5, 3/3, 8/8 across force-stop + relaunch | Debug build (`com.tengo.app`); see [verified native evidence](docs/testing.md#verified-native-evidence-android-only) |
 | Manual device | Restart persistence, `es` device locale, dark mode, large text, keyboard/safe-area on one Android phone | Emulator or hardware; record which produced the evidence |
@@ -379,9 +381,7 @@ enough to review in one pass.
   create, edit and delete all survived force-stop + relaunch on an
   isolated fixture database (no production data touched); see
   [verified native evidence](docs/testing.md#verified-native-evidence-android-only).
-- [ ] M5: `en`/`es` audit, screen-reader pass, contrast floor and
-  performance budgets observed on a device pass, extended Maestro
-  flows observed on a debug build.
+- [x] M5: `en`/`es` audit (guard), accessibility-tree pass with 48dp targets, contrast floor implemented and guarded, performance budgets observed on a device pass, and extended Maestro flows (1.0x 97/97, 2.0x 78/78) observed on a debug build. TalkBack speech is a stated boundary, not claimed.
 - [x] Section 9 recorded: the approved quantity/location/category/deletion entries stay approved, while bounds, uniqueness, a managed-entity screen and accent semantics stay proposed and deferred to the user as the named owner.
 - [x] No backend/accounts/sync introduced; `npm run web` still fails fast
   (`node -e` exits 1) and releases stay source-only (`release.yml` on tag `v*`).

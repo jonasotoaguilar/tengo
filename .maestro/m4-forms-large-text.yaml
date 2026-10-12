@@ -1,0 +1,232 @@
+# Tengo M4 large-text form-fixture flow: DEV-only 2.0x font-scale CRUD verification.
+# Scope: proves the isolated `m1-fixture-crud-m4.db` add/edit form flows at
+# 2.0x font scale, where `item-form/save` sits below the fold and Maestro
+# does NOT auto-scroll. Every below-the-fold tap is preceded by an explicit
+# `scrollUntilVisible` on the same stable testID; on an already-visible
+# element that step is a no-op pass, so the flow stays valid if layout shifts.
+# It does NOT prove production `tengo.db` behavior: the first assertion
+# fail-closes on `crud-fixture-screen`, so this flow can never accidentally
+# pass against production.
+# Device setup (NOT part of the flow; Maestro cannot set font scale):
+#   adb shell settings put system font_scale 2.0
+#   adb shell am force-stop com.tengo.app
+# then serve the guarded CRUD bundle and run:
+#   EXPO_PUBLIC_NATIVE_FIXTURE=1 EXPO_PUBLIC_NATIVE_CRUD=1 npx expo start --port 8083
+#   maestro test .maestro/m4-forms-large-text.yaml
+# Restore afterwards: `settings put system font_scale 1.0`, force-stop.
+# Deterministic start: the flow taps `crud-fixture-reset` (enabled only once
+# the fixture reports `ready`, never mid-open) so every run begins from the
+# empty isolated database; the first created item takes id 1, which makes the
+# `inventory-row-1` selectors below safe instead of accidental. After the tap
+# the flow waits on the first-run call to action (`inventory-add-empty`)
+# before asserting the empty state: the transient `running` status is
+# deliberately NOT awaited (a `tapOn` waits for the app to settle, which
+# outlasts the reset, so `running` is already gone when sampled).
+# Selectors use the same stable testIDs as `.maestro/m4-forms.yaml`; count
+# regexes accept the existing en/es copy, and quantity assertions anchor the
+# full `Quantity|Cantidad <n>` label so `5` never matches `15`. `eraseText: 40`
+# replaces the name field contents before edit inputs (40 backspaces clears
+# that short text safely) so the new value never appends. The item name is
+# deliberately SHORT (`LT Tomato`, single-line even at 2.0x) so the tap
+# places the caret at the end and the clear is deterministic: with a wrapped
+# two-line name the tap lands mid-word, backspaces delete only the text
+# before the caret, and the remainder survives (observed
+# `Large Text Tomato Editedmato` on the first 2.0x run). Same
+# caret-dependent class as the numeric-field limitation below; the
+# location/category names stay long because they are display-only and never
+# cleared. It is deliberately
+# NOT used on the numeric quantity field: tapping a short centred number
+# places the caret inside it, so a backspace-based clear is cursor-dependent.
+# The quantity edit uses the stepper. The 1.0x `.maestro/m4-forms.yaml` flow
+# is left untouched as the 1.0x regression proof.
+appId: com.tengo.app
+---
+- launchApp
+# Fail-closed gate: never test production by accident.
+- assertVisible:
+    id: 'crud-fixture-screen'
+- extendedWaitUntil:
+    visible:
+      id: 'crud-fixture-status'
+      text: 'ready'
+    timeout: 30000
+- assertVisible:
+    id: 'crud-fixture-status'
+# 0. Reset-first deterministic start: every run begins from the empty
+# isolated database, so `inventory-row-1` below is the created row.
+- tapOn:
+    id: 'crud-fixture-reset'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-add-empty'
+    timeout: 30000
+- assertVisible:
+    id: 'inventory-empty-title'
+# 1. Empty first-run state on the isolated database, then open the add form.
+# At 2.0x the call to action may sit below the fold, so scroll to it first.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-add-empty'
+- tapOn:
+    id: 'inventory-add-empty'
+- assertVisible:
+    id: 'item-form-screen'
+# 2. Create an item with a name, a quantity via the input, a NEW inline
+# location and a NEW inline category, then scroll Save into view, save, and
+# assert the created row with its location is visible.
+- tapOn:
+    id: 'item-form/name'
+- inputText: 'LT Tomato'
+- hideKeyboard
+- tapOn:
+    id: 'item-form/quantity'
+- inputText: '3'
+- hideKeyboard
+- tapOn:
+    id: 'item-form/location-new'
+- scrollUntilVisible:
+    element:
+      id: 'item-form/location-new/name'
+- tapOn:
+    id: 'item-form/location-new/name'
+- inputText: 'Large Text Pantry'
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: 'item-form/new-category/name'
+- tapOn:
+    id: 'item-form/new-category/name'
+- inputText: 'Large Text Greens'
+- hideKeyboard
+- tapOn:
+    id: 'item-form/new-category/add'
+- scrollUntilVisible:
+    element:
+      id: 'item-form/save'
+- tapOn:
+    id: 'item-form/save'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-1-location'
+    text: '.*Large Text Pantry.*'
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+3$'
+- assertVisible:
+    id: 'inventory-count'
+    text: '^1 (of|de) 1$'
+# 3. Force-stop/relaunch persistence against the isolated database. At 2.0x
+# the row children can sit below the fold, so scroll the location line into
+# view before asserting it.
+- stopApp
+- launchApp
+- assertVisible:
+    id: 'crud-fixture-screen'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 30000
+- assertVisible:
+    id: 'inventory-row-1'
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-1-location'
+- assertVisible:
+    id: 'inventory-row-1-location'
+    text: '.*Large Text Pantry.*'
+# 4. Open the row, edit the name and quantity, scroll Save into view, save,
+# assert the updated row.
+- tapOn:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'item-form-screen'
+- tapOn:
+    id: 'item-form/name'
+- eraseText: 40
+- inputText: 'LT Tomato Edited'
+- hideKeyboard
+# Quantity is edited with the stepper, never by clearing the numeric field
+# (cursor-dependent clear, same rationale as the 1.0x flow).
+- tapOn:
+    id: 'item-form/increment'
+- tapOn:
+    id: 'item-form/increment'
+- scrollUntilVisible:
+    element:
+      id: 'item-form/save'
+- tapOn:
+    id: 'item-form/save'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+5$'
+# 5. Edit persistence across a restart: the UPDATED values survive a
+# force-stop/relaunch, not just the created row. Same below-the-fold scroll
+# as section 3 before the location assertion.
+- stopApp
+- launchApp
+- assertVisible:
+    id: 'crud-fixture-screen'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 30000
+- assertVisible:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+5$'
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-1-location'
+- assertVisible:
+    id: 'inventory-row-1-location'
+    text: '.*Large Text Pantry.*'
+# 6. Delete: scroll the destructive zone into view, trigger Delete, assert
+# the confirmation names the item, confirm, and assert the row is gone and
+# the empty state returns, leaving the isolated database empty.
+- tapOn:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'item-form-screen'
+- scrollUntilVisible:
+    element:
+      id: 'item-form/delete'
+- tapOn:
+    id: 'item-form/delete'
+- assertVisible:
+    id: 'item-form-screen/delete-dialog'
+- assertVisible:
+    id: 'item-form-screen/delete-title'
+    text: '.*LT Tomato Edited.*'
+- tapOn:
+    id: 'item-form-screen/delete-confirm'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-empty-title'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-empty-title'
+- assertNotVisible:
+    id: 'inventory-row-1'
+# 7. Force-stop/relaunch: the deletion persisted on the isolated database.
+- stopApp
+- launchApp
+- assertVisible:
+    id: 'crud-fixture-screen'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-empty-title'
+    timeout: 30000
+- assertVisible:
+    id: 'inventory-empty-title'

@@ -456,6 +456,31 @@ zero-failure result from `.maestro/runs/`, and cannot re-derive the
 milliseconds. That limitation applies to every recorded pass here, not only to
 this one.
 
+#### Recorded device pass after the dependency alignment
+
+The Expo patch alignment in `7b88604` changed the JavaScript bundle, so the four
+flows were re-observed on it rather than assumed to still hold. Same emulator,
+same AVD, same isolated databases, same commands:
+
+- `.maestro/m3-query.yaml` 108 commands, zero failures
+- `.maestro/m4-forms.yaml` 107 commands, zero failures
+- `.maestro/m4-forms-large-text.yaml` 85 commands, zero failures at 2.0x
+- `.maestro/p5b-measure.yaml` 12 commands, zero failures
+
+`m3-query` failed once before passing, and that failure was diagnosed rather
+than retried blindly: the recorded hierarchy at the failing step shows the
+launcher home screen with `NexusLauncher` in the foreground, which is the
+`hideKeyboard` BACK flake already recorded above and not a product or flow
+defect. One diagnosed re-run then completed 108 of 108.
+
+The measurement on this bundle: layout 104.2 ms (no budget), seed 23256.3 ms
+(unbudgeted setup), first-viewport 230.5 ms against 1000 ms PASS, single-row
+write 39.8 ms against 100 ms PASS, and search **272.6 ms against 200 ms: FAIL**.
+That is the fifth sample of the miss (292.6, 263.3, 234.2, 242.1, 272.6) and it
+keeps the same verdict: the budget is missed by 34 to 93 ms depending on the run,
+and recovering it needs the index- or migration-level decision described above,
+not another query edit.
+
 #### Recorded M5 manual-device passes (emulator-5554, dark / large text / keyboard / locale)
 
 One combined session on the CRUD fixture bundle (the same

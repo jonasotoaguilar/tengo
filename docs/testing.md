@@ -112,6 +112,22 @@ and can never ship in a release build.
 
 ## Query fixture protocol (P3b3, DEV-only)
 
+Folding realignment (adopted 2026-10-12): the search contract is case- and
+accent-insensitive now, so the seed's fifth item is `Cafe Napkin` (it was
+`Nail`) and the fixture asserts folding in both directions (`café` 3, `CAFÉ`
+3, `cafe` 3) instead of `cafe` 0, keeping 9/9 checks. `.maestro/m3-query.yaml`
+followed (the `café` count went 2 -> 3 and three comments stopped describing a
+no-fold contract) and was re-observed on emulator-5554 through
+`scripts/run-maestro.sh`: exit 0, 72 commands COMPLETED, 0 FAILED, JUnit
+`tests=1 failures=0` in 117.6s, including the `^3 (of|de) 5$` café assertion.
+An earlier attempt failed honestly with a native fixture NPE, which did not
+reappear once the bundle was served from a tree with no uncommitted source
+changes: a device run served from a mid-flight worktree is an inconsistent
+snapshot and proves nothing. Two stale pre-realignment DEV databases were
+recorded with their sizes and sha256 digests and then deleted, after the
+fixture refused to overwrite a partial seed; the CRUD fixture and production
+`tengo.db` were never created, opened or modified.
+
 The query fixture embeds the real `InventoryContainer` with an injected
 isolated bootstrap, so the list on screen is the actual read model — no
 list fakes. Only `m1-fixture-query-m3.db` (seeded) and

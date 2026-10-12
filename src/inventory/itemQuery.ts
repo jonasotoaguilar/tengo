@@ -5,29 +5,43 @@
  * three SQL reads regardless of N: one `items` select WITHOUT the location
  * join (`id, name, quantity, location_id, created_at`, optional
  * parameterized `location_id` WHERE, `ORDER BY item id ASC`), then — only
- * when name-surviving item ids exist — one batched
- * `item_categories JOIN categories` select constrained to those ids
+ * when the item page is non-empty — one batched
+ * `item_categories JOIN categories` select constrained to the page ids
  * (`WHERE jc.item_id IN (?,…)` with generated placeholders and bound params,
- * `ORDER BY item/category id ASC`), then — only when rows survive both the
- * name and the category-OR predicates — one batched `locations` select for
+ * `ORDER BY item/category id ASC`), then — only when rows survive the
+ * category-OR predicate — one batched `locations` select for
  * the distinct surviving location ids (`WHERE l.id IN (?,…)` with generated
  * placeholders and bound params, `ORDER BY location id ASC`). No unbounded
  * full-table link/location scan is ever issued, and empty intermediate sets
- * skip their follow-up reads (no items → 1 read; name eliminates all → 1
- * read; category eliminates all → 2 reads).
+ * skip their follow-up reads (no items → 1 read; category eliminates
+ * all → 2 reads).
  *
- * The name predicate and the category-OR target-set predicate are evaluated
- * BEFORE any `Location`, `Category`/`categoryIds`, or `ItemDetail`
- * allocation: name filtering runs on the raw item rows, category membership
- * runs on the raw link id pairs, and only surviving rows allocate entities.
+ * S9 cross-entity text matching means the name-only prefilter cannot decide
+ * the result set: a query matches when the folded query is a substring of
+ * the folded item name, the folded location name, or any folded category
+ * name, so the location/category names must be read before the text
+ * predicate runs. The link read therefore covers the whole page (not just
+ * name survivors) and the location read covers every category survivor
+ * (an undecided row may still match through its location name). The worst
+ * case per keystroke is the same full 3-read shape the unfiltered list
+ * already pays; a name miss no longer short-circuits after read 1.
+ *
+ * The text predicate, the category-OR target-set predicate, and the
+ * location-name predicate are evaluated BEFORE any `Location`,
+ * `Category`/`categoryIds`, or `ItemDetail` allocation: name filtering runs
+ * on the raw item rows, category membership runs on the raw link id pairs,
+ * location-name matching runs on the raw location rows, and only surviving
+ * rows allocate entities. An item matching in more than one way still
+ * appears exactly once (one row per item, stable `id ASC` page order).
  * Inner-join semantics are preserved exactly: an item whose location row is
  * missing from the batched location read is dropped, because the previous
  * `JOIN locations` shape excluded it.
  *
- * Name matching is a verbatim-preserving JS substring with accent folding:
- * both the trimmed query and each stored name are normalized with Unicode
- * NFD, combining marks (`\\p{Diacritic}`) are stripped, then the folded
- * text is lowercased and compared with literal `includes`. That keeps
+ * Name matching is a verbatim-preserving JS substring with accent folding,
+ * applied to the item name, the location name, and every category name:
+ * both the trimmed query and each compared value are normalized with
+ * Unicode NFD, combining marks (`\\p{Diacritic}`) are stripped, then the
+ * folded text is lowercased and compared with literal `includes`. That keeps
  * ordinary Unicode case (`CAFÉ` matches `café`) and folds accents both
  * directions (`cafe` matches `café`, `CAFÉ` matches stored `cafe`,
  * `melange` matches `mélange`), with literal `%`/`_`/`\` handling
@@ -197,11 +211,12 @@ function foldSearchText(value: string): string {
 
 /**
  * Query items with bounded reads (max three `getAllAsync` calls): the
- * unjoined item page, one batched category-link read for the name-surviving
- * ids, and one batched location read for the distinct surviving location
- * ids. JS accent-folded name-substring (NFD + strip Diacritic + lowercase,
- * literal `%_\\`) runs on the
- * raw item rows and the category-OR runs on the raw link id pairs, both
+ * unjoined item page, one batched category-link read for the page ids, and
+ * one batched location read for the distinct category-surviving location
+ * ids. JS accent-folded substring (NFD + strip Diacritic + lowercase,
+ * literal `%_\\`) runs against the raw item, link, and location rows —
+ * matching the item name, the location name, or any category name with
+ * OR-with-dedup — and the category-OR runs on the raw link id pairs, all
  * before any entity allocation. Item order is stable `id ASC`; categories
  * are `id ASC` with `categoryIds` matching the entity list. Quantity zero
  * is preserved. Items whose location row is absent stay excluded.
@@ -231,26 +246,28 @@ export async function queryItems(
   }
   if (itemRows.length === 0) return [];
 
-  // Name predicate on raw rows only — no Location/Category/ItemDetail yet.
-  // Accent-folded literal substring: fold both the query and each name.
+  // Cross-entity text predicate inputs, computed on raw rows only — no
+  // Location/Category/ItemDetail yet. Accent-folded literal substring: fold
+  // the query once, each item name once, each distinct category name once
+  // (cached by id), and each location name once after the batched read.
   const foldedQuery =
     normalized.query === null ? null : foldSearchText(normalized.query);
-  const nameSurvivors =
-    foldedQuery === null
-      ? itemRows
-      : itemRows.filter((row) =>
-          foldSearchText(row.item_name).includes(foldedQuery),
-        );
-  if (nameSurvivors.length === 0) return [];
+  const foldedItemName = new Map<number, string>();
+  for (const row of itemRows) {
+    foldedItemName.set(row.item_id, foldSearchText(row.item_name));
+  }
 
-  // Category links batched to the name survivors (id ASC order preserved).
-  const survivorIds = nameSurvivors.map((row) => row.item_id);
+  // Category links batched to the whole page (id ASC order preserved). S9
+  // needs every row's category names before the text predicate can run, so
+  // the read-1 name short-circuit is gone: the bound stays three reads and
+  // the worst case is the full shape the unfiltered list already pays.
+  const pageIds = itemRows.map((row) => row.item_id);
   let linkRows: CategoryLinkRow[];
   try {
     linkRows = await db.getAllAsync<CategoryLinkRow>(
-      `${CATEGORY_LINKS_SELECT_BASE} WHERE jc.item_id IN (${inPlaceholders(survivorIds.length)}) ` +
+      `${CATEGORY_LINKS_SELECT_BASE} WHERE jc.item_id IN (${inPlaceholders(pageIds.length)}) ` +
         'ORDER BY jc.item_id ASC, c.id ASC',
-      [...survivorIds],
+      [...pageIds],
     );
   } catch (error) {
     if (error instanceof ValidationError || error instanceof StorageError) {
@@ -259,27 +276,55 @@ export async function queryItems(
     throw new StorageError('item', 'query', error);
   }
 
-  // Category-OR predicate on raw link id pairs — still no entity allocation.
+  // Category-OR predicate on raw link id pairs — still no entity
+  // allocation. Unchanged semantics: empty filter means no filtering, and
+  // a miss here still skips the location read (2 reads total).
   const wanted =
     normalized.categoryIds.length > 0 ? new Set(normalized.categoryIds) : null;
-  let finalRows: ItemRow[];
+  const foldedCategoryName = new Map<number, string>();
+  const categoryNamesByItem = new Map<number, string[]>();
+  for (const link of linkRows) {
+    let folded = foldedCategoryName.get(link.category_id);
+    if (folded === undefined) {
+      folded = foldSearchText(link.category_name);
+      foldedCategoryName.set(link.category_id, folded);
+    }
+    const list = categoryNamesByItem.get(link.link_item_id) ?? [];
+    list.push(folded);
+    categoryNamesByItem.set(link.link_item_id, list);
+  }
+  const nameOrCategoryHit = new Set<number>();
+  if (foldedQuery !== null) {
+    for (const row of itemRows) {
+      if (
+        (foldedItemName.get(row.item_id) ?? '').includes(foldedQuery) ||
+        (categoryNamesByItem.get(row.item_id) ?? []).some((name) =>
+          name.includes(foldedQuery),
+        )
+      ) {
+        nameOrCategoryHit.add(row.item_id);
+      }
+    }
+  }
+  let categorySurvivors: ItemRow[];
   if (wanted === null) {
-    finalRows = nameSurvivors;
+    categorySurvivors = itemRows;
   } else {
     const matched = new Set<number>();
     for (const link of linkRows) {
       if (wanted.has(link.category_id)) matched.add(link.link_item_id);
     }
-    finalRows = nameSurvivors.filter((row) => matched.has(row.item_id));
-    if (finalRows.length === 0) return [];
+    categorySurvivors = itemRows.filter((row) => matched.has(row.item_id));
+    if (categorySurvivors.length === 0) return [];
   }
 
-  // Categories allocated only for rows that survived both predicates, in
-  // link order (already item/category id ASC) so `categoryIds` matches.
-  const finalIds = new Set(finalRows.map((row) => row.item_id));
+  // Categories allocated only for rows that survived the category
+  // predicate, in link order (already item/category id ASC) so
+  // `categoryIds` matches.
+  const survivorIds = new Set(categorySurvivors.map((row) => row.item_id));
   const byItem = new Map<number, Category[]>();
   for (const link of linkRows) {
-    if (!finalIds.has(link.link_item_id)) continue;
+    if (!survivorIds.has(link.link_item_id)) continue;
     const list = byItem.get(link.link_item_id) ?? [];
     list.push({
       id: link.category_id,
@@ -289,10 +334,12 @@ export async function queryItems(
     byItem.set(link.link_item_id, list);
   }
 
-  // Locations batched to the distinct surviving location ids; a missing
+  // Locations batched to the distinct category-surviving location ids. A
+  // row undecided by name/category may still match through its location
+  // name, so this read cannot be skipped while survivors remain; a missing
   // location row drops its item, preserving the old inner-join semantics.
   const locationIds = [
-    ...new Set(finalRows.map((row) => row.item_location_id)),
+    ...new Set(categorySurvivors.map((row) => row.item_location_id)),
   ].sort((a, b) => a - b);
   let locationRows: LocationRow[];
   try {
@@ -317,9 +364,18 @@ export async function queryItems(
   }
 
   const details: ItemDetail[] = [];
-  for (const row of finalRows) {
+  // One row per item in stable page (`id ASC`) order: an item matching in
+  // more than one way (name, location, category) still appears exactly once.
+  for (const row of categorySurvivors) {
     const locationRow = locationById.get(row.item_location_id);
     if (locationRow === undefined) continue;
+    if (
+      foldedQuery !== null &&
+      !nameOrCategoryHit.has(row.item_id) &&
+      !foldSearchText(locationRow.location_name).includes(foldedQuery)
+    ) {
+      continue;
+    }
     const categories = byItem.get(row.item_id) ?? [];
     const categoryIds = categories.map((category) => category.id);
     const location: Location = {

@@ -435,3 +435,72 @@ describe('controlled read-fault wrapper (mocked)', () => {
     expect(inner.getAllAsync).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('query fixture S9 cross-entity checks (mocked, real query model)', () => {
+  async function seededDeps(): Promise<{
+    deps: QueryFixtureDeps;
+    handle: RepositoryDb;
+  }> {
+    const store = freshStore();
+    const calls: string[] = [];
+    const seedResult = await runNativeQueryFixture(
+      QUERY_FIXTURE_SEEDED_DB,
+      makeDeps(store, calls),
+    );
+    expect(seedResult.status).toBe('pass');
+    const deps = makeDeps(store, []);
+    const handle = (await deps.openDatabaseAsync(
+      QUERY_FIXTURE_SEEDED_DB,
+    )) as unknown as RepositoryDb;
+    return { deps, handle };
+  }
+
+  test('seeded run carries the location-only and category-only checks, all passing', async () => {
+    const store = freshStore();
+    const calls: string[] = [];
+    const result = await runNativeQueryFixture(
+      QUERY_FIXTURE_SEEDED_DB,
+      makeDeps(store, calls),
+    );
+    expect(result.status).toBe('pass');
+    expect(result.checks.every((c) => c.pass)).toBe(true);
+    const names = result.checks.map((c) => c.name);
+    expect(names).toContain(
+      'search matches location names only, with accent folding',
+    );
+    expect(names).toContain(
+      'search matches category names only, each item once',
+    );
+  });
+
+  test('location-name-only matches with folding and no duplicates', async () => {
+    const { handle } = await seededDeps();
+    const garage = await realQueryItems(handle, { query: 'garage' });
+    expect(garage.map((item) => item.name).sort()).toEqual([
+      '100%_literal\\blend',
+      'Cafe Napkin',
+      'Hammer',
+    ]);
+    expect(new Set(garage.map((item) => item.id)).size).toBe(3);
+    const kuche = await realQueryItems(handle, { query: 'kuche' });
+    expect(kuche.map((item) => item.name).sort()).toEqual([
+      'CAFÉ filter',
+      'Café Grinder',
+    ]);
+  });
+
+  test('category-name-only matches with OR-dedup', async () => {
+    const { handle } = await seededDeps();
+    const kitchen = await realQueryItems(handle, { query: 'kitchen' });
+    expect(kitchen.map((item) => item.name).sort()).toEqual([
+      'Café Grinder',
+      'Hammer',
+    ]);
+    expect(new Set(kitchen.map((item) => item.id)).size).toBe(2);
+    const tools = await realQueryItems(handle, { query: 'tools' });
+    expect(tools.map((item) => item.name).sort()).toEqual([
+      'CAFÉ filter',
+      'Hammer',
+    ]);
+  });
+});

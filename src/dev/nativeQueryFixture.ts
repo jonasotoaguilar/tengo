@@ -437,6 +437,63 @@ export async function runNativeQueryFixture(
       `${literal[0].name}: no LIKE wildcards`,
     );
 
+    // S9 cross-entity proof: 'garage' names no item and no category, so all
+    // three Garage rows match through the location name only; 'kuche'
+    // proves accent folding on location names ('Küche' holds the two cafés).
+    const garageQuery = await deps.queryItems(db, { query: 'garage' });
+    const garageNames = garageQuery.map((item) => item.name).sort();
+    if (
+      garageNames.join('\u0000') !==
+      ['100%_literal\\blend', 'Cafe Napkin', 'Hammer'].join('\u0000')
+    ) {
+      throw new Error(
+        `location-name garage matched [${garageNames.join(', ')}], want 100%-item + Cafe Napkin + Hammer`,
+      );
+    }
+    if (new Set(garageQuery.map((item) => item.id)).size !== 3) {
+      throw new Error('location-name garage matched duplicate rows');
+    }
+    const kucheQuery = await deps.queryItems(db, { query: 'kuche' });
+    const kucheNames = kucheQuery.map((item) => item.name).sort();
+    if (
+      kucheNames.join('\u0000') !==
+      ['CAFÉ filter', 'Café Grinder'].join('\u0000')
+    ) {
+      throw new Error(
+        `folded location-name kuche matched [${kucheNames.join(', ')}], want CAFÉ filter + Café Grinder`,
+      );
+    }
+    pass(
+      'search matches location names only, with accent folding',
+      `garage=3 (none named garage) kuche=2 via Küche`,
+    );
+
+    // S9 cross-entity proof: 'kitchen' names no item and no location, so
+    // both Kitchen rows match through the category name only, each once
+    // (Hammer also carries Tools: the OR-with-dedup still yields one row).
+    const kitchenQuery = await deps.queryItems(db, { query: 'kitchen' });
+    const kitchenNames = kitchenQuery.map((item) => item.name).sort();
+    if (
+      kitchenNames.join('\u0000') !== ['Café Grinder', 'Hammer'].join('\u0000')
+    ) {
+      throw new Error(
+        `category-name kitchen matched [${kitchenNames.join(', ')}], want Café Grinder + Hammer`,
+      );
+    }
+    const toolsQuery = await deps.queryItems(db, { query: 'tools' });
+    const toolsNames = toolsQuery.map((item) => item.name).sort();
+    if (
+      toolsNames.join('\u0000') !== ['CAFÉ filter', 'Hammer'].join('\u0000')
+    ) {
+      throw new Error(
+        `category-name tools matched [${toolsNames.join(', ')}], want CAFÉ filter + Hammer`,
+      );
+    }
+    pass(
+      'search matches category names only, each item once',
+      `kitchen=2 tools=2 no duplicates`,
+    );
+
     const locations = await deps.listLocations(db);
     const categories = await deps.listCategories(db);
     const garage = locations.find((loc) => loc.name === LOC_GARAGE);

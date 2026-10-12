@@ -348,7 +348,7 @@ test('Spanish renders translated search, add, and empty copy', async () => {
   const view = await renderList(baseProps({ totalCount: 0 }));
   try {
     expect(view.getByTestId('inventory-search').props.placeholder).toBe(
-      'Buscar por nombre',
+      'Buscar por nombre, ubicación o categoría',
     );
     expect(view.getByTestId('inventory-search').props.accessibilityLabel).toBe(
       'Buscar en el inventario',

@@ -6,7 +6,9 @@
  * category []/single/OR/overlap/dedup/duplicate/unknown/invalid, AND
  * cross-filters, zero/many categories, stable id order, validation before
  * SQL, generic storage errors, and the 3-read bound at N=101. Real
- * expo-sqlite behavior is P3b isolated-fixture work.
+ * expo-sqlite behavior is P3b isolated-fixture work. S9 adds cross-entity
+ * text matching: the folded query matches the item name, its location
+ * name, or any of its category names (OR with dedup, item appears once).
  */
 import type { RepositoryDb } from '../src/inventory/database';
 import { StorageError } from '../src/inventory/errors';
@@ -279,16 +281,19 @@ test('stable order, many-category model, empty skips follow-up reads, 101 items 
   expect(await queryItems(empty.db)).toEqual([]);
   expect(empty.calls).toHaveLength(1);
 
-  // Selective predicates skip follow-up reads: a name miss stops after
-  // the item page, a category miss stops after the batched link read.
+  // Selective predicates skip follow-up reads where the names are not
+  // needed: an empty page stops after the item read, and a category miss
+  // stops after the batched link read. S9 cross-entity matching means a
+  // text miss can no longer stop after read 1 — the location/category names
+  // are unread at that point — so it pays the full 3-read shape.
   const selective = makeQueryFake();
   const sl = selective.loc();
   const sc = selective.cat('Bulk');
   selective.item('Rice', 1, sl, [sc]);
   expect(await queryItems(selective.db, { query: 'no-such-item' })).toEqual([]);
-  expect(selective.calls).toHaveLength(1);
-  expect(await queryItems(selective.db, { categoryIds: [9999] })).toEqual([]);
   expect(selective.calls).toHaveLength(3);
+  expect(await queryItems(selective.db, { categoryIds: [9999] })).toEqual([]);
+  expect(selective.calls).toHaveLength(5);
 
   const big = makeQueryFake();
   const bl = big.loc();
@@ -309,8 +314,10 @@ test('SQL shape is fixed/parameterized; invalid filters never touch the driver',
   const l = f.loc();
   const rice = f.item('Rice', 1, l);
   await queryItems(f.db, { locationId: l, query: "x' OR '1'='1" });
-  // No match: only the item page is read; the payload stays a JS literal.
-  expect(f.calls).toHaveLength(1);
+  // No match, but S9 still reads the names that could match: the item page,
+  // the page links, and the surviving locations. The payload stays a JS
+  // literal throughout — nothing is interpolated into the SQL.
+  expect(f.calls).toHaveLength(3);
   const [first] = f.calls;
   expect(first.source).toContain('FROM items');
   expect(first.source).not.toContain('JOIN locations');
@@ -319,10 +326,10 @@ test('SQL shape is fixed/parameterized; invalid filters never touch the driver',
   expect(first.source).not.toContain("x' OR");
   expect(first.params).toEqual([l]);
 
-  // A matching query exercises all three batched reads with bound params.
+  // A matching query exercises the same three batched reads with bound params.
   await queryItems(f.db, { locationId: l, query: 'rice' });
-  expect(f.calls).toHaveLength(4);
-  const [, links, locs] = f.calls.slice(1);
+  expect(f.calls).toHaveLength(6);
+  const [, links, locs] = f.calls.slice(3);
   expect(links.source).toContain('JOIN categories');
   expect(links.source).toContain('WHERE jc.item_id IN (');
   expect(links.source).toContain('ORDER BY jc.item_id ASC');
@@ -505,4 +512,109 @@ test('malformed location row throws StorageError with cause instead of dropping'
   expect(String((failure as StorageError).cause ?? failure)).toMatch(
     /malformed location row/,
   );
+});
+
+test('S9: query matches only the location name, only a category name, or the item name', async () => {
+  const f = makeQueryFake();
+  const pantry = f.loc('Pantry');
+  const garage = f.loc('Garage');
+  const dairy = f.cat('Dairy');
+  const tools = f.cat('Tools');
+  const rice = f.item('Rice', 1, pantry, [dairy]);
+  const hammer = f.item('Hammer', 2, garage, [tools]);
+
+  // Location-name-only: no item name or category name contains 'pantry'.
+  expect(
+    (await queryItems(f.db, { query: 'pantry' })).map((i) => i.id),
+  ).toEqual([rice]);
+  // Category-name-only: no item name or location name contains 'tools'.
+  expect((await queryItems(f.db, { query: 'tools' })).map((i) => i.id)).toEqual(
+    [hammer],
+  );
+  // Item-name-only still matches exactly as before.
+  expect((await queryItems(f.db, { query: 'rice' })).map((i) => i.id)).toEqual([
+    rice,
+  ]);
+  expect(
+    (await queryItems(f.db, { query: 'hammer' })).map((i) => i.id),
+  ).toEqual([hammer]);
+});
+
+test('S9: item matching two ways appears exactly once with stable order', async () => {
+  const f = makeQueryFake();
+  const pantry = f.loc('Pantry');
+  const bulk = f.cat('Pantry Goods');
+  // Name AND location AND category all contain the folded query.
+  const beans = f.item('Pantry Beans', 1, pantry, [bulk]);
+  const other = f.item('Pantry Oats', 2, pantry, []);
+  const page = await queryItems(f.db, { query: 'pantry' });
+  expect(page.map((i) => i.id)).toEqual([beans, other]);
+  expect(new Set(page.map((i) => i.id)).size).toBe(page.length);
+  const detail = page.find((i) => i.id === beans);
+  expect(detail?.location.name).toBe('Pantry');
+  expect(detail?.categories.map((c) => c.name)).toEqual(['Pantry Goods']);
+});
+
+test('S9: non-matching query returns nothing; folding applies to location/category names', async () => {
+  const f = makeQueryFake();
+  const panteon = f.loc('Panteón');
+  const garage = f.loc('Garage');
+  const grains = f.cat('GRANOS');
+  const tools = f.cat('Tools');
+  const rice = f.item('Rice', 1, panteon, [grains]);
+  f.item('Hammer', 1, garage, [tools]);
+
+  expect(await queryItems(f.db, { query: 'no-such-taste' })).toEqual([]);
+  // Accent folding on the location name: 'panteon' matches 'Panteón'.
+  expect(
+    (await queryItems(f.db, { query: 'panteon' })).map((i) => i.id),
+  ).toEqual([rice]);
+  expect(
+    (await queryItems(f.db, { query: 'PANTEÓN' })).map((i) => i.id),
+  ).toEqual([rice]);
+  // Case folding on the category name: 'granos' matches 'GRANOS'.
+  expect(
+    (await queryItems(f.db, { query: 'granos' })).map((i) => i.id),
+  ).toEqual([rice]);
+  // Case-insensitive location substring: 'pantri' matches 'PANTRIES'.
+  const g = makeQueryFake();
+  const pantries = g.loc('PANTRIES');
+  const other = g.loc('Garage');
+  const a = g.item('Rice', 1, pantries, []);
+  g.item('Hammer', 1, other, []);
+  expect(
+    (await queryItems(g.db, { query: 'pantri' })).map((i) => i.id),
+  ).toEqual([a]);
+});
+
+test('S9: cross-entity text ANDs with the location filter and category-OR without changing their semantics', async () => {
+  const f = makeQueryFake();
+  const pantry = f.loc('Pantry');
+  const garage = f.loc('Garage');
+  const dairy = f.cat('Dairy');
+  const tools = f.cat('Tools');
+  const rice = f.item('Rice', 1, pantry, [dairy]);
+  const milk = f.item('Milk', 1, garage, [dairy]);
+  const beans2 = f.item('Hammer', 1, garage, [tools]);
+
+  // Location filter still narrows: 'dairy' matches rice+milk by category,
+  // but the pantry filter keeps only rice.
+  expect(
+    (await queryItems(f.db, { query: 'dairy', locationId: pantry })).map(
+      (i) => i.id,
+    ),
+  ).toEqual([rice]);
+  // Category-OR still narrows: 'garage' matches milk+hammer by location,
+  // but the dairy filter keeps only milk.
+  expect(
+    (await queryItems(f.db, { query: 'garage', categoryIds: [dairy] })).map(
+      (i) => i.id,
+    ),
+  ).toEqual([milk]);
+  // Blank/whitespace query still means no name filter (all rows, bounded).
+  expect((await queryItems(f.db, { query: '   ' })).map((i) => i.id)).toEqual([
+    rice,
+    milk,
+    beans2,
+  ]);
 });

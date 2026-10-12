@@ -67,7 +67,9 @@ export interface ItemDetail {
 
 /**
  * Bounded P3a filter for `queryItems` (see `./itemQuery`).
- * `query` is an optional JS substring; `locationId` null/undefined means
+ * `query` is an optional JS substring matched (case- and accent-folded,
+ * literal) against the item name, its location name, and any of its
+ * category names; `locationId` null/undefined means
  * all locations; `categoryIds` empty/undefined means no category filter
  * (OR across the selected ids, items deduped).
  */

@@ -27,7 +27,10 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import type { ItemFormErrors, ItemFormValues } from '../components/ItemForm';
-import { parseQuantityRaw } from '../components/ItemForm';
+import {
+  isQuantityAboveProductMax,
+  parseQuantityRaw,
+} from '../components/ItemForm';
 import type { RepositoryDb } from '../inventory/database';
 import {
   EntityNotFoundError,
@@ -46,6 +49,11 @@ import type {
   ItemDraftInput,
   ItemLocationDraft,
 } from '../inventory/types';
+import {
+  CATEGORY_NAME_MAX_LENGTH,
+  ITEM_NAME_MAX_LENGTH,
+  LOCATION_NAME_MAX_LENGTH,
+} from '../inventory/validation';
 
 export type ItemFormRoute =
   | { kind: 'create'; prefilledName?: string }
@@ -265,12 +273,24 @@ export default function useItemFormController(
     (error: unknown): { errors: ItemFormErrors; code: string | null } => {
       if (error instanceof ValidationError) {
         if (error.field === 'name') {
+          if (error.code === 'too-long') {
+            return {
+              errors: { name: t('itemFormErrorNameTooLong') },
+              code: null,
+            };
+          }
           return {
             errors: { name: t('itemFormErrorNameRequired') },
             code: null,
           };
         }
         if (error.field === 'quantity') {
+          if (error.code === 'out-of-range') {
+            return {
+              errors: { quantity: t('itemFormErrorQuantityTooLarge') },
+              code: null,
+            };
+          }
           return {
             errors: { quantity: t('itemFormErrorQuantityInvalid') },
             code: null,
@@ -384,12 +404,17 @@ export default function useItemFormController(
       current: ItemFormValues,
     ): { errors: ItemFormErrors } | { draft: ItemDraftInput } => {
       const fieldErrors: ItemFormErrors = {};
-      if (current.name.trim() === '') {
+      const trimmedName = current.name.trim();
+      if (trimmedName === '') {
         fieldErrors.name = t('itemFormErrorNameRequired');
+      } else if (trimmedName.length > ITEM_NAME_MAX_LENGTH) {
+        fieldErrors.name = t('itemFormErrorNameTooLong');
       }
       const quantity = parseQuantityRaw(current.quantityRaw);
       if (quantity === null) {
-        fieldErrors.quantity = t('itemFormErrorQuantityInvalid');
+        fieldErrors.quantity = isQuantityAboveProductMax(current.quantityRaw)
+          ? t('itemFormErrorQuantityTooLarge')
+          : t('itemFormErrorQuantityInvalid');
       }
       let location: ItemLocationDraft | null = null;
       const selector = current.location;
@@ -406,11 +431,14 @@ export default function useItemFormController(
           };
         }
       } else if (selector?.kind === 'new') {
+        const newLocationName = selector.location.name;
         if (
-          typeof selector.location.name !== 'string' ||
-          selector.location.name.trim() === ''
+          typeof newLocationName !== 'string' ||
+          newLocationName.trim() === ''
         ) {
           fieldErrors.location = t('itemFormErrorLocationRequired');
+        } else if (newLocationName.trim().length > LOCATION_NAME_MAX_LENGTH) {
+          fieldErrors.location = t('itemFormErrorLocationNameTooLong');
         } else {
           location = {
             kind: 'new',
@@ -447,6 +475,10 @@ export default function useItemFormController(
           typeof entry.category?.name === 'string' &&
           entry.category.name.trim() !== ''
         ) {
+          if (entry.category.name.trim().length > CATEGORY_NAME_MAX_LENGTH) {
+            fieldErrors.categories = t('itemFormErrorCategoryNameTooLong');
+            break;
+          }
           categories.push({
             kind: 'new',
             category: { name: entry.category.name },
@@ -491,13 +523,18 @@ export default function useItemFormController(
       if (saving || deleting) return;
       const ticket = loadTicket.current;
       const current = valuesRef.current;
+      const trimmedBlurName = current.name.trim();
       const message =
         field === 'name'
-          ? current.name.trim() === ''
+          ? trimmedBlurName === ''
             ? t('itemFormErrorNameRequired')
-            : undefined
+            : trimmedBlurName.length > ITEM_NAME_MAX_LENGTH
+              ? t('itemFormErrorNameTooLong')
+              : undefined
           : parseQuantityRaw(current.quantityRaw) === null
-            ? t('itemFormErrorQuantityInvalid')
+            ? isQuantityAboveProductMax(current.quantityRaw)
+              ? t('itemFormErrorQuantityTooLarge')
+              : t('itemFormErrorQuantityInvalid')
             : undefined;
       // Route moved mid-blur: drop the stale result.
       if (ticket !== loadTicket.current || !epochMatchesLiveRoute()) return;

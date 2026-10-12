@@ -318,4 +318,20 @@ describe('category repository', () => {
       EntityNotFoundError,
     );
   });
+
+  test('S10 RED: over-80 location and category names are rejected', async () => {
+    const f = makeFakeDb();
+    await expect(
+      createLocation(f.db, { name: 'b'.repeat(81) }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      createCategory(f.db, { name: 'c'.repeat(81) }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(await createLocation(f.db, { name: 'b'.repeat(80) })).toMatchObject({
+      name: 'b'.repeat(80),
+    });
+    expect(await createCategory(f.db, { name: 'c'.repeat(80) })).toMatchObject({
+      name: 'c'.repeat(80),
+    });
+  });
 });

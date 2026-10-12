@@ -80,8 +80,14 @@ export const en = {
   itemFormLoadErrorTitle: 'Could not load the item.',
   itemFormLoading: 'Loading the item…',
   itemFormErrorNameRequired: 'Enter a name.',
+  itemFormErrorNameTooLong: 'Enter a name of 120 characters or fewer.',
   itemFormErrorQuantityInvalid: 'Enter a whole number of 0 or more.',
+  itemFormErrorQuantityTooLarge: 'Enter a quantity of 999999 or less.',
   itemFormErrorLocationRequired: 'Choose or create a location.',
+  itemFormErrorLocationNameTooLong:
+    'Enter a location name of 80 characters or fewer.',
+  itemFormErrorCategoryNameTooLong:
+    'Enter a category name of 80 characters or fewer.',
   itemFormSaved: 'Item saved.',
   itemFormDeleted: 'Item deleted.',
 };
@@ -163,8 +169,14 @@ export const es: typeof en = {
   itemFormLoadErrorTitle: 'No se pudo cargar el artículo.',
   itemFormLoading: 'Cargando el artículo…',
   itemFormErrorNameRequired: 'Escribe un nombre.',
+  itemFormErrorNameTooLong: 'Escribe un nombre de 120 caracteres o menos.',
   itemFormErrorQuantityInvalid: 'Escribe un número entero de 0 o más.',
+  itemFormErrorQuantityTooLarge: 'Escribe una cantidad de 999999 o menos.',
   itemFormErrorLocationRequired: 'Elige o crea una ubicación.',
+  itemFormErrorLocationNameTooLong:
+    'Escribe un nombre de ubicación de 80 caracteres o menos.',
+  itemFormErrorCategoryNameTooLong:
+    'Escribe un nombre de categoría de 80 caracteres o menos.',
   itemFormSaved: 'Artículo guardado.',
   itemFormDeleted: 'Artículo eliminado.',
 };

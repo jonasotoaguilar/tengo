@@ -1697,3 +1697,112 @@ describe('M4 blur validation (Gap B)', () => {
     await view.unmount();
   });
 });
+
+describe('S10 out-of-range inline errors (current language)', () => {
+  test('RED: over-120 name rejected with too-long copy, no write', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'a'.repeat(121),
+        quantityRaw: '2',
+        location: { kind: 'existing', locationId: 10 },
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(false);
+    expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+    expect(result.current.errors.name).toBe(
+      'Enter a name of 120 characters or fewer.',
+    );
+  });
+
+  test('RED: quantity 1000000 rejected with too-large copy; 999999 writes', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        quantityRaw: '1000000',
+        location: { kind: 'existing', locationId: 10 },
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(false);
+    expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+    expect(result.current.errors.quantity).toBe(
+      'Enter a quantity of 999999 or less.',
+    );
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        quantityRaw: '999999',
+      });
+    });
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(true);
+    const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.quantity).toBe(999999);
+  });
+
+  test('RED: new location name over 80 rejected with location copy, no write', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        quantityRaw: '2',
+        location: {
+          kind: 'new',
+          location: { name: 'b'.repeat(81), address: null },
+        },
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(false);
+    expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+    expect(result.current.errors.location).toBe(
+      'Enter a location name of 80 characters or fewer.',
+    );
+  });
+
+  test('RED: new category name over 80 rejected with category copy, no write', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        quantityRaw: '2',
+        location: { kind: 'existing', locationId: 10 },
+        categories: [{ kind: 'new', category: { name: 'c'.repeat(81) } }],
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(false);
+    expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+    expect(result.current.errors.categories).toBe(
+      'Enter a category name of 80 characters or fewer.',
+    );
+  });
+});

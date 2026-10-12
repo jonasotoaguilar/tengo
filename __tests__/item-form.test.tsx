@@ -232,11 +232,10 @@ test.each(['', '   ', 'abc', '1.5', '-3', '9007199254740992'])(
   },
 );
 
-test('MAX_SAFE_INTEGER is a technical guard, not a product cap', async () => {
-  const max = String(Number.MAX_SAFE_INTEGER);
+test('product cap disables increment at 999999; technical guard stays null-parse', async () => {
   const onChange = jest.fn();
   const view = await renderForm(
-    baseProps({ values: { ...emptyValues, quantityRaw: max }, onChange }),
+    baseProps({ values: { ...emptyValues, quantityRaw: '999999' }, onChange }),
   );
   expect(
     view.getByTestId('item-form/increment').props.accessibilityState.disabled,
@@ -247,7 +246,7 @@ test('MAX_SAFE_INTEGER is a technical guard, not a product cap', async () => {
   await fireEvent.press(view.getByTestId('item-form/decrement'));
   expect(onChange).toHaveBeenCalledWith({
     ...emptyValues,
-    quantityRaw: String(Number.MAX_SAFE_INTEGER - 1),
+    quantityRaw: '999998',
   });
 });
 
@@ -644,5 +643,57 @@ describe('P5a selection-chip labels and symbol glyphs', () => {
     expect(
       view.getByTestId('item-form/new-category/remove-0'),
     ).toHaveTextContent('✕');
+  });
+});
+
+describe('S10 product quantity bound (999999)', () => {
+  const { parseQuantityRaw } = require('../src/components/ItemForm') as {
+    parseQuantityRaw: (raw: string) => number | null;
+  };
+
+  test('RED: 999999 parses, 1000000 is null-parse raw preserved', async () => {
+    expect(parseQuantityRaw('999999')).toBe(999999);
+    expect(parseQuantityRaw('1000000')).toBeNull();
+    const onChange = jest.fn();
+    const view = await renderForm(
+      baseProps({
+        values: { ...emptyValues, quantityRaw: '1000000' },
+        onChange,
+      }),
+    );
+    // Raw text is never coerced or clamped.
+    expect(view.getByTestId('item-form/quantity').props.value).toBe('1000000');
+    expect(
+      view.getByTestId('item-form/increment').props.accessibilityState.disabled,
+    ).toBe(true);
+    expect(
+      view.getByTestId('item-form/decrement').props.accessibilityState.disabled,
+    ).toBe(true);
+    await fireEvent.press(view.getByTestId('item-form/increment'));
+    await fireEvent.press(view.getByTestId('item-form/decrement'));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  test('RED: stepper caps at 999999 and keeps its 0 floor', async () => {
+    const onChange = jest.fn();
+    const view = await renderForm(
+      baseProps({
+        values: { ...emptyValues, quantityRaw: '999999' },
+        onChange,
+      }),
+    );
+    expect(
+      view.getByTestId('item-form/increment').props.accessibilityState.disabled,
+    ).toBe(true);
+    expect(
+      view.getByTestId('item-form/decrement').props.accessibilityState.disabled,
+    ).toBe(false);
+    await fireEvent.press(view.getByTestId('item-form/increment'));
+    expect(onChange).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByTestId('item-form/decrement'));
+    expect(onChange).toHaveBeenCalledWith({
+      ...emptyValues,
+      quantityRaw: '999998',
+    });
   });
 });

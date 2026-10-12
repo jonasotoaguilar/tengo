@@ -45,7 +45,7 @@ import type {
   Location,
   NewLocationInput,
 } from '../inventory/types';
-import { MAX_QUANTITY } from '../inventory/validation';
+import { MAX_QUANTITY, PRODUCT_MAX_QUANTITY } from '../inventory/validation';
 import { DARK, LIGHT, type PaletteBase } from '../theme/tokens';
 
 export type ItemFormMode = 'add' | 'edit';
@@ -157,8 +157,11 @@ export function resolveErrorFocusTarget(
 
 /**
  * Parse the raw quantity text. Returns null for empty/invalid input so the
- * caller retains the raw string for explicit errors; the only bound is the
- * technical MAX_SAFE_INTEGER guard, never a product cap.
+ * caller retains the raw string for explicit errors. Two bounds apply: the
+ * technical MAX_SAFE_INTEGER guard (never user-reachable) and the adopted
+ * product bound PRODUCT_MAX_QUANTITY — anything above the product bound is
+ * null-parse, so the form keeps the raw text and the parent reports the
+ * out-of-range error instead of clamping.
  */
 export function parseQuantityRaw(raw: string): number | null {
   const trimmed = raw.trim();
@@ -167,7 +170,25 @@ export function parseQuantityRaw(raw: string): number | null {
   if (!Number.isSafeInteger(value) || value < 0 || value > MAX_QUANTITY) {
     return null;
   }
+  if (value > PRODUCT_MAX_QUANTITY) return null;
   return value;
+}
+
+/**
+ * True when the raw text is a safe integer above the adopted product bound
+ * (and within the technical guard): the out-of-range case the parent maps
+ * to the too-large copy instead of the generic invalid-quantity copy.
+ * Unsafe/negative/non-numeric input is not out-of-range, it is invalid.
+ */
+export function isQuantityAboveProductMax(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return false;
+  const value = Number(trimmed);
+  return (
+    Number.isSafeInteger(value) &&
+    value > PRODUCT_MAX_QUANTITY &&
+    value <= MAX_QUANTITY
+  );
 }
 
 /** Best-effort native focus: a11y focus on device, direct focus fallback.
@@ -264,15 +285,19 @@ export default function ItemForm({
   // steppers: no quiet rewrite to a default, the text stays for errors.
   const decrementDisabled =
     pending || !quantityValid || (parsedQuantity as number) <= 0;
+  // Product cap: the stepper never steps above PRODUCT_MAX_QUANTITY. At
+  // the cap increment is disabled (like the old MAX_QUANTITY behavior);
+  // above the cap the parse is null so both steppers stay disabled and
+  // the raw text is preserved for the parent's out-of-range error.
   const incrementDisabled =
-    pending || !quantityValid || parsedQuantity === MAX_QUANTITY;
+    pending || !quantityValid || parsedQuantity === PRODUCT_MAX_QUANTITY;
 
   const stepQuantity = (delta: 1 | -1) => {
     if (pending) return;
     const base = parseQuantityRaw(values.quantityRaw);
     if (base === null) return;
     const next = base + delta;
-    if (next < 0 || next > MAX_QUANTITY) return;
+    if (next < 0 || next > PRODUCT_MAX_QUANTITY) return;
     onChange({ ...values, quantityRaw: String(next) });
   };
 

@@ -2,11 +2,12 @@
 # managed-entity screen (D6/R11), the last unverified device surface.
 # Scope: proves the isolated `m1-fixture-crud-m4.db` entity screen end to end
 # in one guarded launch — reach it from the list, create a location (with the
-# optional address) and a category, rename the location through its dialog,
-# and delete one of each through its impact confirmation. It does NOT prove
-# production `tengo.db` behavior: the first assertion fail-closes on
-# `crud-fixture-screen`, so this flow can never accidentally pass against
-# production.
+# optional address) and a category, rename the location through its dialog AND
+# through its row, create an item holding stock in that location, then delete
+# the location through its NONZERO impact confirmation and prove the item
+# survives as sin stock. It does NOT prove production `tengo.db` behavior:
+# the first assertion fail-closes on `crud-fixture-screen`, so this flow can
+# never accidentally pass against production.
 # Run locally against an installed debug build on a separate Metro port:
 #   EXPO_PUBLIC_NATIVE_FIXTURE=1 EXPO_PUBLIC_NATIVE_CRUD=1 npx expo start --port 8083
 #   MAESTRO_REVERSE=1 scripts/run-maestro.sh .maestro/m6-entities.yaml
@@ -14,14 +15,12 @@
 # 8083 while the app's `debug_http_host` points at 8082. It is the WRONG flag
 # for the QUERY bundle on 8082.)
 # Deterministic start: the flow taps `crud-fixture-reset` so every run begins
-# from the empty isolated database; with no items ever created, the created
-# location takes id 1 and the created category takes id 1, which makes the
-# `entity-location-1` / `entity-category-1` selectors below safe instead of
-# accidental, and the delete impacts are deterministically 0 (no stock rows,
-# no linked items). After the tap the flow waits on the first-run call to
-# action (`inventory-add-empty`); the transient `running` status is
-# deliberately NOT awaited (a `tapOn` waits for the app to settle, which
-# outlasts the reset).
+# from the empty isolated database; with no items ever created before the
+# entity writes, the created location takes id 1 and the created category
+# takes id 1, which makes the `entity-location-1` / `entity-category-1`
+# selectors below safe instead of accidental. The CRUD fixture starts empty
+# with no seeding of its own, so every count below is derived from what this
+# flow creates, never from a seed it must remember.
 # Every selector and every expected string below is DERIVED from the component
 # source, never guessed:
 # - `inventory-manage-entities` (reach the screen): src/components/InventoryList.tsx:591
@@ -31,17 +30,47 @@
 #   src/components/EntityManager.tsx:399,417,441
 # - `entity-new-category-name`, `entity-add-category`: src/components/EntityManager.tsx:528,552
 # - `entity-location-1`, `entity-location-1-rename`, `entity-location-1-delete`:
-#   src/components/EntityManager.tsx:348,355,377 (id-suffixed per row)
+#   src/components/EntityManager.tsx:348,358,378 (id-suffixed per row)
 # - `entity-category-1`, `entity-category-1-delete`: src/components/EntityManager.tsx:477,505
 # - `entity-edit-dialog`, `entity-edit-title`, `entity-edit-name`, `entity-edit-save`,
 #   `entity-edit-cancel`: src/components/EntityManager.tsx:577,590,595,636,620
 # - `entity-delete-dialog`, `entity-delete-title`, `entity-delete-message`,
-#   `entity-delete-confirm`: src/components/EntityManager.tsx:678,691,698,705
+#   `entity-delete-confirm`: src/components/EntityManager.tsx:678,691,686,705
 # - location impact copy (R3+R6: how many existencias, items NOT deleted, how many
 #   left visible as sin stock): src/i18n/resources.ts:126-127 (en) / 251-252 (es)
 # - category impact copy (R4: only the association removed, items NOT deleted):
 #   src/i18n/resources.ts:129-130 (en) / 253-254 (es)
 # - rename dialog title naming the entity: src/i18n/resources.ts:124 (en) / 250 (es)
+# - RENAME THROUGH THE ROW: the location row renders its name as a plain Text
+#   with NO testID (src/components/EntityManager.tsx:353, inside the
+#   `entity-location-1` row at :348), so the flow asserts the visible text
+#   `Entity Loc R` directly instead of editing `src/`; the dialog-title
+#   re-read is kept as a second proof, not the only one.
+# - NONZERO DELETE IMPACT (R3+R6): the flow closes the manager, creates one
+#   item (`Entity Stock Item`) holding stock ONLY in location 1 (quantity 3,
+#   via the existing-location chip — the m4-forms pattern for existing
+#   locations rather than the inline-new one), then deletes location 1:
+#   - `item-form-screen`: src/screens/ItemFormScreen.tsx:106
+#   - `item-form/name`: src/components/ItemForm.tsx:489
+#   - `item-form/location-1` (existing-location chip): src/components/ItemForm.tsx:752
+#   - `item-form/stock-0/quantity` (row quantity field): src/components/ItemForm.tsx:546,664
+#   - `item-form/save`: src/components/ItemForm.tsx:924
+#   - impact semantics (`stockRows` = COUNT(*) of stock at the location,
+#     `unstockedItems` = items with stock ONLY there):
+#     src/inventory/entityRepository.ts:244-272. With one item holding its
+#     only stock row at location 1: stockRows=1, unstockedItems=1, so the
+#     confirmation must read `1 stock entries / 1 existencias`, state the
+#     items are NOT deleted, and report `1 items / 1 artículos` left as
+#     out of stock / sin stock.
+#   - survival (R6): the general view shows the total (0 after the delete)
+#     with the sin-stock group name as the location line:
+#     src/components/InventoryList.tsx:377-389; `inventory-row-1-quantity`
+#     (:417), `inventory-row-1-exhausted` (:425),
+#     `inventory-row-1-location` (:433), sin-stock group
+#     `inventory-group-nostock` (:327-329, header :357); the pre-delete
+#     breakdown `Entity Loc R 3` comes from :217.
+#   - the category delete stays 0-impact: the created item takes NO
+#     categories, so `categoryDeleteImpact` is deterministically 0.
 # Below-the-fold taps carry an explicit `scrollUntilVisible` on the same stable
 # testID (a no-op when already visible), because the manager scrolls and Maestro
 # does not auto-scroll. `eraseText: 40` clears the short rename field before the
@@ -60,8 +89,10 @@ appId: com.tengo.app
 - assertVisible:
     id: 'crud-fixture-status'
 # 0. Reset-first deterministic start: every run begins from the empty isolated
-# database, so the created location/category take ids 1 and the delete impacts
-# are deterministically 0 (no items are ever created by this flow).
+# database, so the created location/category take ids 1. After the tap the
+# flow waits on the first-run call to action (`inventory-add-empty`); the
+# transient `running` status is deliberately NOT awaited (a `tapOn` waits for
+# the app to settle, which outlasts the reset).
 - tapOn:
     id: 'crud-fixture-reset'
 - extendedWaitUntil:
@@ -124,7 +155,10 @@ appId: com.tengo.app
 - assertVisible:
     id: 'entity-category-1'
 # 4. Rename the location: the dialog names the entity, the new name is proven
-# by re-opening the dialog and reading its title (a directly-addressable Text).
+# through the ROW's rendered text (the row name is a plain Text with no
+# testID, EntityManager.tsx:353, so visible text is asserted instead of a
+# src/ edit) and secondarily by re-opening the dialog and reading its title
+# (a directly-addressable Text).
 - scrollUntilVisible:
     element:
       id: 'entity-location-1-rename'
@@ -144,6 +178,8 @@ appId: com.tengo.app
     id: 'entity-edit-save'
 - assertNotVisible:
     id: 'entity-edit-dialog'
+- assertVisible:
+    text: 'Entity Loc R'
 - scrollUntilVisible:
     element:
       id: 'entity-location-1-rename'
@@ -156,10 +192,71 @@ appId: com.tengo.app
     id: 'entity-edit-cancel'
 - assertNotVisible:
     id: 'entity-edit-dialog'
-# 5. Delete the category through its confirmation: the dialog appears, names
+# 5. Create one item holding stock ONLY in location 1 (quantity 3), via the
+# existing-location chip (ItemForm.tsx:752) following the m4-forms item
+# pattern. The item takes NO categories, so the category delete below stays
+# deterministically 0-impact. The manager is closed first: the form opens
+# from the list, not from inside the entity modal.
+- scrollUntilVisible:
+    element:
+      id: 'entity-close'
+- tapOn:
+    id: 'entity-close'
+- assertNotVisible:
+    id: 'entity-manager'
+- assertVisible:
+    id: 'inventory-add-empty'
+- tapOn:
+    id: 'inventory-add-empty'
+- assertVisible:
+    id: 'item-form-screen'
+- tapOn:
+    id: 'item-form/name'
+- inputText: 'Entity Stock Item'
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: 'item-form/location-1'
+- tapOn:
+    id: 'item-form/location-1'
+- scrollUntilVisible:
+    element:
+      id: 'item-form/stock-0/quantity'
+- tapOn:
+    id: 'item-form/stock-0/quantity'
+- inputText: '3'
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: 'item-form/save'
+- tapOn:
+    id: 'item-form/save'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+3$'
+- assertVisible:
+    id: 'inventory-row-1-location'
+    text: '.*Entity Loc R 3.*'
+- assertVisible:
+    id: 'inventory-count'
+    text: '^1 (of|de) 1$'
+# 6. Delete the category through its confirmation: the dialog appears, names
 # the category, states that only the association is removed and that the items
-# are NOT deleted (R4). Impact is deterministically 0 items: the database was
-# reset and this flow never creates items.
+# are NOT deleted (R4). Impact is deterministically 0 items: the one created
+# item takes no categories.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-manage-entities'
+- tapOn:
+    id: 'inventory-manage-entities'
+- assertVisible:
+    id: 'entity-manager'
 - scrollUntilVisible:
     element:
       id: 'entity-category-1-delete'
@@ -191,10 +288,12 @@ appId: com.tengo.app
     id: 'entity-category-1'
 - assertVisible:
     id: 'entity-categories-empty'
-# 6. Delete the location through its confirmation: the dialog appears, names
-# the location, states how many existencias are removed, that the items are
-# NOT deleted, and how many are left visible as sin stock (R3+R6). Impacts are
-# deterministically 0: the database was reset and this flow never creates items.
+# 7. Delete the location through its NONZERO confirmation: the dialog appears,
+# names the location, states that 1 stock entry is removed, that the items are
+# NOT deleted, and that 1 item is left visible as sin stock (R3+R6).
+# stockRows=1 (the item's only stock row lives at location 1) and
+# unstockedItems=1 (that item holds stock nowhere else):
+# src/inventory/entityRepository.ts:244-272 with this flow's own data.
 - scrollUntilVisible:
     element:
       id: 'entity-location-1-delete'
@@ -211,7 +310,7 @@ appId: com.tengo.app
     text: '.*Entity Loc R.*'
 - assertVisible:
     id: 'entity-delete-message'
-    text: '.*(stock entries|existencias).*'
+    text: '.*1 (stock entries|existencias).*'
 - assertVisible:
     id: 'entity-delete-message'
     text: '.*(NOT be deleted|NO se eliminarán).*'
@@ -220,7 +319,7 @@ appId: com.tengo.app
     text: '.*(out of stock|sin stock).*'
 - assertVisible:
     id: 'entity-delete-message'
-    text: '.*0 (stock entries|existencias).*'
+    text: '.*1 (items|artículos).*'
 - tapOn:
     id: 'entity-delete-confirm'
 - assertNotVisible:
@@ -229,7 +328,9 @@ appId: com.tengo.app
     id: 'entity-location-1'
 - assertVisible:
     id: 'entity-locations-empty'
-# 7. Close the screen: back on the list, which is still empty (no items made).
+# 8. Close the screen: the item SURVIVES with no stock anywhere (R6) — still
+# one row, quantity 0, the exhausted marker, the sin-stock location line and
+# the trailing sin-stock group.
 - scrollUntilVisible:
     element:
       id: 'entity-close'
@@ -237,19 +338,45 @@ appId: com.tengo.app
     id: 'entity-close'
 - assertNotVisible:
     id: 'entity-manager'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-row-1'
+    timeout: 15000
 - assertVisible:
-    id: 'inventory-empty-title'
-# 8. Force-stop/relaunch: the deletions persisted on the isolated database.
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+0$'
+- assertVisible:
+    id: 'inventory-row-1-exhausted'
+- assertVisible:
+    id: 'inventory-row-1-location'
+    text: '.*(No stock|Sin stock).*'
+- assertVisible:
+    id: 'inventory-group-nostock'
+- assertVisible:
+    id: 'inventory-count'
+    text: '^1 (of|de) 1$'
+# 9. Force-stop/relaunch: the location deletion AND the surviving sin-stock
+# item persisted on the isolated database.
 - stopApp
 - launchApp
 - assertVisible:
     id: 'crud-fixture-screen'
 - extendedWaitUntil:
     visible:
-      id: 'inventory-empty-title'
+      id: 'inventory-row-1'
     timeout: 30000
 - assertVisible:
-    id: 'inventory-empty-title'
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+0$'
+- assertVisible:
+    id: 'inventory-row-1-exhausted'
+- assertVisible:
+    id: 'inventory-row-1-location'
+    text: '.*(No stock|Sin stock).*'
 - scrollUntilVisible:
     element:
       id: 'inventory-manage-entities'

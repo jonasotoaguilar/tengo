@@ -52,6 +52,15 @@ first-run empty, and injected generic read-error/retry recovery.
 The final assertion found row 1 after clearing search; exact
 post-retry and final-clear count text was not captured.
 
+After the adopted cross-entity matching change the flow was corrected and
+re-observed on the same emulator through `scripts/run-maestro.sh`: exit 0,
+78/78 commands COMPLETED, JUnit `tests=1 failures=0` (`status=SUCCESS`) in
+2m 6s, artifact `.maestro/runs/20261012_052042_m3-query`. The retry
+expectation is now the true one — `H` matches three rows — and the flow
+scrolls down to the third row and back up to the search field before
+clearing it, a step the first revision needed after a device run failed at
+that tap.
+
 Independent host verification passed 164 tests and `npm run check`.
 P3b2's reviewed container unit included 13 container and 9 App tests.
 Native M3 evidence uses the real container and repositories on
@@ -122,6 +131,8 @@ followed (the `café` count went 2 -> 3 and three comments stopped describing a
 no-fold contract) and was re-observed on emulator-5554 through
 `scripts/run-maestro.sh`: exit 0, 72 commands COMPLETED, 0 FAILED, JUnit
 `tests=1 failures=0` in 117.6s, including the `^3 (of|de) 5$` café assertion.
+The cross-entity change then required the retry probe's own correction and a
+second green re-observation at 78/78 (recorded in the M3 section above).
 An earlier attempt failed honestly with a native fixture NPE, which did not
 reappear when the bundle was served from a tree whose `src/` had no
 uncommitted changes (as that run reported): a device run served from a mid-flight worktree is an inconsistent
@@ -155,10 +166,16 @@ same cached handle. Detailed checks live in a scrollable modal,
 closed by default so diagnostics do not consume the list viewport.
 The `.maestro/m3-query.yaml` flow fail-closes on
 `query-fixture-screen` first. It uses stable testIDs and en/es count
-regexes; query checks also verify `cafe` yields zero without accent
-folding. The retry probe searches one character, `H`, so additional
+regexes; the query checks assert accent folding in both directions
+(`café`, `CAFÉ` and `cafe` all return 3 of 5). The retry probe searches
+one character, `H`, so additional
 keystrokes cannot consume the one-shot failure and recover before
-the error assertion.
+the error assertion. Under the adopted cross-entity matching that letter
+is a folded substring over item, location and category names, so it
+matches three rows (`Café Grinder` and `CAFÉ filter` through
+`Küche`/`Kitchen`, plus `Hammer`); the flow pins that as
+`^3 (of|de) 5$`, asserts the two rows above the fold, scrolls down to the
+third and scrolls back up to the search field before clearing it.
 
 The independent Android flow passed as recorded above. It verifies
 only this read-only list slice, not forms or restart persistence.
@@ -488,11 +505,15 @@ directory and the report's `tests/failures/errors` counts. It refuses the
 flags it pins (`--test-output-dir`, `--format`, `--output`, `--udid`) instead
 of letting a caller silently split the artifacts, and outside a git
 repository it refuses to guess the root unless `MAESTRO_RUN_DIR` is set.
-Set `MAESTRO_REVERSE=1` to also apply `adb reverse tcp:8082 tcp:8083`, the
-known trap where the app's `debug_http_host` preference points at 8082 while
-the guarded CRUD bundle is served on 8083; that reverse is removed again when
-the script exits, and a `tcp:8082` rule that existed beforehand is not
-restored — the script says so and prints the command to re-add it.
+Set `MAESTRO_REVERSE=1` only when the bundle is served on host 8083 (the
+guarded CRUD bundle): the app's `debug_http_host` preference points at 8082, so
+the script then applies `adb reverse tcp:8082 tcp:8083`, removes that reverse
+again when it exits, and prints the command to re-add it when a `tcp:8082`
+rule existed beforehand. It is the wrong flag for the QUERY bundle, which is
+served on host 8082: it replaces the working `tcp:8082 tcp:8082` rule with one
+pointing at an empty port, and the flow then fails at its fixture gate with no
+bundle request reaching Metro. That was observed on device, and it is why
+`m3-query.yaml` is run through the wrapper without the flag.
 `MAESTRO_RUN_DIR` overrides the artifact root and `MAESTRO_SERIAL` the device
 serial (default `emulator-5554`).
 `__tests__/run-maestro-wrapper.test.js` drives the wrapper with a fake

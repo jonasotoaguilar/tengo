@@ -388,7 +388,7 @@ accumulated branch.
 - [x] M2: CRUD repository with parameterized SQL; error mapping
   tested; create/edit/delete survive force-stop + relaunch on a
   debug build (passed on Android; see [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
-- [x] M3: list/search/empty/loading/error states per DESIGN.md, verified on Android: 9/9 native query checks plus `m3-query.yaml` 72/72 commands, re-observed green after the P5g read-shape change, with the device metrics recorded under M5.
+- [x] M3: list/search/empty/loading/error states per DESIGN.md, verified on Android: 9/9 native query checks plus `m3-query.yaml` 72/72 commands, re-observed green after the P5g read-shape change and again at 78/78 after the cross-entity search change, with the device metrics recorded under M5.
 - [x] M4: add/edit/delete with validation and confirm; no silent
   data loss. Verified on Android: inline entity creation,
   dirty-discard Cancel/Discard and delete confirmation observed, and

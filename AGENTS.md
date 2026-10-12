@@ -36,10 +36,16 @@ These rules exist because they were broken and the user reported the damage.
   with `ERROR: JAVA_HOME is not set and no 'java' command could be found in your
   PATH`. Use `JAVA_HOME=$HOME/.local/jdk-17.0.20.1+1`. Maestro itself is
   `$HOME/.maestro/bin/maestro` (2.11.0) and is not on `PATH` either.
-- **Run device flows through the wrapper.** `MAESTRO_REVERSE=1 scripts/run-maestro.sh
-  <flow>` handles the known trap that the app's `debug_http_host` points at 8082
-  while a bundle may be served on 8083, keeps artifacts in `.maestro/runs/`,
-  emits a JUnit report, and removes the reverse it added on exit.
+- **Run device flows through the wrapper:** `scripts/run-maestro.sh <flow>` keeps
+  artifacts in `.maestro/runs/`, emits a JUnit report, and fails closed outside a
+  repository. `MAESTRO_REVERSE=1` is NOT a default. It adds
+  `adb reverse tcp:8082 tcp:8083`, which is only correct when the bundle is
+  served on host 8083 (the CRUD fixture bundle). The QUERY bundle is served on
+  host 8082, which is what the app's `debug_http_host` already points at, so the
+  reverse that works there is the pre-existing `tcp:8082 tcp:8082`. Adding the
+  flag replaces that rule, aims the device at an empty port and makes the flow
+  fail at its fixture gate with zero bundle requests — measured on device, not
+  guessed.
 - **Never touch production data on a device.** Only isolated DEV fixture
   databases may be created, opened or deleted. Never uninstall the app and
   never `pm clear` it.

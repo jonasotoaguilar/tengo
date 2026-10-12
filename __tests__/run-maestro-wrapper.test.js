@@ -128,6 +128,10 @@ test('passes the pinned output flags and reports the artifact directory', () => 
   expect(maestro).toContain('--output ');
   expect(maestro).toContain('--udid emulator-5554');
   expect(maestro).toContain(flow);
+  // The run directory is named after the flow, with no trailing separator
+  // from the name derivation.
+  const outDir = maestro.match(/--test-output-dir (\S+)/)?.[1];
+  expect(outDir).toMatch(/_flow$/);
   // The JUnit summary the wrapper greps must come from the report Maestro wrote.
   expect(result.stdout).toMatch(/tests="7" failures="0" errors="0"/);
   expect(result.stdout).toMatch(/artifacts: {4}/);
@@ -164,6 +168,7 @@ test('a flow path containing spaces reaches maestro intact', () => {
   const outDir = maestro.match(/--test-output-dir (\S+)/)?.[1];
   expect(outDir).toContain('my-flow');
   expect(outDir).not.toContain(' ');
+  expect(outDir).not.toMatch(/-$/);
 });
 
 test('the adb reverse workaround is opt-in and removed on exit', () => {

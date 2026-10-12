@@ -27,12 +27,15 @@
  * already pays; a name miss no longer short-circuits after read 1.
  *
  * The text predicate, the category-OR target-set predicate, and the
- * location-name predicate are evaluated BEFORE any `Location`,
- * `Category`/`categoryIds`, or `ItemDetail` allocation: name filtering runs
- * on the raw item rows, category membership runs on the raw link id pairs,
- * location-name matching runs on the raw location rows, and only surviving
- * rows allocate entities. An item matching in more than one way still
- * appears exactly once (one row per item, stable `id ASC` page order).
+ * location-name predicate are all decided on raw rows: name filtering runs
+ * on the raw item rows, category membership on the raw link id pairs, and
+ * location-name matching on the raw location rows. `ItemDetail` and
+ * `Location` are allocated only for rows that survive all three.
+ * `Category`/`categoryIds` are allocated for category survivors, which is
+ * before the location-name drop, so a row dropped only by its location name
+ * has already built its category list: one list per surviving row, discarded
+ * by the drop. An item matching in more than one way still appears exactly
+ * once (one row per item, stable `id ASC` page order).
  * Inner-join semantics are preserved exactly: an item whose location row is
  * missing from the batched location read is dropped, because the previous
  * `JOIN locations` shape excluded it.
@@ -216,8 +219,10 @@ function foldSearchText(value: string): string {
  * ids. JS accent-folded substring (NFD + strip Diacritic + lowercase,
  * literal `%_\\`) runs against the raw item, link, and location rows —
  * matching the item name, the location name, or any category name with
- * OR-with-dedup — and the category-OR runs on the raw link id pairs, all
- * before any entity allocation. Item order is stable `id ASC`; categories
+ * OR-with-dedup — and the category-OR runs on the raw link id pairs: all
+ * decided on raw rows before any `ItemDetail`/`Location` allocation, with
+ * category lists built for category survivors (before the location-name
+ * drop). Item order is stable `id ASC`; categories
  * are `id ASC` with `categoryIds` matching the entity list. Quantity zero
  * is preserved. Items whose location row is absent stay excluded.
  */
@@ -249,7 +254,8 @@ export async function queryItems(
   // Cross-entity text predicate inputs, computed on raw rows only — no
   // Location/Category/ItemDetail yet. Accent-folded literal substring: fold
   // the query once, each item name once, each distinct category name once
-  // (cached by id), and each location name once after the batched read.
+  // (cached by id), and each distinct location name once (cached by id) after
+  // the batched read.
   const foldedQuery =
     normalized.query === null ? null : foldSearchText(normalized.query);
   const foldedItemName = new Map<number, string>();
@@ -355,12 +361,20 @@ export async function queryItems(
     throw new StorageError('item', 'query', error);
   }
   const locationById = new Map<number, LocationRow>();
+  const foldedLocationName = new Map<number, string>();
   for (const raw of locationRows) {
     // Fail loudly on a malformed location row (dropped column/broken
     // alias): `requireLocationRow` throws StorageError('item', 'query').
     // A merely missing location row still drops its item (inner join).
     const locationRow = requireLocationRow(raw);
     locationById.set(locationRow.location_id, locationRow);
+    // Fold once per distinct location, mirroring the category cache: the
+    // final loop compares every surviving row against its location name, so
+    // folding inside that loop would repeat the same work once per item.
+    foldedLocationName.set(
+      locationRow.location_id,
+      foldSearchText(locationRow.location_name),
+    );
   }
 
   const details: ItemDetail[] = [];
@@ -372,7 +386,9 @@ export async function queryItems(
     if (
       foldedQuery !== null &&
       !nameOrCategoryHit.has(row.item_id) &&
-      !foldSearchText(locationRow.location_name).includes(foldedQuery)
+      !(foldedLocationName.get(row.item_location_id) ?? '').includes(
+        foldedQuery,
+      )
     ) {
       continue;
     }

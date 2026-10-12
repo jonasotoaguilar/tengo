@@ -59,7 +59,7 @@
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "B1 · Android list — populated, grouped by location",
+                  "content": "B1 · Android list — totals + breakdown",
                   "fontSize": 14.0,
                   "fontWeight": 700,
                   "fill": [
@@ -73,9 +73,9 @@
                   "type": "text",
                   "id": "n8",
                   "name": "s",
-                  "width": "fit_content",
+                  "width": "fill_container",
                   "height": "fit_content",
-                  "content": "Top app bar + inline search + filter chips · one FAB · 48dp targets",
+                  "content": "Top app bar + inline search + location & category filters · one FAB · 48dp targets",
                   "fontSize": 12.0,
                   "fill": [
                     {
@@ -154,7 +154,7 @@
                   "name": "q",
                   "width": "fill_container",
                   "height": 48.0,
-                  "placeholder": "Search name, place…",
+                  "placeholder": "Search by name, location, or category",
                   "value": "",
                   "fill": [
                     {
@@ -378,6 +378,128 @@
             },
             {
               "type": "frame",
+              "id": "n494",
+              "name": "chips",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "horizontal",
+              "gap": 8.0,
+              "padding": [
+                0.0,
+                16.0
+              ],
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n488",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Categories:",
+                  "fontSize": 14.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n489",
+                  "name": "c",
+                  "width": "fit_content",
+                  "height": 44.0,
+                  "layout": "horizontal",
+                  "gap": 0.0,
+                  "padding": [
+                    0.0,
+                    16.0
+                  ],
+                  "alignItems": "center",
+                  "cornerRadius": 22.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#18181B"
+                    }
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n490",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Grains ×",
+                      "fontSize": 14.0,
+                      "fontWeight": 600,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n491",
+                  "name": "c",
+                  "width": "fit_content",
+                  "height": 44.0,
+                  "layout": "horizontal",
+                  "gap": 0.0,
+                  "padding": [
+                    0.0,
+                    16.0
+                  ],
+                  "alignItems": "center",
+                  "cornerRadius": 22.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#A1A1AA"
+                      }
+                    ]
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n492",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Oils",
+                      "fontSize": 14.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#111111"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
               "id": "n22",
               "name": "gh",
               "width": "fill_container",
@@ -435,14 +557,14 @@
               "id": "n25",
               "name": "row",
               "width": "fill_container",
-              "height": 64.0,
-              "layout": "horizontal",
-              "gap": 8.0,
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 2.0,
               "padding": [
-                0.0,
+                12.0,
                 16.0
               ],
-              "alignItems": "center",
+              "alignItems": "start",
               "fill": [
                 {
                   "type": "solid",
@@ -467,12 +589,27 @@
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Rice · ×2 · Kitchen",
+                  "content": "Rice · Quantity 6",
                   "fontSize": 16.0,
                   "fill": [
                     {
                       "type": "solid",
                       "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n503",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Kitchen 2 · Pantry 4 · Grains",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
                     }
                   ]
                 }
@@ -483,14 +620,14 @@
               "id": "n27",
               "name": "row",
               "width": "fill_container",
-              "height": 64.0,
-              "layout": "horizontal",
-              "gap": 8.0,
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 2.0,
               "padding": [
-                0.0,
+                12.0,
                 16.0
               ],
-              "alignItems": "center",
+              "alignItems": "start",
               "fill": [
                 {
                   "type": "solid",
@@ -515,12 +652,27 @@
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Olive oil · ×1 · Kitchen",
+                  "content": "Olive oil · Quantity 1",
                   "fontSize": 16.0,
                   "fill": [
                     {
                       "type": "solid",
                       "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n504",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Kitchen 1",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
                     }
                   ]
                 }
@@ -585,14 +737,14 @@
               "id": "n32",
               "name": "row",
               "width": "fill_container",
-              "height": 64.0,
-              "layout": "horizontal",
-              "gap": 8.0,
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 2.0,
               "padding": [
-                0.0,
+                12.0,
                 16.0
               ],
-              "alignItems": "center",
+              "alignItems": "start",
               "fill": [
                 {
                   "type": "solid",
@@ -617,12 +769,27 @@
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Lentils · ×4 · Pantry",
+                  "content": "Lentils · Quantity 4",
                   "fontSize": 16.0,
                   "fill": [
                     {
                       "type": "solid",
                       "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n505",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Pantry 4 · Pulses",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
                     }
                   ]
                 }
@@ -631,6 +798,224 @@
             {
               "type": "frame",
               "id": "n34",
+              "name": "row",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 2.0,
+              "padding": [
+                12.0,
+                16.0
+              ],
+              "alignItems": "start",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": {
+                  "bottom": 1.0
+                },
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#E4E4E7"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n35",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Canned beans · Quantity 6",
+                  "fontSize": 16.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n506",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Pantry 6",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n507",
+              "name": "gh",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "horizontal",
+              "gap": 8.0,
+              "padding": [
+                16.0,
+                16.0
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#F4F4F5"
+                }
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n508",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "NO STOCK",
+                  "fontSize": 13.0,
+                  "fontWeight": 700,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#3F3F46"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n509",
+                  "name": "c",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "1 item",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n510",
+              "name": "row",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 2.0,
+              "padding": [
+                12.0,
+                16.0
+              ],
+              "alignItems": "start",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": {
+                  "bottom": 1.0
+                },
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#E4E4E7"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n511",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Quinoa · Quantity 0",
+                  "fontSize": 16.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n512",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Exhausted · No stock",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n513",
+              "name": "gh",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "horizontal",
+              "gap": 8.0,
+              "padding": [
+                16.0,
+                16.0
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "start",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#F4F4F5"
+                }
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n516",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Location view (Pantry): each row shows that location's quantity — Rice · Quantity 4 · Pantry",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n517",
               "name": "row",
               "width": "fill_container",
               "height": 64.0,
@@ -661,11 +1046,11 @@
               "children": [
                 {
                   "type": "text",
-                  "id": "n35",
+                  "id": "n518",
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Canned beans · ×6 · Pantry",
+                  "content": "Manage locations and categories ›",
                   "fontSize": 16.0,
                   "fill": [
                     {
@@ -801,7 +1186,7 @@
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "B2 · iOS list — populated, same content, iOS idiom",
+                  "content": "B2 · iOS list — totals + breakdown",
                   "fontSize": 14.0,
                   "fontWeight": 700,
                   "fill": [
@@ -968,7 +1353,7 @@
                   "name": "q",
                   "width": "fill_container",
                   "height": 48.0,
-                  "placeholder": "Search name, place…",
+                  "placeholder": "Search by name, location, or category",
                   "value": "",
                   "fill": [
                     {
@@ -1191,6 +1576,129 @@
             },
             {
               "type": "frame",
+              "id": "n526",
+              "name": "f",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "horizontal",
+              "gap": 8.0,
+              "padding": [
+                0.0,
+                16.0
+              ],
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n520",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Categories:",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n521",
+                  "name": "c",
+                  "width": "fit_content",
+                  "height": 44.0,
+                  "layout": "horizontal",
+                  "gap": 0.0,
+                  "padding": [
+                    0.0,
+                    16.0
+                  ],
+                  "alignItems": "center",
+                  "cornerRadius": 22.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#18181B"
+                    }
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n522",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Grains ×",
+                      "fontSize": 14.0,
+                      "fontWeight": 600,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n523",
+                  "name": "c",
+                  "width": "fit_content",
+                  "height": 44.0,
+                  "layout": "horizontal",
+                  "gap": 0.0,
+                  "padding": [
+                    0.0,
+                    16.0
+                  ],
+                  "alignItems": "center",
+                  "cornerRadius": 22.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#A1A1AA"
+                      }
+                    ]
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n524",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Oils",
+                      "fontSize": 14.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#111111"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
               "id": "n61",
               "name": "f",
               "width": "fill_container",
@@ -1249,14 +1757,14 @@
               "id": "n64",
               "name": "f",
               "width": "fill_container",
-              "height": 64.0,
-              "layout": "horizontal",
-              "gap": 8.0,
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 2.0,
               "padding": [
-                0.0,
+                12.0,
                 16.0
               ],
-              "alignItems": "center",
+              "alignItems": "start",
               "fill": [
                 {
                   "type": "solid",
@@ -1281,13 +1789,28 @@
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Rice · ×2 · Kitchen",
+                  "content": "Rice · Quantity 6",
                   "fontSize": 16.0,
                   "fontWeight": 400,
                   "fill": [
                     {
                       "type": "solid",
                       "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n535",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Kitchen 2 · Pantry 4 · Grains",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
                     }
                   ]
                 }
@@ -1298,14 +1821,14 @@
               "id": "n66",
               "name": "f",
               "width": "fill_container",
-              "height": 64.0,
-              "layout": "horizontal",
-              "gap": 8.0,
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 2.0,
               "padding": [
-                0.0,
+                12.0,
                 16.0
               ],
-              "alignItems": "center",
+              "alignItems": "start",
               "fill": [
                 {
                   "type": "solid",
@@ -1330,13 +1853,28 @@
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Olive oil · ×1 · Kitchen",
+                  "content": "Olive oil · Quantity 1",
                   "fontSize": 16.0,
                   "fontWeight": 400,
                   "fill": [
                     {
                       "type": "solid",
                       "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n536",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Kitchen 1",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
                     }
                   ]
                 }
@@ -1402,6 +1940,225 @@
               "id": "n71",
               "name": "f",
               "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 2.0,
+              "padding": [
+                12.0,
+                16.0
+              ],
+              "alignItems": "start",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": {
+                  "bottom": 1.0
+                },
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#E4E4E7"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n72",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Lentils · Quantity 4",
+                  "fontSize": 16.0,
+                  "fontWeight": 400,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n537",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Pantry 4 · Pulses",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n538",
+              "name": "gh",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "horizontal",
+              "gap": 8.0,
+              "padding": [
+                16.0,
+                16.0
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#F4F4F5"
+                }
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n539",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "NO STOCK",
+                  "fontSize": 13.0,
+                  "fontWeight": 700,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#3F3F46"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n540",
+                  "name": "c",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "1 item",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n541",
+              "name": "row",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 2.0,
+              "padding": [
+                12.0,
+                16.0
+              ],
+              "alignItems": "start",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": {
+                  "bottom": 1.0
+                },
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#E4E4E7"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n542",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Quinoa · Quantity 0",
+                  "fontSize": 16.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n543",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Exhausted · No stock",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n544",
+              "name": "gh",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "horizontal",
+              "gap": 8.0,
+              "padding": [
+                16.0,
+                16.0
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "start",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#F4F4F5"
+                }
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n547",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Location view (Pantry): each row shows that location's quantity — Rice · Quantity 4 · Pantry",
+                  "fontSize": 13.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n548",
+              "name": "row",
+              "width": "fill_container",
               "height": 64.0,
               "layout": "horizontal",
               "gap": 8.0,
@@ -1430,13 +2187,12 @@
               "children": [
                 {
                   "type": "text",
-                  "id": "n72",
+                  "id": "n549",
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Lentils · ×4 · Pantry",
+                  "content": "Manage locations and categories ›",
                   "fontSize": 16.0,
-                  "fontWeight": 400,
                   "fill": [
                     {
                       "type": "solid",
@@ -1516,7 +2272,7 @@
           "id": "n76",
           "name": "B3 Search no-results",
           "x": 100.0,
-          "y": 1020.0,
+          "y": 1136.0,
           "width": 390.0,
           "height": "fit_content",
           "layout": "vertical",
@@ -2096,7 +2852,7 @@
           "id": "n104",
           "name": "B4 First-run empty",
           "x": 640.0,
-          "y": 1020.0,
+          "y": 1136.0,
           "width": 390.0,
           "height": "fit_content",
           "layout": "vertical",
@@ -2440,7 +3196,7 @@
                   "name": "t",
                   "width": "fill_container",
                   "height": "fit_content",
-                  "content": "Free-text location + recency suggestions (proposed) · qty default 1 (proposed)",
+                  "content": "Per-location stock rows, add/remove · inline location creation · 48dp targets",
                   "fontSize": 12.0,
                   "fontWeight": 400,
                   "fill": [
@@ -2575,7 +3331,7 @@
             },
             {
               "type": "frame",
-              "id": "n128",
+              "id": "n550",
               "name": "f",
               "width": "fill_container",
               "height": "fit_content",
@@ -2588,11 +3344,11 @@
               "children": [
                 {
                   "type": "text",
-                  "id": "n129",
+                  "id": "n560",
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Quantity",
+                  "content": "Stock by location (optional)",
                   "fontSize": 14.0,
                   "fontWeight": 600,
                   "fill": [
@@ -2604,32 +3360,527 @@
                 },
                 {
                   "type": "frame",
-                  "id": "n130",
+                  "id": "n561",
+                  "name": "stockrow",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "layout": "horizontal",
+                  "gap": 8.0,
+                  "padding": [
+                    12.0,
+                    16.0
+                  ],
+                  "alignItems": "center",
+                  "justifyContent": "space_between",
+                  "cornerRadius": 12.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#D4D4D8"
+                      }
+                    ]
+                  },
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n562",
+                      "name": "f",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "layout": "vertical",
+                      "gap": 8.0,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n563",
+                          "name": "t",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "Kitchen",
+                          "fontSize": 14.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#111111"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "n564",
+                          "name": "f",
+                          "width": "fill_container",
+                          "height": "fit_content",
+                          "layout": "horizontal",
+                          "gap": 12.0,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "n565",
+                              "name": "f",
+                              "width": 48.0,
+                              "height": 48.0,
+                              "layout": "horizontal",
+                              "padding": [
+                                0.0,
+                                0.0
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "cornerRadius": 12.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F4F4F5"
+                                }
+                              ],
+                              "stroke": {
+                                "thickness": 1.0,
+                                "fill": [
+                                  {
+                                    "type": "solid",
+                                    "color": "#D4D4D8"
+                                  }
+                                ]
+                              },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n566",
+                                  "name": "t",
+                                  "width": "fit_content",
+                                  "height": "fit_content",
+                                  "content": "−",
+                                  "fontSize": 20.0,
+                                  "fontWeight": 400,
+                                  "fill": [
+                                    {
+                                      "type": "solid",
+                                      "color": "#111111"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "n567",
+                              "name": "f",
+                              "width": "fit_content",
+                              "height": 48.0,
+                              "layout": "horizontal",
+                              "padding": [
+                                0.0,
+                                16.0
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "cornerRadius": 12.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F4F4F5"
+                                }
+                              ],
+                              "stroke": {
+                                "thickness": 1.0,
+                                "fill": [
+                                  {
+                                    "type": "solid",
+                                    "color": "#D4D4D8"
+                                  }
+                                ]
+                              },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n568",
+                                  "name": "t",
+                                  "width": "fit_content",
+                                  "height": "fit_content",
+                                  "content": "2",
+                                  "fontSize": 20.0,
+                                  "fontWeight": 600,
+                                  "fill": [
+                                    {
+                                      "type": "solid",
+                                      "color": "#111111"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "n569",
+                              "name": "f",
+                              "width": 48.0,
+                              "height": 48.0,
+                              "layout": "horizontal",
+                              "padding": [
+                                0.0,
+                                0.0
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "cornerRadius": 12.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F4F4F5"
+                                }
+                              ],
+                              "stroke": {
+                                "thickness": 1.0,
+                                "fill": [
+                                  {
+                                    "type": "solid",
+                                    "color": "#D4D4D8"
+                                  }
+                                ]
+                              },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n570",
+                                  "name": "t",
+                                  "width": "fit_content",
+                                  "height": "fit_content",
+                                  "content": "+",
+                                  "fontSize": 20.0,
+                                  "fontWeight": 400,
+                                  "fill": [
+                                    {
+                                      "type": "solid",
+                                      "color": "#111111"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "n571",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Remove",
+                      "fontSize": 13.0,
+                      "fontWeight": 400,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#6B7280"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n572",
+                  "name": "stockrow",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "layout": "horizontal",
+                  "gap": 8.0,
+                  "padding": [
+                    12.0,
+                    16.0
+                  ],
+                  "alignItems": "center",
+                  "justifyContent": "space_between",
+                  "cornerRadius": 12.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#D4D4D8"
+                      }
+                    ]
+                  },
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n573",
+                      "name": "f",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "layout": "vertical",
+                      "gap": 8.0,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n574",
+                          "name": "t",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "Pantry",
+                          "fontSize": 14.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#111111"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "n575",
+                          "name": "f",
+                          "width": "fill_container",
+                          "height": "fit_content",
+                          "layout": "horizontal",
+                          "gap": 12.0,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "n576",
+                              "name": "f",
+                              "width": 48.0,
+                              "height": 48.0,
+                              "layout": "horizontal",
+                              "padding": [
+                                0.0,
+                                0.0
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "cornerRadius": 12.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F4F4F5"
+                                }
+                              ],
+                              "stroke": {
+                                "thickness": 1.0,
+                                "fill": [
+                                  {
+                                    "type": "solid",
+                                    "color": "#D4D4D8"
+                                  }
+                                ]
+                              },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n577",
+                                  "name": "t",
+                                  "width": "fit_content",
+                                  "height": "fit_content",
+                                  "content": "−",
+                                  "fontSize": 20.0,
+                                  "fontWeight": 400,
+                                  "fill": [
+                                    {
+                                      "type": "solid",
+                                      "color": "#111111"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "n578",
+                              "name": "f",
+                              "width": "fit_content",
+                              "height": 48.0,
+                              "layout": "horizontal",
+                              "padding": [
+                                0.0,
+                                16.0
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "cornerRadius": 12.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F4F4F5"
+                                }
+                              ],
+                              "stroke": {
+                                "thickness": 1.0,
+                                "fill": [
+                                  {
+                                    "type": "solid",
+                                    "color": "#D4D4D8"
+                                  }
+                                ]
+                              },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n579",
+                                  "name": "t",
+                                  "width": "fit_content",
+                                  "height": "fit_content",
+                                  "content": "4",
+                                  "fontSize": 20.0,
+                                  "fontWeight": 600,
+                                  "fill": [
+                                    {
+                                      "type": "solid",
+                                      "color": "#111111"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "n580",
+                              "name": "f",
+                              "width": 48.0,
+                              "height": 48.0,
+                              "layout": "horizontal",
+                              "padding": [
+                                0.0,
+                                0.0
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "cornerRadius": 12.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F4F4F5"
+                                }
+                              ],
+                              "stroke": {
+                                "thickness": 1.0,
+                                "fill": [
+                                  {
+                                    "type": "solid",
+                                    "color": "#D4D4D8"
+                                  }
+                                ]
+                              },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n581",
+                                  "name": "t",
+                                  "width": "fit_content",
+                                  "height": "fit_content",
+                                  "content": "+",
+                                  "fontSize": 20.0,
+                                  "fontWeight": 400,
+                                  "fill": [
+                                    {
+                                      "type": "solid",
+                                      "color": "#111111"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "n582",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Remove",
+                      "fontSize": 13.0,
+                      "fontWeight": 400,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#6B7280"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n583",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Blank or 0 drops the row — nothing is stored.",
+                  "fontSize": 13.0,
+                  "fontWeight": 400,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n584",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Add location",
+                  "fontSize": 14.0,
+                  "fontWeight": 600,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n585",
                   "name": "f",
                   "width": "fill_container",
                   "height": "fit_content",
                   "layout": "horizontal",
-                  "gap": 12.0,
-                  "alignItems": "center",
+                  "gap": 8.0,
                   "children": [
                     {
                       "type": "frame",
-                      "id": "n131",
+                      "id": "n592",
                       "name": "f",
-                      "width": 48.0,
-                      "height": 48.0,
+                      "width": "fit_content",
+                      "height": 40.0,
                       "layout": "horizontal",
                       "padding": [
                         0.0,
-                        0.0
+                        14.0
                       ],
                       "justifyContent": "center",
                       "alignItems": "center",
-                      "cornerRadius": 12.0,
+                      "cornerRadius": 20.0,
                       "fill": [
                         {
                           "type": "solid",
-                          "color": "#F4F4F5"
+                          "color": "#FFFFFF"
                         }
                       ],
                       "stroke": {
@@ -2637,19 +3888,19 @@
                         "fill": [
                           {
                             "type": "solid",
-                            "color": "#D4D4D8"
+                            "color": "#A1A1AA"
                           }
                         ]
                       },
                       "children": [
                         {
                           "type": "text",
-                          "id": "n132",
+                          "id": "n593",
                           "name": "t",
                           "width": "fit_content",
                           "height": "fit_content",
-                          "content": "−",
-                          "fontSize": 20.0,
+                          "content": "Garage",
+                          "fontSize": 13.0,
                           "fontWeight": 400,
                           "fill": [
                             {
@@ -2662,22 +3913,22 @@
                     },
                     {
                       "type": "frame",
-                      "id": "n133",
+                      "id": "n594",
                       "name": "f",
                       "width": "fit_content",
-                      "height": 48.0,
+                      "height": 40.0,
                       "layout": "horizontal",
                       "padding": [
                         0.0,
-                        16.0
+                        14.0
                       ],
                       "justifyContent": "center",
                       "alignItems": "center",
-                      "cornerRadius": 12.0,
+                      "cornerRadius": 20.0,
                       "fill": [
                         {
                           "type": "solid",
-                          "color": "#F4F4F5"
+                          "color": "#FFFFFF"
                         }
                       ],
                       "stroke": {
@@ -2685,67 +3936,19 @@
                         "fill": [
                           {
                             "type": "solid",
-                            "color": "#D4D4D8"
+                            "color": "#A1A1AA"
                           }
                         ]
                       },
                       "children": [
                         {
                           "type": "text",
-                          "id": "n134",
+                          "id": "n595",
                           "name": "t",
                           "width": "fit_content",
                           "height": "fit_content",
-                          "content": "2",
-                          "fontSize": 20.0,
-                          "fontWeight": 600,
-                          "fill": [
-                            {
-                              "type": "solid",
-                              "color": "#111111"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "n135",
-                      "name": "f",
-                      "width": 48.0,
-                      "height": 48.0,
-                      "layout": "horizontal",
-                      "padding": [
-                        0.0,
-                        0.0
-                      ],
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "cornerRadius": 12.0,
-                      "fill": [
-                        {
-                          "type": "solid",
-                          "color": "#F4F4F5"
-                        }
-                      ],
-                      "stroke": {
-                        "thickness": 1.0,
-                        "fill": [
-                          {
-                            "type": "solid",
-                            "color": "#D4D4D8"
-                          }
-                        ]
-                      },
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "n136",
-                          "name": "t",
-                          "width": "fit_content",
-                          "height": "fit_content",
-                          "content": "+",
-                          "fontSize": 20.0,
+                          "content": "New location",
+                          "fontSize": 13.0,
                           "fontWeight": 400,
                           "fill": [
                             {
@@ -2760,42 +3963,11 @@
                 },
                 {
                   "type": "text",
-                  "id": "n137",
+                  "id": "n596",
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Whole number, 0–999999 · default 1 (proposed, pending)",
-                  "fontSize": 13.0,
-                  "fontWeight": 400,
-                  "fill": [
-                    {
-                      "type": "solid",
-                      "color": "#6B7280"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "n138",
-              "name": "f",
-              "width": "fill_container",
-              "height": "fit_content",
-              "layout": "vertical",
-              "gap": 6.0,
-              "padding": [
-                8.0,
-                16.0
-              ],
-              "children": [
-                {
-                  "type": "text",
-                  "id": "n139",
-                  "name": "t",
-                  "width": "fit_content",
-                  "height": "fit_content",
-                  "content": "Location",
+                  "content": "Location name",
                   "fontSize": 14.0,
                   "fontWeight": 600,
                   "fill": [
@@ -2807,11 +3979,11 @@
                 },
                 {
                   "type": "text_input",
-                  "id": "n140",
+                  "id": "n597",
                   "name": "c",
                   "width": "fill_container",
                   "height": 52.0,
-                  "placeholder": "e.g. Pantry",
+                  "placeholder": "e.g. Fridge, Pantry, House 1",
                   "value": "",
                   "fill": [
                     {
@@ -2832,197 +4004,11 @@
                 },
                 {
                   "type": "text",
-                  "id": "n141",
+                  "id": "n598",
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Suggestions from recent places — stored as typed (trimmed)",
-                  "fontSize": 13.0,
-                  "fontWeight": 400,
-                  "fill": [
-                    {
-                      "type": "solid",
-                      "color": "#6B7280"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "n142",
-                  "name": "f",
-                  "width": "fill_container",
-                  "height": "fit_content",
-                  "layout": "horizontal",
-                  "gap": 8.0,
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "n143",
-                      "name": "f",
-                      "width": "fit_content",
-                      "height": 40.0,
-                      "layout": "horizontal",
-                      "padding": [
-                        0.0,
-                        14.0
-                      ],
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "cornerRadius": 20.0,
-                      "fill": [
-                        {
-                          "type": "solid",
-                          "color": "#FFFFFF"
-                        }
-                      ],
-                      "stroke": {
-                        "thickness": 1.0,
-                        "fill": [
-                          {
-                            "type": "solid",
-                            "color": "#A1A1AA"
-                          }
-                        ]
-                      },
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "n144",
-                          "name": "t",
-                          "width": "fit_content",
-                          "height": "fit_content",
-                          "content": "Pantry",
-                          "fontSize": 13.0,
-                          "fontWeight": 400,
-                          "fill": [
-                            {
-                              "type": "solid",
-                              "color": "#111111"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "n145",
-                      "name": "f",
-                      "width": "fit_content",
-                      "height": 40.0,
-                      "layout": "horizontal",
-                      "padding": [
-                        0.0,
-                        14.0
-                      ],
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "cornerRadius": 20.0,
-                      "fill": [
-                        {
-                          "type": "solid",
-                          "color": "#FFFFFF"
-                        }
-                      ],
-                      "stroke": {
-                        "thickness": 1.0,
-                        "fill": [
-                          {
-                            "type": "solid",
-                            "color": "#A1A1AA"
-                          }
-                        ]
-                      },
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "n146",
-                          "name": "t",
-                          "width": "fit_content",
-                          "height": "fit_content",
-                          "content": "Kitchen",
-                          "fontSize": 13.0,
-                          "fontWeight": 400,
-                          "fill": [
-                            {
-                              "type": "solid",
-                              "color": "#111111"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "n147",
-                      "name": "f",
-                      "width": "fit_content",
-                      "height": 40.0,
-                      "layout": "horizontal",
-                      "padding": [
-                        0.0,
-                        14.0
-                      ],
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "cornerRadius": 20.0,
-                      "fill": [
-                        {
-                          "type": "solid",
-                          "color": "#FFFFFF"
-                        }
-                      ],
-                      "stroke": {
-                        "thickness": 1.0,
-                        "fill": [
-                          {
-                            "type": "solid",
-                            "color": "#A1A1AA"
-                          }
-                        ]
-                      },
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "n148",
-                          "name": "t",
-                          "width": "fit_content",
-                          "height": "fit_content",
-                          "content": "Garage",
-                          "fontSize": 13.0,
-                          "fontWeight": 400,
-                          "fill": [
-                            {
-                              "type": "solid",
-                              "color": "#111111"
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "n149",
-              "name": "f",
-              "width": "fill_container",
-              "height": "fit_content",
-              "layout": "vertical",
-              "gap": 6.0,
-              "padding": [
-                8.0,
-                16.0
-              ],
-              "children": [
-                {
-                  "type": "text",
-                  "id": "n150",
-                  "name": "t",
-                  "width": "fit_content",
-                  "height": "fit_content",
-                  "content": "Category (optional)",
+                  "content": "Address (optional)",
                   "fontSize": 14.0,
                   "fontWeight": 600,
                   "fill": [
@@ -3034,7 +4020,178 @@
                 },
                 {
                   "type": "text_input",
-                  "id": "n151",
+                  "id": "n599",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": 52.0,
+                  "placeholder": "e.g. Main Street 12",
+                  "value": "",
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#D4D4D8"
+                      }
+                    ]
+                  },
+                  "cornerRadius": 12.0
+                },
+                {
+                  "type": "text",
+                  "id": "n600",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Categories (optional)",
+                  "fontSize": 14.0,
+                  "fontWeight": 600,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n601",
+                  "name": "f",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "layout": "horizontal",
+                  "gap": 8.0,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n608",
+                      "name": "c",
+                      "width": "fit_content",
+                      "height": 44.0,
+                      "layout": "horizontal",
+                      "gap": 0.0,
+                      "padding": [
+                        0.0,
+                        16.0
+                      ],
+                      "alignItems": "center",
+                      "cornerRadius": 22.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#18181B"
+                        }
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n609",
+                          "name": "t",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "Grains ×",
+                          "fontSize": 14.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#FFFFFF"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n610",
+                      "name": "f",
+                      "width": "fit_content",
+                      "height": 40.0,
+                      "layout": "horizontal",
+                      "padding": [
+                        0.0,
+                        14.0
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 20.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#FFFFFF"
+                        }
+                      ],
+                      "stroke": {
+                        "thickness": 1.0,
+                        "fill": [
+                          {
+                            "type": "solid",
+                            "color": "#A1A1AA"
+                          }
+                        ]
+                      },
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n611",
+                          "name": "t",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "Oils",
+                          "fontSize": 13.0,
+                          "fontWeight": 400,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#111111"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n612",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Matches any selected category.",
+                  "fontSize": 13.0,
+                  "fontWeight": 400,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n613",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "New category",
+                  "fontSize": 14.0,
+                  "fontWeight": 600,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text_input",
+                  "id": "n614",
                   "name": "c",
                   "width": "fill_container",
                   "height": 52.0,
@@ -3056,6 +4213,41 @@
                     ]
                   },
                   "cornerRadius": 12.0
+                },
+                {
+                  "type": "frame",
+                  "id": "n615",
+                  "name": "f",
+                  "width": "fill_container",
+                  "height": 52.0,
+                  "layout": "horizontal",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "cornerRadius": 12.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#18181B"
+                    }
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n616",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Add category",
+                      "fontSize": 16.0,
+                      "fontWeight": 600,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
                 }
               ]
             },
@@ -3145,7 +4337,7 @@
                   "name": "t",
                   "width": "fill_container",
                   "height": "fit_content",
-                  "content": "④ FAB/+ → form · Save → list + transient confirm · Back with edits → B9 discard · keyboard keeps Save visible",
+                  "content": "④ FAB/+ → form · Save → list + transient confirm · Back with edits → B9 discard · 0-quantity rows dropped",
                   "fontSize": 12.0,
                   "fontWeight": 400,
                   "fill": [
@@ -3240,9 +4432,9 @@
                   "type": "text",
                   "id": "n161",
                   "name": "t",
-                  "width": "fit_content",
+                  "width": "fill_container",
                   "height": "fit_content",
-                  "content": "Same fields as Add · destructive zone at bottom · transient confirm",
+                  "content": "Per-location stock rows · destructive zone at bottom · transient confirm",
                   "fontSize": 12.0,
                   "fontWeight": 400,
                   "fill": [
@@ -3394,7 +4586,7 @@
             },
             {
               "type": "frame",
-              "id": "n169",
+              "id": "n617",
               "name": "f",
               "width": "fill_container",
               "height": "fit_content",
@@ -3407,11 +4599,11 @@
               "children": [
                 {
                   "type": "text",
-                  "id": "n170",
+                  "id": "n627",
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Quantity",
+                  "content": "Stock by location (optional)",
                   "fontSize": 14.0,
                   "fontWeight": 600,
                   "fill": [
@@ -3423,100 +4615,52 @@
                 },
                 {
                   "type": "frame",
-                  "id": "n171",
-                  "name": "f",
+                  "id": "n628",
+                  "name": "stockrow",
                   "width": "fill_container",
                   "height": "fit_content",
                   "layout": "horizontal",
-                  "gap": 12.0,
+                  "gap": 8.0,
+                  "padding": [
+                    12.0,
+                    16.0
+                  ],
                   "alignItems": "center",
+                  "justifyContent": "space_between",
+                  "cornerRadius": 12.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#D4D4D8"
+                      }
+                    ]
+                  },
                   "children": [
                     {
                       "type": "frame",
-                      "id": "n172",
-                      "name": "f",
-                      "width": 48.0,
-                      "height": 48.0,
-                      "layout": "horizontal",
-                      "padding": [
-                        0.0,
-                        0.0
-                      ],
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "cornerRadius": 12.0,
-                      "fill": [
-                        {
-                          "type": "solid",
-                          "color": "#F4F4F5"
-                        }
-                      ],
-                      "stroke": {
-                        "thickness": 1.0,
-                        "fill": [
-                          {
-                            "type": "solid",
-                            "color": "#D4D4D8"
-                          }
-                        ]
-                      },
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "n173",
-                          "name": "t",
-                          "width": "fit_content",
-                          "height": "fit_content",
-                          "content": "−",
-                          "fontSize": 20.0,
-                          "fontWeight": 400,
-                          "fill": [
-                            {
-                              "type": "solid",
-                              "color": "#111111"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "n174",
+                      "id": "n629",
                       "name": "f",
                       "width": "fit_content",
-                      "height": 48.0,
-                      "layout": "horizontal",
-                      "padding": [
-                        0.0,
-                        16.0
-                      ],
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "cornerRadius": 12.0,
-                      "fill": [
-                        {
-                          "type": "solid",
-                          "color": "#F4F4F5"
-                        }
-                      ],
-                      "stroke": {
-                        "thickness": 1.0,
-                        "fill": [
-                          {
-                            "type": "solid",
-                            "color": "#D4D4D8"
-                          }
-                        ]
-                      },
+                      "height": "fit_content",
+                      "layout": "vertical",
+                      "gap": 8.0,
                       "children": [
                         {
                           "type": "text",
-                          "id": "n175",
+                          "id": "n630",
                           "name": "t",
                           "width": "fit_content",
                           "height": "fit_content",
-                          "content": "2",
-                          "fontSize": 20.0,
+                          "content": "Kitchen",
+                          "fontSize": 14.0,
                           "fontWeight": 600,
                           "fill": [
                             {
@@ -3524,27 +4668,474 @@
                               "color": "#111111"
                             }
                           ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "n631",
+                          "name": "f",
+                          "width": "fill_container",
+                          "height": "fit_content",
+                          "layout": "horizontal",
+                          "gap": 12.0,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "n632",
+                              "name": "f",
+                              "width": 48.0,
+                              "height": 48.0,
+                              "layout": "horizontal",
+                              "padding": [
+                                0.0,
+                                0.0
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "cornerRadius": 12.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F4F4F5"
+                                }
+                              ],
+                              "stroke": {
+                                "thickness": 1.0,
+                                "fill": [
+                                  {
+                                    "type": "solid",
+                                    "color": "#D4D4D8"
+                                  }
+                                ]
+                              },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n633",
+                                  "name": "t",
+                                  "width": "fit_content",
+                                  "height": "fit_content",
+                                  "content": "−",
+                                  "fontSize": 20.0,
+                                  "fontWeight": 400,
+                                  "fill": [
+                                    {
+                                      "type": "solid",
+                                      "color": "#111111"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "n634",
+                              "name": "f",
+                              "width": "fit_content",
+                              "height": 48.0,
+                              "layout": "horizontal",
+                              "padding": [
+                                0.0,
+                                16.0
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "cornerRadius": 12.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F4F4F5"
+                                }
+                              ],
+                              "stroke": {
+                                "thickness": 1.0,
+                                "fill": [
+                                  {
+                                    "type": "solid",
+                                    "color": "#D4D4D8"
+                                  }
+                                ]
+                              },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n635",
+                                  "name": "t",
+                                  "width": "fit_content",
+                                  "height": "fit_content",
+                                  "content": "2",
+                                  "fontSize": 20.0,
+                                  "fontWeight": 600,
+                                  "fill": [
+                                    {
+                                      "type": "solid",
+                                      "color": "#111111"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "n636",
+                              "name": "f",
+                              "width": 48.0,
+                              "height": 48.0,
+                              "layout": "horizontal",
+                              "padding": [
+                                0.0,
+                                0.0
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "cornerRadius": 12.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F4F4F5"
+                                }
+                              ],
+                              "stroke": {
+                                "thickness": 1.0,
+                                "fill": [
+                                  {
+                                    "type": "solid",
+                                    "color": "#D4D4D8"
+                                  }
+                                ]
+                              },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n637",
+                                  "name": "t",
+                                  "width": "fit_content",
+                                  "height": "fit_content",
+                                  "content": "+",
+                                  "fontSize": 20.0,
+                                  "fontWeight": 400,
+                                  "fill": [
+                                    {
+                                      "type": "solid",
+                                      "color": "#111111"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
                         }
                       ]
                     },
                     {
-                      "type": "frame",
-                      "id": "n176",
-                      "name": "f",
-                      "width": 48.0,
-                      "height": 48.0,
-                      "layout": "horizontal",
-                      "padding": [
-                        0.0,
-                        0.0
-                      ],
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "cornerRadius": 12.0,
+                      "type": "text",
+                      "id": "n638",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Remove",
+                      "fontSize": 13.0,
+                      "fontWeight": 400,
                       "fill": [
                         {
                           "type": "solid",
-                          "color": "#F4F4F5"
+                          "color": "#6B7280"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n639",
+                  "name": "stockrow",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "layout": "horizontal",
+                  "gap": 8.0,
+                  "padding": [
+                    12.0,
+                    16.0
+                  ],
+                  "alignItems": "center",
+                  "justifyContent": "space_between",
+                  "cornerRadius": 12.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#D4D4D8"
+                      }
+                    ]
+                  },
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n640",
+                      "name": "f",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "layout": "vertical",
+                      "gap": 8.0,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n641",
+                          "name": "t",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "Pantry",
+                          "fontSize": 14.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#111111"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "n642",
+                          "name": "f",
+                          "width": "fill_container",
+                          "height": "fit_content",
+                          "layout": "horizontal",
+                          "gap": 12.0,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "n643",
+                              "name": "f",
+                              "width": 48.0,
+                              "height": 48.0,
+                              "layout": "horizontal",
+                              "padding": [
+                                0.0,
+                                0.0
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "cornerRadius": 12.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F4F4F5"
+                                }
+                              ],
+                              "stroke": {
+                                "thickness": 1.0,
+                                "fill": [
+                                  {
+                                    "type": "solid",
+                                    "color": "#D4D4D8"
+                                  }
+                                ]
+                              },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n644",
+                                  "name": "t",
+                                  "width": "fit_content",
+                                  "height": "fit_content",
+                                  "content": "−",
+                                  "fontSize": 20.0,
+                                  "fontWeight": 400,
+                                  "fill": [
+                                    {
+                                      "type": "solid",
+                                      "color": "#111111"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "n645",
+                              "name": "f",
+                              "width": "fit_content",
+                              "height": 48.0,
+                              "layout": "horizontal",
+                              "padding": [
+                                0.0,
+                                16.0
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "cornerRadius": 12.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F4F4F5"
+                                }
+                              ],
+                              "stroke": {
+                                "thickness": 1.0,
+                                "fill": [
+                                  {
+                                    "type": "solid",
+                                    "color": "#D4D4D8"
+                                  }
+                                ]
+                              },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n646",
+                                  "name": "t",
+                                  "width": "fit_content",
+                                  "height": "fit_content",
+                                  "content": "4",
+                                  "fontSize": 20.0,
+                                  "fontWeight": 600,
+                                  "fill": [
+                                    {
+                                      "type": "solid",
+                                      "color": "#111111"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "n647",
+                              "name": "f",
+                              "width": 48.0,
+                              "height": 48.0,
+                              "layout": "horizontal",
+                              "padding": [
+                                0.0,
+                                0.0
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "cornerRadius": 12.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F4F4F5"
+                                }
+                              ],
+                              "stroke": {
+                                "thickness": 1.0,
+                                "fill": [
+                                  {
+                                    "type": "solid",
+                                    "color": "#D4D4D8"
+                                  }
+                                ]
+                              },
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n648",
+                                  "name": "t",
+                                  "width": "fit_content",
+                                  "height": "fit_content",
+                                  "content": "+",
+                                  "fontSize": 20.0,
+                                  "fontWeight": 400,
+                                  "fill": [
+                                    {
+                                      "type": "solid",
+                                      "color": "#111111"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "n649",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Remove",
+                      "fontSize": 13.0,
+                      "fontWeight": 400,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#6B7280"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n650",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Blank or 0 drops the row — nothing is stored.",
+                  "fontSize": 13.0,
+                  "fontWeight": 400,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n651",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Add location",
+                  "fontSize": 14.0,
+                  "fontWeight": 600,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n652",
+                  "name": "f",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "layout": "horizontal",
+                  "gap": 8.0,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n659",
+                      "name": "f",
+                      "width": "fit_content",
+                      "height": 40.0,
+                      "layout": "horizontal",
+                      "padding": [
+                        0.0,
+                        14.0
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 20.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#FFFFFF"
                         }
                       ],
                       "stroke": {
@@ -3552,19 +5143,67 @@
                         "fill": [
                           {
                             "type": "solid",
-                            "color": "#D4D4D8"
+                            "color": "#A1A1AA"
                           }
                         ]
                       },
                       "children": [
                         {
                           "type": "text",
-                          "id": "n177",
+                          "id": "n660",
                           "name": "t",
                           "width": "fit_content",
                           "height": "fit_content",
-                          "content": "+",
-                          "fontSize": 20.0,
+                          "content": "Garage",
+                          "fontSize": 13.0,
+                          "fontWeight": 400,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#111111"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n661",
+                      "name": "f",
+                      "width": "fit_content",
+                      "height": 40.0,
+                      "layout": "horizontal",
+                      "padding": [
+                        0.0,
+                        14.0
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 20.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#FFFFFF"
+                        }
+                      ],
+                      "stroke": {
+                        "thickness": 1.0,
+                        "fill": [
+                          {
+                            "type": "solid",
+                            "color": "#A1A1AA"
+                          }
+                        ]
+                      },
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n662",
+                          "name": "t",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "New location",
+                          "fontSize": 13.0,
                           "fontWeight": 400,
                           "fill": [
                             {
@@ -3576,29 +5215,14 @@
                       ]
                     }
                   ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "n178",
-              "name": "f",
-              "width": "fill_container",
-              "height": "fit_content",
-              "layout": "vertical",
-              "gap": 6.0,
-              "padding": [
-                8.0,
-                16.0
-              ],
-              "children": [
+                },
                 {
                   "type": "text",
-                  "id": "n179",
+                  "id": "n663",
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Location",
+                  "content": "Location name",
                   "fontSize": 14.0,
                   "fontWeight": 600,
                   "fill": [
@@ -3610,12 +5234,12 @@
                 },
                 {
                   "type": "text_input",
-                  "id": "n180",
+                  "id": "n664",
                   "name": "c",
                   "width": "fill_container",
                   "height": 52.0,
-                  "placeholder": "",
-                  "value": "Kitchen",
+                  "placeholder": "e.g. Fridge, Pantry, House 1",
+                  "value": "",
                   "fill": [
                     {
                       "type": "solid",
@@ -3632,29 +5256,14 @@
                     ]
                   },
                   "cornerRadius": 12.0
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "n181",
-              "name": "f",
-              "width": "fill_container",
-              "height": "fit_content",
-              "layout": "vertical",
-              "gap": 6.0,
-              "padding": [
-                8.0,
-                16.0
-              ],
-              "children": [
+                },
                 {
                   "type": "text",
-                  "id": "n182",
+                  "id": "n665",
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Category (optional)",
+                  "content": "Address (optional)",
                   "fontSize": 14.0,
                   "fontWeight": 600,
                   "fill": [
@@ -3666,12 +5275,12 @@
                 },
                 {
                   "type": "text_input",
-                  "id": "n183",
+                  "id": "n666",
                   "name": "c",
                   "width": "fill_container",
                   "height": 52.0,
-                  "placeholder": "",
-                  "value": "Grains",
+                  "placeholder": "e.g. Main Street 12",
+                  "value": "",
                   "fill": [
                     {
                       "type": "solid",
@@ -3688,6 +5297,212 @@
                     ]
                   },
                   "cornerRadius": 12.0
+                },
+                {
+                  "type": "text",
+                  "id": "n667",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Categories (optional)",
+                  "fontSize": 14.0,
+                  "fontWeight": 600,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n668",
+                  "name": "f",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "layout": "horizontal",
+                  "gap": 8.0,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n675",
+                      "name": "c",
+                      "width": "fit_content",
+                      "height": 44.0,
+                      "layout": "horizontal",
+                      "gap": 0.0,
+                      "padding": [
+                        0.0,
+                        16.0
+                      ],
+                      "alignItems": "center",
+                      "cornerRadius": 22.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#18181B"
+                        }
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n676",
+                          "name": "t",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "Grains ×",
+                          "fontSize": 14.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#FFFFFF"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n677",
+                      "name": "f",
+                      "width": "fit_content",
+                      "height": 40.0,
+                      "layout": "horizontal",
+                      "padding": [
+                        0.0,
+                        14.0
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 20.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#FFFFFF"
+                        }
+                      ],
+                      "stroke": {
+                        "thickness": 1.0,
+                        "fill": [
+                          {
+                            "type": "solid",
+                            "color": "#A1A1AA"
+                          }
+                        ]
+                      },
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n678",
+                          "name": "t",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "Oils",
+                          "fontSize": 13.0,
+                          "fontWeight": 400,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#111111"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n679",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Matches any selected category.",
+                  "fontSize": 13.0,
+                  "fontWeight": 400,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n680",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "New category",
+                  "fontSize": 14.0,
+                  "fontWeight": 600,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text_input",
+                  "id": "n681",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": 52.0,
+                  "placeholder": "e.g. Grains",
+                  "value": "",
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#D4D4D8"
+                      }
+                    ]
+                  },
+                  "cornerRadius": 12.0
+                },
+                {
+                  "type": "frame",
+                  "id": "n682",
+                  "name": "f",
+                  "width": "fill_container",
+                  "height": 52.0,
+                  "layout": "horizontal",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "cornerRadius": 12.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#18181B"
+                    }
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n683",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Add category",
+                      "fontSize": 16.0,
+                      "fontWeight": 600,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
                 }
               ]
             },
@@ -3817,7 +5632,7 @@
                   "name": "t",
                   "width": "fill_container",
                   "height": "fit_content",
-                  "content": "⑤ Tap row → edit · Delete → B9 confirm · no separate read-only detail screen",
+                  "content": "⑤ Tap row → edit · Delete → B9 confirm · no separate read-only detail screen · 0 rows dropped",
                   "fontSize": 12.0,
                   "fontWeight": 400,
                   "fill": [
@@ -3851,7 +5666,7 @@
           "id": "n192",
           "name": "B7 Validation",
           "x": 100.0,
-          "y": 2600.0,
+          "y": 2900.0,
           "width": 390.0,
           "height": "fit_content",
           "layout": "vertical",
@@ -3912,9 +5727,9 @@
                   "type": "text",
                   "id": "n195",
                   "name": "t",
-                  "width": "fit_content",
+                  "width": "fill_container",
                   "height": "fit_content",
-                  "content": "Inline errors · focus to first error · Save idle except while submitting",
+                  "content": "Inline errors · focus to first error · Save enabled except while submitting",
                   "fontSize": 12.0,
                   "fontWeight": 400,
                   "fill": [
@@ -4051,7 +5866,7 @@
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Name is required.",
+                  "content": "Enter a name.",
                   "fontSize": 13.0,
                   "fontWeight": 600,
                   "fill": [
@@ -4082,7 +5897,7 @@
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Quantity",
+                  "content": "Pantry · quantity",
                   "fontSize": 14.0,
                   "fontWeight": 600,
                   "fill": [
@@ -4123,7 +5938,7 @@
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Enter a whole number from 0 to 999999.",
+                  "content": "Enter a whole number of 0 or more.",
                   "fontSize": 13.0,
                   "fontWeight": 600,
                   "fill": [
@@ -4154,7 +5969,7 @@
                   "name": "t",
                   "width": "fit_content",
                   "height": "fit_content",
-                  "content": "Location",
+                  "content": "Add location",
                   "fontSize": 14.0,
                   "fontWeight": 600,
                   "fill": [
@@ -4188,6 +6003,22 @@
                     ]
                   },
                   "cornerRadius": 12.0
+                },
+                {
+                  "type": "text",
+                  "id": "n684",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "This location is already added.",
+                  "fontSize": 13.0,
+                  "fontWeight": 600,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#B3261E"
+                    }
+                  ]
                 }
               ]
             },
@@ -4245,7 +6076,7 @@
                   "name": "t",
                   "width": "fill_container",
                   "height": "fit_content",
-                  "content": "Limits shown are proposed and pending approval (ROADMAP gates).",
+                  "content": "Bounds are implemented (name ≤120, quantity ≤999999, location/category ≤80).",
                   "fontSize": 13.0,
                   "fontWeight": 400,
                   "fill": [
@@ -4327,7 +6158,7 @@
           "id": "n217",
           "name": "B8 DB error",
           "x": 640.0,
-          "y": 2600.0,
+          "y": 2900.0,
           "width": 390.0,
           "height": "fit_content",
           "layout": "vertical",
@@ -4608,7 +6439,7 @@
           "id": "n231",
           "name": "B9 Confirms",
           "x": 370.0,
-          "y": 3400.0,
+          "y": 3600.0,
           "width": 390.0,
           "height": "fit_content",
           "layout": "vertical",
@@ -4793,7 +6624,7 @@
                       "name": "t",
                       "width": "fill_container",
                       "height": "fit_content",
-                      "content": "This cannot be undone. There is no trash in the MVP (proposed, pending approval).",
+                      "content": "This action cannot be undone.",
                       "fontSize": 14.0,
                       "fontWeight": 400,
                       "fill": [
@@ -4951,7 +6782,7 @@
                       "name": "t",
                       "width": "fill_container",
                       "height": "fit_content",
-                      "content": "You have unsaved edits. Back never silently loses input.",
+                      "content": "Your unsaved changes will be lost.",
                       "fontSize": 14.0,
                       "fontWeight": 400,
                       "fill": [
@@ -5099,7 +6930,7 @@
                   "name": "t",
                   "width": "fill_container",
                   "height": "fit_content",
-                  "content": "Delete from B6 · Discard from Back on B5/B6",
+                  "content": "Delete from B6 · Discard from Back on B5/B6 · location & category deletes state impact on B10",
                   "fontSize": 12.0,
                   "fontWeight": 400,
                   "fill": [
@@ -5186,7 +7017,7 @@
               "id": "n346",
               "name": "Lane heading - SEARCH EMPTY",
               "x": 100.0,
-              "y": 996.0,
+              "y": 1112.0,
               "width": 200.0,
               "height": 22.0,
               "content": "SEARCH / EMPTY",
@@ -5202,7 +7033,7 @@
               "id": "n347",
               "name": "Lane heading - FIRST RUN",
               "x": 640.0,
-              "y": 996.0,
+              "y": 1112.0,
               "width": 220.0,
               "height": 22.0,
               "content": "FIRST RUN lands here",
@@ -5234,7 +7065,7 @@
               "id": "n349",
               "name": "Lane heading - ERROR STATES",
               "x": 262.0,
-              "y": 2576.0,
+              "y": 2876.0,
               "width": 200.0,
               "height": 22.0,
               "content": "ERROR STATES",
@@ -5250,7 +7081,7 @@
               "id": "n350",
               "name": "Lane heading - CONFIRM",
               "x": 370.0,
-              "y": 3376.0,
+              "y": 3576.0,
               "width": 200.0,
               "height": 22.0,
               "content": "CONFIRM",
@@ -5282,10 +7113,26 @@
               "id": "n373",
               "name": "Footnote - B9 confirm cancel",
               "x": 370.0,
-              "y": 3962.0,
+              "y": 4160.0,
               "width": 560.0,
               "height": 26.0,
               "content": "B9: Confirm → list · Cancel → back (dismiss never deletes, never loses input)",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "n770",
+              "name": "Lane heading - ENTRY",
+              "x": 100.0,
+              "y": 4251.0,
+              "width": 200.0,
+              "height": 22.0,
+              "content": "MANAGE",
               "fill": [
                 {
                   "type": "solid",
@@ -5321,7 +7168,7 @@
               "id": "n353",
               "name": "Note - type search",
               "x": 156.0,
-              "y": 948.0,
+              "y": 1088.0,
               "width": 90.0,
               "height": 24.0,
               "content": "type search",
@@ -5336,8 +7183,8 @@
               "type": "text",
               "id": "n354",
               "name": "Note - type search iOS",
-              "x": 600.0,
-              "y": 916.0,
+              "x": 500.0,
+              "y": 1088.0,
               "width": 160.0,
               "height": 24.0,
               "content": "type search (iOS)",
@@ -5353,7 +7200,7 @@
               "id": "n355",
               "name": "Note - Clear to B1",
               "x": 308.0,
-              "y": 880.0,
+              "y": 1088.0,
               "width": 130.0,
               "height": 24.0,
               "content": "Clear → B1",
@@ -5368,8 +7215,8 @@
               "type": "text",
               "id": "n356",
               "name": "Note - Add quinoa to B5",
-              "x": 258.0,
-              "y": 1560.0,
+              "x": 100.0,
+              "y": 1618.0,
               "width": 190.0,
               "height": 24.0,
               "content": "Add “quinoa” → B5",
@@ -5433,7 +7280,7 @@
               "id": "n360",
               "name": "Note - first-run CTA to B5",
               "x": 300.0,
-              "y": 1600.0,
+              "y": 1652.0,
               "width": 200.0,
               "height": 24.0,
               "content": "first-run CTA → B5",
@@ -5464,7 +7311,7 @@
               "type": "text",
               "id": "n362",
               "name": "Note - dirty Back to B9",
-              "x": 358.0,
+              "x": 500.0,
               "y": 2476.0,
               "width": 175.0,
               "height": 24.0,
@@ -5496,7 +7343,7 @@
               "type": "text",
               "id": "n364",
               "name": "Note - invalid submit",
-              "x": 440.0,
+              "x": 500.0,
               "y": 2538.0,
               "width": 150.0,
               "height": 24.0,
@@ -5512,8 +7359,8 @@
               "type": "text",
               "id": "n365",
               "name": "Note - invalid",
-              "x": 258.0,
-              "y": 2478.0,
+              "x": 100.0,
+              "y": 2876.0,
               "width": 170.0,
               "height": 24.0,
               "content": "invalid",
@@ -5635,6 +7482,22 @@
                   "color": "#FFFFFF"
                 }
               ]
+            },
+            {
+              "type": "text",
+              "id": "n771",
+              "name": "Note - Add to B5",
+              "x": 500.0,
+              "y": 904.0,
+              "width": 180.0,
+              "height": 26.0,
+              "content": "manage → B10",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ]
             }
           ]
         },
@@ -5717,9 +7580,9 @@
                   "id": "n403",
                   "name": "Connector V r04 x249 y807",
                   "x": 249.0,
-                  "y": 807.0,
+                  "y": 1090.0,
                   "width": 3.0,
-                  "height": 208.0,
+                  "height": 46.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -5733,9 +7596,9 @@
                   "id": "n404",
                   "name": "Connector V r05 x749 y785",
                   "x": 749.0,
-                  "y": 785.0,
+                  "y": 1081.0,
                   "width": 3.0,
-                  "height": 125.0,
+                  "height": 55.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -5749,7 +7612,7 @@
                   "id": "n405",
                   "name": "Connector H r06 x350 y909",
                   "x": 350.0,
-                  "y": 909.0,
+                  "y": 1090.0,
                   "width": 400.0,
                   "height": 3.0,
                   "fill": [
@@ -5765,9 +7628,9 @@
                   "id": "n406",
                   "name": "Connector V r07 x349 y910",
                   "x": 349.0,
-                  "y": 910.0,
+                  "y": 1090.0,
                   "width": 3.0,
-                  "height": 105.0,
+                  "height": 46.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -5781,9 +7644,9 @@
                   "id": "n407",
                   "name": "Connector V r08 x299 y812",
                   "x": 299.0,
-                  "y": 812.0,
+                  "y": 1090.0,
                   "width": 3.0,
-                  "height": 203.0,
+                  "height": 46.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -5797,9 +7660,9 @@
                   "id": "n408",
                   "name": "Connector V r09 x249 y1486",
                   "x": 249.0,
-                  "y": 1486.0,
+                  "y": 1605.0,
                   "width": 3.0,
-                  "height": 209.0,
+                  "height": 95.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -6021,9 +7884,9 @@
                   "id": "n422",
                   "name": "Connector V r23 x349 y2415",
                   "x": 349.0,
-                  "y": 2415.0,
+                  "y": 2804.0,
                   "width": 3.0,
-                  "height": 85.0,
+                  "height": 96.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -6037,7 +7900,7 @@
                   "id": "n423",
                   "name": "Connector H r24 x350 y2499",
                   "x": 350.0,
-                  "y": 2499.0,
+                  "y": 2845.0,
                   "width": 210.0,
                   "height": 3.0,
                   "fill": [
@@ -6053,9 +7916,9 @@
                   "id": "n424",
                   "name": "Connector V r25 x559 y2500",
                   "x": 559.0,
-                  "y": 2500.0,
+                  "y": 2845.0,
                   "width": 3.0,
-                  "height": 900.0,
+                  "height": 755.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -6068,10 +7931,10 @@
                   "type": "rectangle",
                   "id": "n425",
                   "name": "Connector V r26 x699 y2355 h115",
-                  "x": 699.0,
-                  "y": 2355.0,
+                  "x": 604.0,
+                  "y": 2825.0,
                   "width": 3.0,
-                  "height": 115.0,
+                  "height": 485.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -6085,7 +7948,7 @@
                   "id": "n426",
                   "name": "Connector H r27 x600 y2469",
                   "x": 600.0,
-                  "y": 2469.0,
+                  "y": 3310.0,
                   "width": 100.0,
                   "height": 3.0,
                   "fill": [
@@ -6101,9 +7964,9 @@
                   "id": "n427",
                   "name": "Connector V r28 x599 y2470",
                   "x": 599.0,
-                  "y": 2470.0,
+                  "y": 3310.0,
                   "width": 3.0,
-                  "height": 930.0,
+                  "height": 290.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -6116,10 +7979,10 @@
                   "type": "rectangle",
                   "id": "n428",
                   "name": "Connector V r29 x699 y2355 h175",
-                  "x": 699.0,
-                  "y": 2355.0,
+                  "x": 620.0,
+                  "y": 2825.0,
                   "width": 3.0,
-                  "height": 175.0,
+                  "height": 485.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -6133,7 +7996,7 @@
                   "id": "n429",
                   "name": "Connector H r30 x430 y2529",
                   "x": 430.0,
-                  "y": 2529.0,
+                  "y": 2870.0,
                   "width": 270.0,
                   "height": 3.0,
                   "fill": [
@@ -6149,9 +8012,9 @@
                   "id": "n430",
                   "name": "Connector V r31 x429 y2530",
                   "x": 429.0,
-                  "y": 2530.0,
+                  "y": 2870.0,
                   "width": 3.0,
-                  "height": 65.0,
+                  "height": 30.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -6165,9 +8028,9 @@
                   "id": "n431",
                   "name": "Connector V r32 x249 y2415",
                   "x": 249.0,
-                  "y": 2415.0,
+                  "y": 2804.0,
                   "width": 3.0,
-                  "height": 180.0,
+                  "height": 96.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -6181,9 +8044,9 @@
                   "id": "n432",
                   "name": "Connector V r33 x169 y2415",
                   "x": 169.0,
-                  "y": 2415.0,
+                  "y": 2804.0,
                   "width": 3.0,
-                  "height": 180.0,
+                  "height": 96.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -6197,9 +8060,9 @@
                   "id": "n433",
                   "name": "Connector V r34 x834 y2994",
                   "x": 834.0,
-                  "y": 2994.0,
+                  "y": 3306.0,
                   "width": 3.0,
-                  "height": 106.0,
+                  "height": 86.0,
                   "fill": [
                     {
                       "type": "solid",
@@ -6213,7 +8076,7 @@
                   "id": "n434",
                   "name": "Connector H r35 x835 y3099",
                   "x": 835.0,
-                  "y": 3099.0,
+                  "y": 3392.0,
                   "width": 240.0,
                   "height": 3.0,
                   "fill": [
@@ -6351,6 +8214,53 @@
                     }
                   ],
                   "children": []
+                },
+                {
+                  "type": "rectangle",
+                  "id": "n772",
+                  "name": "Connector V r-new x54 y1949",
+                  "x": 54.0,
+                  "y": 1949.0,
+                  "width": 3.0,
+                  "height": 2326.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#D4D4D8"
+                    }
+                  ],
+                  "children": []
+                },
+                {
+                  "type": "rectangle",
+                  "id": "n773",
+                  "name": "Connector H r-new x55 y4200",
+                  "x": 55.0,
+                  "y": 4335.0,
+                  "width": 45.0,
+                  "height": 3.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#D4D4D8"
+                    }
+                  ],
+                  "children": []
+                },
+                {
+                  "type": "rectangle",
+                  "id": "n774",
+                  "name": "Connector H r-new x490 manage",
+                  "x": 490.0,
+                  "y": 934.0,
+                  "width": 45.0,
+                  "height": 3.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#D4D4D8"
+                    }
+                  ]
                 }
               ]
             },
@@ -6466,7 +8376,7 @@
                   "id": "n449",
                   "name": "Arrowhead ra030 x238 y1008",
                   "x": 238.0,
-                  "y": 1008.0,
+                  "y": 1085.0,
                   "rotation": 45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6483,7 +8393,7 @@
                   "id": "n450",
                   "name": "Arrowhead ra031 x248 y1008",
                   "x": 248.0,
-                  "y": 1008.0,
+                  "y": 1085.0,
                   "rotation": -45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6500,7 +8410,7 @@
                   "id": "n451",
                   "name": "Arrowhead ra040 x338 y1008",
                   "x": 338.0,
-                  "y": 1008.0,
+                  "y": 1085.0,
                   "rotation": 45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6517,7 +8427,7 @@
                   "id": "n452",
                   "name": "Arrowhead ra041 x348 y1008",
                   "x": 348.0,
-                  "y": 1008.0,
+                  "y": 1085.0,
                   "rotation": -45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6534,7 +8444,7 @@
                   "id": "n453",
                   "name": "Arrowhead ra050 x288 y817",
                   "x": 288.0,
-                  "y": 817.0,
+                  "y": 1085.0,
                   "rotation": -45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6551,7 +8461,7 @@
                   "id": "n454",
                   "name": "Arrowhead ra051 x298 y817",
                   "x": 298.0,
-                  "y": 817.0,
+                  "y": 1085.0,
                   "rotation": 45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6772,7 +8682,7 @@
                   "id": "n467",
                   "name": "Arrowhead ra120 x548 y3393",
                   "x": 548.0,
-                  "y": 3393.0,
+                  "y": 3593.0,
                   "rotation": 45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6789,7 +8699,7 @@
                   "id": "n468",
                   "name": "Arrowhead ra121 x558 y3393",
                   "x": 558.0,
-                  "y": 3393.0,
+                  "y": 3593.0,
                   "rotation": -45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6806,7 +8716,7 @@
                   "id": "n469",
                   "name": "Arrowhead ra130 x588 y3393",
                   "x": 588.0,
-                  "y": 3393.0,
+                  "y": 3593.0,
                   "rotation": 45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6823,7 +8733,7 @@
                   "id": "n470",
                   "name": "Arrowhead ra131 x598 y3393",
                   "x": 598.0,
-                  "y": 3393.0,
+                  "y": 3593.0,
                   "rotation": -45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6840,7 +8750,7 @@
                   "id": "n471",
                   "name": "Arrowhead ra140 x418 y2588",
                   "x": 418.0,
-                  "y": 2588.0,
+                  "y": 2893.0,
                   "rotation": 45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6857,7 +8767,7 @@
                   "id": "n472",
                   "name": "Arrowhead ra141 x428 y2588",
                   "x": 428.0,
-                  "y": 2588.0,
+                  "y": 2893.0,
                   "rotation": -45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6874,7 +8784,7 @@
                   "id": "n473",
                   "name": "Arrowhead ra150 x238 y2588",
                   "x": 238.0,
-                  "y": 2588.0,
+                  "y": 2893.0,
                   "rotation": 45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6891,7 +8801,7 @@
                   "id": "n474",
                   "name": "Arrowhead ra151 x248 y2588",
                   "x": 248.0,
-                  "y": 2588.0,
+                  "y": 2893.0,
                   "rotation": -45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6908,7 +8818,7 @@
                   "id": "n475",
                   "name": "Arrowhead ra160 x158 y2420",
                   "x": 158.0,
-                  "y": 2420.0,
+                  "y": 2799.0,
                   "rotation": -45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -6925,7 +8835,7 @@
                   "id": "n476",
                   "name": "Arrowhead ra161 x168 y2420",
                   "x": 168.0,
-                  "y": 2420.0,
+                  "y": 2799.0,
                   "rotation": 45.0,
                   "width": 14.0,
                   "height": 3.0,
@@ -7039,6 +8949,1086 @@
                   ]
                 }
               ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "n685",
+          "name": "B10 Manage entities",
+          "x": 100.0,
+          "y": 4275.0,
+          "width": 390.0,
+          "height": "fit_content",
+          "layout": "vertical",
+          "clipContent": true,
+          "cornerRadius": 24.0,
+          "fill": [
+            {
+              "type": "solid",
+              "color": "#FFFFFF"
+            }
+          ],
+          "stroke": {
+            "thickness": 2.0,
+            "fill": [
+              {
+                "type": "solid",
+                "color": "#3F3F46"
+              }
+            ]
+          },
+          "children": [
+            {
+              "type": "frame",
+              "id": "n711",
+              "name": "tag",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 2.0,
+              "padding": [
+                8.0,
+                16.0
+              ],
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#18181B"
+                }
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n712",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "B10 · Locations and categories",
+                  "fontSize": 14.0,
+                  "fontWeight": 700,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n713",
+                  "name": "s",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Create · rename · delete · every delete states its impact",
+                  "fontSize": 12.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#D4D4D8"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n714",
+              "name": "f",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "horizontal",
+              "gap": 8.0,
+              "padding": [
+                12.0,
+                16.0
+              ],
+              "alignItems": "center",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": {
+                  "bottom": 1.0
+                },
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#E4E4E7"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n715",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "‹ Back",
+                  "fontSize": 16.0,
+                  "fontWeight": 400,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#3F3F46"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n716",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Locations and categories",
+                  "fontSize": 20.0,
+                  "fontWeight": 700,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n775",
+              "name": "f",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 6.0,
+              "padding": [
+                8.0,
+                16.0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n717",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "LOCATIONS",
+                  "fontSize": 13.0,
+                  "fontWeight": 700,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#3F3F46"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n718",
+              "name": "row",
+              "width": "fill_container",
+              "height": 64.0,
+              "layout": "horizontal",
+              "gap": 8.0,
+              "padding": [
+                0.0,
+                16.0
+              ],
+              "alignItems": "center",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": {
+                  "bottom": 1.0
+                },
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#E4E4E7"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n719",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Kitchen",
+                  "fontSize": 16.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n720",
+                  "name": "actions",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "layout": "horizontal",
+                  "gap": 16.0,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n721",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Rename",
+                      "fontSize": 14.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#111111"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "n722",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Delete",
+                      "fontSize": 14.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#111111"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "justifyContent": "space_between"
+            },
+            {
+              "type": "frame",
+              "id": "n723",
+              "name": "row",
+              "width": "fill_container",
+              "height": 64.0,
+              "layout": "horizontal",
+              "gap": 8.0,
+              "padding": [
+                0.0,
+                16.0
+              ],
+              "alignItems": "center",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": {
+                  "bottom": 1.0
+                },
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#E4E4E7"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n724",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Pantry",
+                  "fontSize": 16.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n725",
+                  "name": "actions",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "layout": "horizontal",
+                  "gap": 16.0,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n726",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Rename",
+                      "fontSize": 14.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#111111"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "n727",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Delete",
+                      "fontSize": 14.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#111111"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "justifyContent": "space_between"
+            },
+            {
+              "type": "frame",
+              "id": "n778",
+              "name": "f",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 6.0,
+              "padding": [
+                8.0,
+                16.0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n728",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Location name",
+                  "fontSize": 14.0,
+                  "fontWeight": 600,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text_input",
+                  "id": "n729",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": 52.0,
+                  "placeholder": "e.g. Fridge, Pantry, House 1",
+                  "value": "",
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#D4D4D8"
+                      }
+                    ]
+                  },
+                  "cornerRadius": 12.0
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n781",
+              "name": "f",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 6.0,
+              "padding": [
+                8.0,
+                16.0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n730",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Address (optional)",
+                  "fontSize": 14.0,
+                  "fontWeight": 600,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text_input",
+                  "id": "n731",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": 52.0,
+                  "placeholder": "e.g. Main Street 12",
+                  "value": "",
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#D4D4D8"
+                      }
+                    ]
+                  },
+                  "cornerRadius": 12.0
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n784",
+              "name": "f",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 6.0,
+              "padding": [
+                8.0,
+                16.0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "n734",
+                  "name": "f",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "layout": "horizontal",
+                  "gap": 12.0,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n732",
+                      "name": "f",
+                      "width": "fit_content",
+                      "height": 48.0,
+                      "layout": "horizontal",
+                      "padding": [
+                        0.0,
+                        20.0
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 12.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#18181B"
+                        }
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n733",
+                          "name": "t",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "Add location",
+                          "fontSize": 15.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#FFFFFF"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n787",
+              "name": "f",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 6.0,
+              "padding": [
+                8.0,
+                16.0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n739",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "CATEGORIES",
+                  "fontSize": 13.0,
+                  "fontWeight": 700,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#3F3F46"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n740",
+              "name": "row",
+              "width": "fill_container",
+              "height": 64.0,
+              "layout": "horizontal",
+              "gap": 8.0,
+              "padding": [
+                0.0,
+                16.0
+              ],
+              "alignItems": "center",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": {
+                  "bottom": 1.0
+                },
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#E4E4E7"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n741",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Grains",
+                  "fontSize": 16.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n742",
+                  "name": "actions",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "layout": "horizontal",
+                  "gap": 16.0,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n743",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Rename",
+                      "fontSize": 14.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#111111"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "n744",
+                      "name": "t",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "Delete",
+                      "fontSize": 14.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#111111"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "justifyContent": "space_between"
+            },
+            {
+              "type": "frame",
+              "id": "n790",
+              "name": "f",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 6.0,
+              "padding": [
+                8.0,
+                16.0
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n745",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Category name",
+                  "fontSize": 14.0,
+                  "fontWeight": 600,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text_input",
+                  "id": "n746",
+                  "name": "c",
+                  "width": "fill_container",
+                  "height": 52.0,
+                  "placeholder": "e.g. Grains",
+                  "value": "",
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#D4D4D8"
+                      }
+                    ]
+                  },
+                  "cornerRadius": 12.0
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n793",
+              "name": "f",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 6.0,
+              "padding": [
+                8.0,
+                16.0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "n749",
+                  "name": "f",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "layout": "horizontal",
+                  "gap": 12.0,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n747",
+                      "name": "f",
+                      "width": "fit_content",
+                      "height": 48.0,
+                      "layout": "horizontal",
+                      "padding": [
+                        0.0,
+                        20.0
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 12.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#18181B"
+                        }
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n748",
+                          "name": "t",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "Add category",
+                          "fontSize": 15.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#FFFFFF"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n754",
+              "name": "f",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 8.0,
+              "padding": 20.0,
+              "cornerRadius": 16.0,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "stroke": {
+                "thickness": 1.0,
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#D4D4D8"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n755",
+                  "name": "t",
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "content": "Delete \"Pantry\"?",
+                  "fontSize": 19.0,
+                  "fontWeight": 700,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#111111"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n762",
+                  "name": "t",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "3 stock entries will be removed.",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n763",
+                  "name": "t",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "The items themselves will NOT be deleted.",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "n764",
+                  "name": "t",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "1 item will be left with no stock and stay visible as out of stock.",
+                  "fontSize": 14.0,
+                  "fontWeight": 400,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#6B7280"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n757",
+                  "name": "f",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "layout": "horizontal",
+                  "gap": 12.0,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n758",
+                      "name": "f",
+                      "width": "fit_content",
+                      "height": 48.0,
+                      "layout": "horizontal",
+                      "padding": [
+                        0.0,
+                        20.0
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 12.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#FFFFFF"
+                        }
+                      ],
+                      "stroke": {
+                        "thickness": 1.0,
+                        "fill": [
+                          {
+                            "type": "solid",
+                            "color": "#A1A1AA"
+                          }
+                        ]
+                      },
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n759",
+                          "name": "t",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "Cancel",
+                          "fontSize": 15.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#111111"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n760",
+                      "name": "f",
+                      "width": "fit_content",
+                      "height": 48.0,
+                      "layout": "horizontal",
+                      "padding": [
+                        0.0,
+                        20.0
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 12.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#B3261E"
+                        }
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n761",
+                          "name": "t",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "Delete",
+                          "fontSize": 15.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#FFFFFF"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n765",
+              "name": "f",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 4.0,
+              "padding": [
+                12.0,
+                16.0
+              ],
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#F4F4F5"
+                }
+              ],
+              "stroke": {
+                "thickness": {
+                  "top": 1.0
+                },
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#E4E4E7"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n766",
+                  "name": "t",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "Delete \"Grains\"?: This will remove the association from 4 items. Items stay — only the link goes.",
+                  "fontSize": 12.0,
+                  "fontWeight": 400,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#3F3F46"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n767",
+              "name": "f",
+              "width": "fill_container",
+              "height": "fit_content",
+              "layout": "vertical",
+              "gap": 4.0,
+              "padding": [
+                12.0,
+                16.0
+              ],
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#F4F4F5"
+                }
+              ],
+              "stroke": {
+                "thickness": {
+                  "top": 1.0
+                },
+                "fill": [
+                  {
+                    "type": "solid",
+                    "color": "#E4E4E7"
+                  }
+                ]
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "id": "n768",
+                  "name": "t",
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "content": "⑩ List → Manage locations and categories → B10 · rename inline · location delete cascades stock, never items · no trash",
+                  "fontSize": 12.0,
+                  "fontWeight": 400,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#3F3F46"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n769",
+              "name": "f",
+              "width": "fill_container",
+              "height": 20.0,
+              "layout": "vertical",
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#FFFFFF"
+                }
+              ],
+              "children": []
             }
           ]
         }

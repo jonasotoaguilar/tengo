@@ -23,27 +23,37 @@
 # flow creates, never from a seed it must remember.
 # Every selector and every expected string below is DERIVED from the component
 # source, never guessed:
+# - fail-closed gate: `crud-fixture-screen` (:244), `crud-fixture-status` (:249),
+#   `crud-fixture-reset` (:251): src/dev/NativeCrudFixtureScreen.tsx:244,249,251
+# - deterministic start: `inventory-add-empty` (:652), `inventory-empty-title`
+#   (:643): src/components/InventoryList.tsx:652,643
 # - `inventory-manage-entities` (reach the screen): src/components/InventoryList.tsx:591
-# - `entity-manager`, `entity-manager-title`, `entity-close`: src/components/EntityManager.tsx:300,315,323
-# - `entity-locations-empty` / `entity-categories-empty`: src/components/EntityManager.tsx:339,469
+# - `entity-manager`, `entity-manager-title`, `entity-close`: src/components/EntityManager.tsx:322,337,343
+# - `entity-locations-empty` / `entity-categories-empty`: src/components/EntityManager.tsx:361,490
 # - `entity-new-location-name`, `entity-new-location-address`, `entity-add-location`:
-#   src/components/EntityManager.tsx:399,417,441
-# - `entity-new-category-name`, `entity-add-category`: src/components/EntityManager.tsx:528,552
+#   src/components/EntityManager.tsx:421,439,462
+# - `entity-new-category-name`, `entity-add-category`: src/components/EntityManager.tsx:550,573
 # - `entity-location-1`, `entity-location-1-rename`, `entity-location-1-delete`:
-#   src/components/EntityManager.tsx:348,358,378 (id-suffixed per row)
-# - `entity-category-1`, `entity-category-1-delete`: src/components/EntityManager.tsx:477,505
-# - `entity-edit-dialog`, `entity-edit-title`, `entity-edit-name`, `entity-edit-save`,
-#   `entity-edit-cancel`: src/components/EntityManager.tsx:577,590,595,636,620
+#   src/components/EntityManager.tsx:370,380,400 (id-suffixed per row)
+# - `entity-category-1`, `entity-category-1-rename`, `entity-category-1-delete`:
+#   src/components/EntityManager.tsx:499,509,529 (id-suffixed per row)
+# - `entity-edit-dialog`, `entity-edit-title`, `entity-edit-name`, `entity-edit-cancel`,
+#   `entity-edit-save`: src/components/EntityManager.tsx:599,611,617,642,657
 # - `entity-delete-dialog`, `entity-delete-title`, `entity-delete-message`,
-#   `entity-delete-confirm`: src/components/EntityManager.tsx:678,691,686,705
-# - location impact copy (R3+R6: how many existencias, items NOT deleted, how many
-#   left visible as sin stock): src/i18n/resources.ts:126-127 (en) / 251-252 (es)
-# - category impact copy (R4: only the association removed, items NOT deleted):
-#   src/i18n/resources.ts:129-130 (en) / 253-254 (es)
-# - rename dialog title naming the entity: src/i18n/resources.ts:124 (en) / 250 (es)
+#   `entity-delete-cancel`, `entity-delete-confirm`:
+#   src/components/EntityManager.tsx:692,702,708,714,726
+# - location impact copy, singular/plural pair per clause with the caller choosing
+#   (R3+R6: how many stock entries/existencias, items NOT deleted, how many left
+#   visible as out of stock / sin stock): stock
+#   src/i18n/resources.ts:126-128 (en) / 259-260 (es), survive :129 / :261,
+#   unstocked :130-133 (en) / 262-265 (es)
+# - category impact copy, singular/plural pair with the caller choosing (R4: only the
+#   association removed, items NOT deleted):
+#   src/i18n/resources.ts:134-138 (en) / 266-269 (es)
+# - rename dialog title naming the entity: src/i18n/resources.ts:124 (en) / 257 (es)
 # - RENAME THROUGH THE ROW: the location row renders its name as a plain Text
-#   with NO testID (src/components/EntityManager.tsx:353, inside the
-#   `entity-location-1` row at :348), so the flow asserts the visible text
+#   with NO testID (src/components/EntityManager.tsx:375, inside the
+#   `entity-location-1` row at :370), so the flow asserts the visible text
 #   `Entity Loc R` directly instead of editing `src/`; the dialog-title
 #   re-read is kept as a second proof, not the only one.
 # - NONZERO DELETE IMPACT (R3+R6): the flow closes the manager, creates one
@@ -53,22 +63,24 @@
 #   - `item-form-screen`: src/screens/ItemFormScreen.tsx:106
 #   - `item-form/name`: src/components/ItemForm.tsx:489
 #   - `item-form/location-1` (existing-location chip): src/components/ItemForm.tsx:752
-#   - `item-form/stock-0/quantity` (row quantity field): src/components/ItemForm.tsx:546,664
+#   - `item-form/stock-0/quantity` (row quantity field): constant at
+#     src/components/ItemForm.tsx:546, used at :662
 #   - `item-form/save`: src/components/ItemForm.tsx:924
 #   - impact semantics (`stockRows` = COUNT(*) of stock at the location,
 #     `unstockedItems` = items with stock ONLY there):
 #     src/inventory/entityRepository.ts:244-272. With one item holding its
 #     only stock row at location 1: stockRows=1, unstockedItems=1, so the
-#     confirmation must read `1 stock entries / 1 existencias`, state the
-#     items are NOT deleted, and report `1 items / 1 artículos` left as
+#     confirmation must read `1 stock entry / 1 existencia`, state the
+#     items are NOT deleted, and report `1 item / 1 artículo` left as
 #     out of stock / sin stock.
 #   - survival (R6): the general view shows the total (0 after the delete)
 #     with the sin-stock group name as the location line:
-#     src/components/InventoryList.tsx:377-389; `inventory-row-1-quantity`
-#     (:417), `inventory-row-1-exhausted` (:425),
+#     src/components/InventoryList.tsx:377-389; `inventory-row-1` (rowId :374),
+#     `inventory-row-1-quantity` (:417), `inventory-row-1-exhausted` (:425),
 #     `inventory-row-1-location` (:433), sin-stock group
 #     `inventory-group-nostock` (:327-329, header :357); the pre-delete
-#     breakdown `Entity Loc R 3` comes from :217.
+#     breakdown `Entity Loc R 3` comes from :217 (`breakdownText`); the total
+#     `inventory-count` is at :492.
 #   - the category delete stays 0-impact: the created item takes NO
 #     categories, so `categoryDeleteImpact` is deterministically 0.
 # Below-the-fold taps carry an explicit `scrollUntilVisible` on the same stable
@@ -310,7 +322,7 @@ appId: com.tengo.app
     text: '.*Entity Loc R.*'
 - assertVisible:
     id: 'entity-delete-message'
-    text: '.*1 (stock entries|existencias).*'
+    text: '.*(1 stock entry will be removed|Se eliminará 1 existencia).*'
 - assertVisible:
     id: 'entity-delete-message'
     text: '.*(NOT be deleted|NO se eliminarán).*'
@@ -319,7 +331,7 @@ appId: com.tengo.app
     text: '.*(out of stock|sin stock).*'
 - assertVisible:
     id: 'entity-delete-message'
-    text: '.*1 (items|artículos).*'
+    text: '.*(1 item will be left|1 artículo quedará).*'
 - tapOn:
     id: 'entity-delete-confirm'
 - assertNotVisible:

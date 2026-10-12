@@ -287,13 +287,34 @@ export default function EntityManager({
     deleting === null
       ? ''
       : deleting.kind === 'location'
-        ? t('entityManagerLocationDeleteMessage', {
-            stockRows: (deleting.impact as LocationDeleteImpact).stockRows,
-            unstocked: (deleting.impact as LocationDeleteImpact).unstockedItems,
-          })
-        : t('entityManagerCategoryDeleteMessage', {
-            items: (deleting.impact as CategoryDeleteImpact).items,
-          });
+        ? [
+            t(
+              (deleting.impact as LocationDeleteImpact).stockRows === 1
+                ? 'entityManagerLocationDeleteStockOne'
+                : 'entityManagerLocationDeleteStockOther',
+              {
+                count: (deleting.impact as LocationDeleteImpact).stockRows,
+              },
+            ),
+            t('entityManagerDeleteItemsSurvive'),
+            t(
+              (deleting.impact as LocationDeleteImpact).unstockedItems === 1
+                ? 'entityManagerLocationDeleteUnstockedOne'
+                : 'entityManagerLocationDeleteUnstockedOther',
+              {
+                count: (deleting.impact as LocationDeleteImpact).unstockedItems,
+              },
+            ),
+          ].join(' ')
+        : [
+            t(
+              (deleting.impact as CategoryDeleteImpact).items === 1
+                ? 'entityManagerCategoryDeleteItemsOne'
+                : 'entityManagerCategoryDeleteItemsOther',
+              { count: (deleting.impact as CategoryDeleteImpact).items },
+            ),
+            t('entityManagerDeleteItemsSurvive'),
+          ].join(' ');
 
   return (
     <View

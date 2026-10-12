@@ -123,11 +123,19 @@ export const en = {
   entityManagerEmptyCategories: 'No categories yet.',
   entityManagerEditTitle: 'Rename "{{name}}"?',
   entityManagerLocationDeleteTitle: 'Delete "{{name}}"?',
-  entityManagerLocationDeleteMessage:
-    '{{stockRows}} stock entries will be removed. The items themselves will NOT be deleted. {{unstocked}} items will be left with no stock and stay visible as out of stock.',
+  entityManagerLocationDeleteStockOne: '{{count}} stock entry will be removed.',
+  entityManagerLocationDeleteStockOther:
+    '{{count}} stock entries will be removed.',
+  entityManagerDeleteItemsSurvive: 'The items themselves will NOT be deleted.',
+  entityManagerLocationDeleteUnstockedOne:
+    '{{count}} item will be left with no stock and stay visible as out of stock.',
+  entityManagerLocationDeleteUnstockedOther:
+    '{{count}} items will be left with no stock and stay visible as out of stock.',
   entityManagerCategoryDeleteTitle: 'Delete "{{name}}"?',
-  entityManagerCategoryDeleteMessage:
-    'This will remove the association from {{items}} items. The items themselves will NOT be deleted.',
+  entityManagerCategoryDeleteItemsOne:
+    'This will remove the association from {{count}} item.',
+  entityManagerCategoryDeleteItemsOther:
+    'This will remove the association from {{count}} items.',
 };
 
 export const es: typeof en = {
@@ -248,9 +256,16 @@ export const es: typeof en = {
   entityManagerEmptyCategories: 'Aún no hay categorías.',
   entityManagerEditTitle: '¿Cambiar el nombre de "{{name}}"?',
   entityManagerLocationDeleteTitle: '¿Eliminar "{{name}}"?',
-  entityManagerLocationDeleteMessage:
-    'Se eliminarán {{stockRows}} existencias. Los artículos NO se eliminarán. {{unstocked}} artículos quedarán sin stock y seguirán visibles como sin stock.',
+  entityManagerLocationDeleteStockOne: 'Se eliminará {{count}} existencia.',
+  entityManagerLocationDeleteStockOther: 'Se eliminarán {{count}} existencias.',
+  entityManagerDeleteItemsSurvive: 'Los artículos NO se eliminarán.',
+  entityManagerLocationDeleteUnstockedOne:
+    '{{count}} artículo quedará sin stock y seguirá visible como sin stock.',
+  entityManagerLocationDeleteUnstockedOther:
+    '{{count}} artículos quedarán sin stock y seguirán visibles como sin stock.',
   entityManagerCategoryDeleteTitle: '¿Eliminar "{{name}}"?',
-  entityManagerCategoryDeleteMessage:
-    'Se quitará la asociación de {{items}} artículos. Los artículos NO se eliminarán.',
+  entityManagerCategoryDeleteItemsOne:
+    'Se quitará la asociación de {{count}} artículo.',
+  entityManagerCategoryDeleteItemsOther:
+    'Se quitará la asociación de {{count}} artículos.',
 };

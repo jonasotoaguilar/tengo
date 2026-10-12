@@ -362,9 +362,13 @@ approved tokens.
   items renders its first viewport in under 1s on a mid-range
   device; search filters within 200ms per keystroke; single-row
   writes complete within 100ms. Measured on emulator-5554 with 500
-  seeded items: first-viewport data readiness 162.6ms, search per
-  keystroke 174.6ms (an earlier run missed the budget at 200.8ms
-  before the read-shape change), single-row write 32.7ms. Images
+  seeded items: first-viewport data readiness 222.4ms, single-row
+  write 44.9ms, and search per keystroke 292.6ms, which MISSES the
+  200ms budget on the catalog-and-stock model and is recorded as a
+  FAIL in docs/testing.md rather than waived. The earlier passes —
+  200.8ms before the read-shape change, then 174.6ms after it — are
+  the history that makes this regression visible, and they are not
+  the current figure. Images
   are out of scope, so no image budget applies.
 
 ## 8. Distribution stage (no store release proposed)

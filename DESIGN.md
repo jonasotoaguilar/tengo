@@ -366,8 +366,9 @@ resolve per theme:
 - Text contrast meets the 4.5:1 floor and control boundaries the 3:1
   floor, implemented in `src/theme/tokens.ts` and guarded by
   `__tests__/contrast-floor.test.tsx`; ROADMAP.md section 7 performance
-  budgets were measured on a device pass (search 174.6ms against the
-  200ms per-keystroke budget).
+  budgets were measured on a device pass, where search measured 292.6ms
+  against the 200ms per-keystroke budget on the catalog-and-stock model
+  and is recorded as a FAIL (it was 174.6ms before the model change).
 
 ## 10. Roadmap cross-links and unknowns
 

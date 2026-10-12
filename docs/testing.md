@@ -424,18 +424,32 @@ next tap after every `inputText`, and no waits on a transient state that a
 tap-settle window hides. It does not verify selectors against component
 source.
 
-Run artifacts: by default Maestro writes each run's `commands.json`,
-`manifest.json`, screenshots and `maestro.log` into
-`$HOME/.maestro/tests/<timestamp>/<flow>/`, outside the repository, and its
-default report format (`NOOP`) emits no JUnit file at all.
-`scripts/run-maestro.sh <flow.yaml>` keeps them inside the repository: it
-passes `--test-output-dir` pointing at `.maestro/runs/<timestamp>_<flow>/`
-(gitignored, evidence rather than source) and adds
-`--format JUNIT --output <run>/junit.xml`. Set `MAESTRO_REVERSE=1` to also
-apply `adb reverse tcp:8082 tcp:8083`, the known trap where the app's
-`debug_http_host` preference points at 8082 while the guarded CRUD bundle is
-served on 8083; `MAESTRO_RUN_DIR` overrides the artifact root and
-`MAESTRO_SERIAL` the device serial (default `emulator-5554`).
+Run artifacts: in this project's observed runs Maestro writes each run's
+`commands.json`, `manifest.json`, screenshots and `maestro.log` into
+`$HOME/.maestro/tests/<timestamp>/<flow>/`, outside the repository — that
+path comes from the runs themselves, not from `maestro test --help`, which
+documents `--test-output-dir` but states no default. The CLI default report
+format is `NOOP`, so no JUnit file is emitted unless one is asked for.
+`scripts/run-maestro.sh <flow.yaml>` keeps the artifacts inside the
+repository: it passes `--test-output-dir` pointing at
+`.maestro/runs/<timestamp>_<flow>/` (gitignored, evidence rather than source,
+with the flow name sanitized so a space in a file name cannot reach the path)
+and adds `--format JUNIT --output <run>/junit.xml`, then prints the artifact
+directory and the report's `tests/failures/errors` counts. It refuses the
+flags it pins (`--test-output-dir`, `--format`, `--output`, `--udid`) instead
+of letting a caller silently split the artifacts, and outside a git
+repository it refuses to guess the root unless `MAESTRO_RUN_DIR` is set.
+Set `MAESTRO_REVERSE=1` to also apply `adb reverse tcp:8082 tcp:8083`, the
+known trap where the app's `debug_http_host` preference points at 8082 while
+the guarded CRUD bundle is served on 8083; that reverse is removed again when
+the script exits, and a `tcp:8082` rule that existed beforehand is not
+restored — the script says so and prints the command to re-add it.
+`MAESTRO_RUN_DIR` overrides the artifact root and `MAESTRO_SERIAL` the device
+serial (default `emulator-5554`).
+`__tests__/run-maestro-wrapper.test.js` drives the wrapper with a fake
+`maestro` and a fake `adb` on PATH, so its fail-closed paths, flag refusal,
+exit-code propagation, quoted flow paths and the reverse add/remove are
+covered without a device.
 
 ### M4 form flow — observed Android result
 

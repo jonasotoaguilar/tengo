@@ -77,9 +77,20 @@ appId: com.tengo.app
 - assertVisible:
     id: 'inventory-row-1-location'
     text: '.*Küche 2.*'
-# Sin-stock rows render the explicit exhausted label with total 0.
+# Sin-stock rows render the explicit exhausted label with total 0. Row 2 lives
+# in the trailing sin-stock group below the fold (general view groups by
+# first stock row: Küche rows 1+4, Garage row 3, sin-stock rows 2+5), so
+# scroll it into view first, then restore the header before continuing.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-2-exhausted'
+    direction: DOWN
 - assertVisible:
     id: 'inventory-row-2-exhausted'
+- scrollUntilVisible:
+    element:
+      id: 'inventory-search'
+    direction: UP
 - scrollUntilVisible:
     element:
       id: 'inventory-row-4'
@@ -94,8 +105,21 @@ appId: com.tengo.app
 - assertVisible:
     id: 'inventory-row-4-location'
     text: '.*Küche 1.*Garage 5.*'
+# Group headers below the fold are virtualized: scroll each into view
+# before asserting it (observed: the Garage header unmounted at the fold
+# edge fails a bare assert nondeterministically).
+- scrollUntilVisible:
+    element:
+      id: 'inventory-group-2'
+    direction: DOWN
 - assertVisible:
     id: 'inventory-group-2'
+# The Garage header sits below the fold under the Küche rows; scroll its
+# count into view before asserting it (same virtualization as row 2).
+- scrollUntilVisible:
+    element:
+      id: 'inventory-group-2-count'
+    direction: DOWN
 - assertVisible:
     id: 'inventory-group-2-count'
     text: '^1 (item|artículo)$'
@@ -139,6 +163,12 @@ appId: com.tengo.app
     direction: UP
 - assertVisible:
     id: 'inventory-row-1'
+# The café filter leaves rows 1+2+5: row 1 in Küche, rows 2+5 in the
+# trailing sin-stock group below the fold, so scroll down to each.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-2'
+    direction: DOWN
 - assertVisible:
     id: 'inventory-row-2'
 - scrollUntilVisible:
@@ -232,6 +262,12 @@ appId: com.tengo.app
     id: 'inventory-row-2'
 - assertVisible:
     id: 'inventory-row-3'
+# Rows run 2,3,4 ascending in the single Garage group; row 4 sits below
+# the fold once rows 2+3 fill the viewport, so scroll it into view.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-4'
+    direction: DOWN
 - assertVisible:
     id: 'inventory-row-4'
 - assertVisible:

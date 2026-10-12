@@ -62,6 +62,13 @@ appId: com.tengo.app
 # isolated database, so `inventory-row-1` below is the created row.
 - tapOn:
     id: 'crud-fixture-reset'
+# At 2.0x the empty-state call to action sits below the fold (the v4 empty
+# state carries the manage-entities entry above it), so scroll it into view
+# before waiting on it; on an already-visible element this is a no-op.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-add-empty'
+    direction: DOWN
 - extendedWaitUntil:
     visible:
       id: 'inventory-add-empty'
@@ -133,6 +140,12 @@ appId: com.tengo.app
 - assertVisible:
     id: 'inventory-row-1-quantity'
     text: '^(Quantity|Cantidad)\s+3$'
+# After Save the list can rest mid-content at 2.0x (count + search above
+# the fold), so scroll the header count back into view before asserting it.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-count'
+    direction: UP
 - assertVisible:
     id: 'inventory-count'
     text: '^1 (of|de) 1$'
@@ -202,6 +215,12 @@ appId: com.tengo.app
     timeout: 30000
 - assertVisible:
     id: 'inventory-row-1'
+# At 2.0x the tall row mounts its container before the quantity line is
+# visible after a cold relaunch, so scroll the quantity into view first.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-1-quantity'
+    direction: DOWN
 - assertVisible:
     id: 'inventory-row-1-quantity'
     text: '^(Quantity|Cantidad)\s+5$'

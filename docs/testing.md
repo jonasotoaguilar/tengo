@@ -295,6 +295,50 @@ second device — and the search figure is still the data-layer cost
 only, with UI render on top not separately instrumented. The seed figure
 is unbudgeted setup and varies run to run.
 
+#### Recorded M5 manual-device passes (emulator-5554, dark / large text / keyboard / locale)
+
+One combined session on the CRUD fixture bundle (the same
+`InventoryContainer`/`ItemForm` components as production, isolated
+`m1-fixture-crud-m4.db`; `tengo.db` never created). Each state was read
+from screenshots viewed as images plus UI dumps, not inferred.
+
+- Dark mode (`adb shell cmd uimode night yes`, cold relaunch): true
+dark background with all production text legible; the selected filter
+chip, the Add FAB, the transient notice and the exhausted highlight
+all render and stay visible. The DEV fixture header keeps its
+hardcoded light background — DEV-only surface, not production UI.
+- Large text (`settings put system font_scale 1.5`, then `2.0`, cold
+relaunch each): no overlap and no clipped content. The
+location/category chip rows live in a horizontal `ScrollView`, so
+off-screen chips are reached by swipe rather than truncated; group
+header plus count fits; the Add FAB stays fully visible. In the form
+at 2.0x the title plus Close fits, the Name/Quantity rows fit
+(steppers side by side), the location chips wrap to full-width lines
+and stay readable, and the form scrolls (Categories below the fold).
+- Keyboard (`2.0x`, Name field tapped): Gboard opens with the focused
+field visible and the form scrolls under it. Save renders fully
+(168x103, centred, above the gesture bar) after hiding the keyboard
+and one scroll; its reachability is independently proven by the M4
+flow's Save taps at 1.0x.
+- Safe area: the FAB and Save both render above the gesture handle in
+the screenshots; nothing is hidden behind system UI.
+- Locale, es: `settings put system system_locales` was proven
+INEFFECTIVE on this emulator (`persist.sys.locale` stayed empty and
+the app correctly stayed English), so that attempt is an invalid test,
+not a product finding. With per-app locales
+(`cmd locale set-app-locales com.tengo.app --locales es-ES`, cold
+relaunch) the list renders fully Spanish ("Buscar por nombre",
+"Ubicaciones", "Todas", "Categorías") with zero English strings:
+detection proven. With `--locales fr-FR` it renders fully English with
+zero Spanish: fallback proven. Locales cleared afterwards.
+- m4-forms under dark + 2.0x: the flow reaches `item-form/save` and
+then FAILS with "Element not found", because at 2.0x Save sits below
+the fold and Maestro does not auto-scroll. The product Save is proven
+reachable by scroll (screenshot above), so this is a flow limitation,
+not a product regression; `m4-forms.yaml` is left untouched as the
+1.0x regression proof. A large-text variant would need explicit scroll
+steps before below-the-fold taps.
+
 Run the isolated Android form flow with the guarded CRUD bundle:
 
 ```sh

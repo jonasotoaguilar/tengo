@@ -53,7 +53,7 @@
 # - rename dialog title naming the entity: src/i18n/resources.ts:124 (en) / 257 (es)
 # - RENAME THROUGH THE ROW: the location row renders its name as a plain Text
 #   with NO testID (src/components/EntityManager.tsx:374, inside the
-#   `entity-location-1` row at :370), so the flow asserts the visible text
+#   `entity-location-1` row at :369), so the flow asserts the visible text
 #   `Entity Loc R` directly instead of editing `src/`; the dialog-title
 #   re-read is kept as a second proof, not the only one.
 # - NONZERO DELETE IMPACT (R3+R6): the flow closes the manager, creates one
@@ -168,7 +168,7 @@ appId: com.tengo.app
     id: 'entity-category-1'
 # 4. Rename the location: the dialog names the entity, the new name is proven
 # through the ROW's rendered text (the row name is a plain Text with no
-# testID, EntityManager.tsx:353, so visible text is asserted instead of a
+# testID, EntityManager.tsx:374, so visible text is asserted instead of a
 # src/ edit) and secondarily by re-opening the dialog and reading its title
 # (a directly-addressable Text).
 - scrollUntilVisible:

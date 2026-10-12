@@ -21,6 +21,7 @@ import {
   updateLocation,
 } from '../src/inventory/entityRepository';
 import {
+  EntityConflictError,
   EntityNotFoundError,
   LocationInUseError,
   StorageError,
@@ -170,9 +171,13 @@ describe('location repository', () => {
     expect(created.name).toBe(evil);
     expect(f.locations.size).toBe(1);
     // User text travels only in bound params, never in the SQL source.
+    // The fixed S11 uniqueness scan carries no params by construction, so
+    // the placeholder assertion applies only to calls that bind values.
     for (const call of f.calls) {
       expect(call.source).not.toContain(evil);
-      expect(call.source).toMatch(/\?/);
+      if (call.params.length > 0) {
+        expect(call.source).toMatch(/\?/);
+      }
     }
     expect(await listLocations(f.db)).toHaveLength(1);
   });
@@ -333,5 +338,96 @@ describe('category repository', () => {
     expect(await createCategory(f.db, { name: 'c'.repeat(80) })).toMatchObject({
       name: 'c'.repeat(80),
     });
+  });
+});
+
+describe('entity name uniqueness (S11)', () => {
+  test('S11 RED: duplicate location insert is rejected with a typed conflict', async () => {
+    const f = makeFakeDb();
+    await createLocation(f.db, { name: 'Pantry' });
+    const failure = (await createLocation(f.db, { name: 'Pantry' }).catch(
+      (e: unknown) => e,
+    )) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'location' });
+    expect(await listLocations(f.db)).toHaveLength(1);
+  });
+
+  test('S11 RED: duplicate category insert is rejected with a typed conflict', async () => {
+    const f = makeFakeDb();
+    await createCategory(f.db, { name: 'Grains' });
+    await expect(
+      createCategory(f.db, { name: 'Grains' }),
+    ).rejects.toMatchObject({ code: 'conflict', entity: 'category' });
+    expect(await listCategories(f.db)).toHaveLength(1);
+  });
+
+  test('S11 RED: uniqueness ignores case, accents, and surrounding whitespace', async () => {
+    const f = makeFakeDb();
+    await createLocation(f.db, { name: 'Café' });
+    await expect(createLocation(f.db, { name: 'cafe' })).rejects.toBeInstanceOf(
+      EntityConflictError,
+    );
+    await expect(
+      createLocation(f.db, { name: '  CAFÉ  ' }),
+    ).rejects.toBeInstanceOf(EntityConflictError);
+    await createCategory(f.db, { name: 'Pantry' });
+    await expect(
+      createCategory(f.db, { name: ' pantry ' }),
+    ).rejects.toBeInstanceOf(EntityConflictError);
+    expect(await listLocations(f.db)).toHaveLength(1);
+    expect(await listCategories(f.db)).toHaveLength(1);
+  });
+
+  test('S11 RED: conflicting update is rejected and the stored row survives', async () => {
+    const f = makeFakeDb();
+    const a = await createLocation(f.db, { name: 'Kitchen' });
+    const b = await createLocation(f.db, { name: 'Pantry' });
+    await expect(
+      updateLocation(f.db, b.id, { name: ' kitchen ' }),
+    ).rejects.toMatchObject({ code: 'conflict', entity: 'location' });
+    expect((await getLocation(f.db, b.id)).name).toBe('Pantry');
+    const c = await createCategory(f.db, { name: 'Bulk' });
+    const d = await createCategory(f.db, { name: 'Grains' });
+    await expect(
+      updateCategory(f.db, d.id, { name: 'BULK' }),
+    ).rejects.toMatchObject({
+      code: 'conflict',
+      entity: 'category',
+    });
+    expect((await getCategory(f.db, d.id)).name).toBe('Grains');
+    expect(a.id).toBeGreaterThan(0);
+    expect(c.id).toBeGreaterThan(0);
+  });
+
+  test('S11 RED: renaming a row to its own name (trim/case variant) succeeds', async () => {
+    const f = makeFakeDb();
+    const loc = await createLocation(f.db, { name: 'Pantry' });
+    const updated = await updateLocation(f.db, loc.id, { name: '  pantry  ' });
+    expect(updated.name).toBe('pantry');
+    const cat = await createCategory(f.db, { name: 'Grains' });
+    await expect(
+      updateCategory(f.db, cat.id, { name: 'grains' }),
+    ).resolves.toMatchObject({ id: cat.id });
+  });
+
+  test('S11 RED: a raw UNIQUE driver failure maps to conflict without leaking SQL text', async () => {
+    const f = makeFakeDb();
+    await createLocation(f.db, { name: 'Pantry' });
+    // Simulate the race the domain pre-check cannot see: the pre-check
+    // scan reports no rows while the driver rejects the write.
+    f.db.getAllAsync = jest.fn(async () => []);
+    f.failNextWith(
+      new Error(
+        'SQLite error: UNIQUE constraint failed: locations.name (code 2067 SQLITE_CONSTRAINT_UNIQUE)',
+      ),
+    );
+    const failure = (await createLocation(f.db, { name: 'Pantry' }).catch(
+      (e: unknown) => e,
+    )) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'location' });
+    expect(failure.message).not.toContain('UNIQUE');
+    expect(failure.message).not.toContain('SQLITE_CONSTRAINT');
   });
 });

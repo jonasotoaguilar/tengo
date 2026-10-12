@@ -18,8 +18,17 @@
  * touch `created_at`. Location deletes stay `RESTRICT` (see
  * `./entityRepository`); deleting an item cascades only to its join rows.
  */
-import type { RepositoryDb, TransactionHandle } from './database';
-import { EntityNotFoundError, StorageError } from './errors';
+import type { RepositoryDb, RunResult, TransactionHandle } from './database';
+import {
+  assertUniqueCategoryName,
+  assertUniqueLocationName,
+} from './entityRepository';
+import {
+  EntityConflictError,
+  EntityNotFoundError,
+  isUniqueConstraintViolation,
+  StorageError,
+} from './errors';
 import type {
   Category,
   ItemDetail,
@@ -29,6 +38,7 @@ import type {
 } from './types';
 import {
   normalizeName,
+  normalizeNameKey,
   normalizeQuantity,
   ValidationError,
   validateCategoryInput,
@@ -79,8 +89,9 @@ function toCategory(row: CategoryRow): Category {
 /**
  * Run a multi-statement mutation inside the driver's exclusive
  * transaction, issuing every query on the scoped `txn` handle. Typed
- * domain errors pass through; driver failures become generic `storage`
- * errors that never embed raw SQLite text. Missing hook fails closed.
+ * domain errors (including S11 `conflict`) pass through; driver failures
+ * become generic `storage` errors that never embed raw SQLite text.
+ * Missing hook fails closed.
  */
 async function runExclusive(
   db: RepositoryDb,
@@ -98,7 +109,11 @@ async function runExclusive(
   try {
     await exclusive.call(db, task);
   } catch (error) {
-    if (error instanceof EntityNotFoundError || error instanceof StorageError) {
+    if (
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
       throw error;
     }
     throw new StorageError('item', operation, error);
@@ -304,8 +319,11 @@ function validateDraftInput(draft: ItemDraftInput): NormalizedDraft {
 /**
  * Resolve a validated draft inside the transaction: reuse the existing
  * location/categories after confirming they exist, or insert the new
- * ones. Every statement runs on `txn`, so any failure rolls back with
- * no orphan item, location, or category rows.
+ * ones. New names pass the S11 domain uniqueness check first (against
+ * stored rows and, for categories, against each other); the v3 `UNIQUE`
+ * index stays the authority for races and its violations map to the same
+ * typed `conflict`. Every statement runs on `txn`, so any failure rolls
+ * back with no orphan item, location, or category rows.
  */
 async function resolveDraftRelations(
   txn: TransactionHandle,
@@ -316,10 +334,20 @@ async function resolveDraftRelations(
     await requireLocation(txn, draft.locationId);
     locationId = draft.locationId;
   } else if (draft.newLocation !== null) {
-    const created = await txn.runAsync(
-      'INSERT INTO locations (name, address) VALUES (?, ?)',
-      [draft.newLocation.name, draft.newLocation.address],
-    );
+    const newLocationName = draft.newLocation.name;
+    await assertUniqueLocationName(txn, newLocationName);
+    let created: RunResult;
+    try {
+      created = await txn.runAsync(
+        'INSERT INTO locations (name, address) VALUES (?, ?)',
+        [draft.newLocation.name, draft.newLocation.address],
+      );
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) {
+        throw new EntityConflictError('location', newLocationName);
+      }
+      throw error;
+    }
     locationId = created.lastInsertRowId;
     await requireLocation(txn, locationId);
   } else {
@@ -334,11 +362,25 @@ async function resolveDraftRelations(
     await requireCategory(txn, categoryId);
     categoryIds.push(categoryId);
   }
+  const seenNewCategoryKeys = new Set<string>();
   for (const category of draft.newCategories) {
-    const created = await txn.runAsync(
-      'INSERT INTO categories (name) VALUES (?)',
-      [category.name],
-    );
+    await assertUniqueCategoryName(txn, category.name);
+    const key = normalizeNameKey(category.name);
+    if (seenNewCategoryKeys.has(key)) {
+      throw new EntityConflictError('category', category.name);
+    }
+    seenNewCategoryKeys.add(key);
+    let created: RunResult;
+    try {
+      created = await txn.runAsync('INSERT INTO categories (name) VALUES (?)', [
+        category.name,
+      ]);
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) {
+        throw new EntityConflictError('category', category.name);
+      }
+      throw error;
+    }
     await requireCategory(txn, created.lastInsertRowId);
     categoryIds.push(created.lastInsertRowId);
   }

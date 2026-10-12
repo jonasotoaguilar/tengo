@@ -149,7 +149,7 @@ function makeDeps(store: FakeStore): RepositoryFixtureDeps {
       }
       if (/COUNT.*items/.test(sql)) return { count: store.items.size };
       if (/PRAGMA foreign_keys/.test(sql)) return { foreign_keys: 1 };
-      if (/user_version/.test(sql)) return { user_version: 2 };
+      if (/user_version/.test(sql)) return { user_version: 3 };
       return null;
     }),
     getAllAsync: jest.fn(async (sql: string) => {

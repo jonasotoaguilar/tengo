@@ -382,7 +382,7 @@ describe('CRUD measurement pass (mocked)', () => {
     expect(order).not.toContain('seed-transaction-commit');
     expect(db.withTransactionAsync).not.toHaveBeenCalled();
     expect(order.filter((entry) => entry === 'createItem').length).toBe(501);
-    const viewportIndex = order.findIndex((entry) => entry === 'queryItems:{}');
+    const viewportIndex = order.indexOf('queryItems:{}');
     const searchIndex = order.findIndex((entry) =>
       entry.startsWith('queryItems:{"query"'),
     );
@@ -475,9 +475,7 @@ describe('CRUD measurement pass (mocked)', () => {
     // second pass seeds, so repeated passes cannot duplicate or corrupt.
     const creates = order.filter((entry) => entry === 'createItem');
     expect(creates.length).toBe(2 * 501);
-    const secondPassFirstCreate = secondPassOrder.findIndex(
-      (entry) => entry === 'createItem',
-    );
+    const secondPassFirstCreate = secondPassOrder.indexOf('createItem');
     expect(secondPassFirstCreate).toBeGreaterThan(0);
     const secondPassFirstCleanup = secondPassOrder.findIndex((entry) =>
       entry.startsWith('cleanup:'),

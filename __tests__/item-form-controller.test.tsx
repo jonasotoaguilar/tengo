@@ -19,6 +19,7 @@ import {
 import React from 'react';
 import { Text } from 'react-native';
 import type { RepositoryDb } from '../src/inventory/database';
+import { EntityConflictError } from '../src/inventory/errors';
 import type { ItemDetail } from '../src/inventory/types';
 import type {
   ItemFormControllerOptions,
@@ -1804,5 +1805,61 @@ describe('S10 out-of-range inline errors (current language)', () => {
     expect(result.current.errors.categories).toBe(
       'Enter a category name of 80 characters or fewer.',
     );
+  });
+});
+
+describe('S11 duplicate-name conflict inline errors (current language)', () => {
+  test('RED: conflicting new location shows the location conflict copy', async () => {
+    const repository = makeRepository();
+    repository.createItemFromDraft.mockRejectedValueOnce(
+      new EntityConflictError('location', 'Pantry'),
+    );
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        quantityRaw: '2',
+        location: {
+          kind: 'new',
+          location: { name: 'pantry', address: null },
+        },
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(false);
+    expect(result.current.errors.location).toBe(
+      'A location with this name already exists.',
+    );
+    expect(result.current.errors.form).toBeUndefined();
+  });
+
+  test('RED: conflicting new category shows the category conflict copy', async () => {
+    const repository = makeRepository();
+    repository.createItemFromDraft.mockRejectedValueOnce(
+      new EntityConflictError('category', 'Bulk'),
+    );
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        quantityRaw: '2',
+        location: { kind: 'existing', locationId: 10 },
+        categories: [{ kind: 'new', category: { name: 'bulk' } }],
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(false);
+    expect(result.current.errors.categories).toBe(
+      'A category with this name already exists.',
+    );
+    expect(result.current.errors.form).toBeUndefined();
   });
 });

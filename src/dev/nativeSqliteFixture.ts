@@ -190,7 +190,7 @@ export async function runNativeSqliteFixture(
         .map((r) => r.name)
         .sort()
         .join(',');
-      if (version !== 2) throw new Error(`user_version=${version}, want 2`);
+      if (version !== 3) throw new Error(`user_version=${version}, want 3`);
       for (const t of ['locations', 'categories', 'items', 'item_categories']) {
         if (!tableNames.includes(t)) throw new Error(`missing table ${t}`);
       }
@@ -214,8 +214,8 @@ export async function runNativeSqliteFixture(
           user_version: number;
         } | null
       )?.user_version;
-      if (version !== 2) throw new Error(`user_version=${version}, want 2`);
-      return { name: 'empty v1 migrates to v2', detail: 'user_version=2' };
+      if (version !== 3) throw new Error(`user_version=${version}, want 3`);
+      return { name: 'empty v1 migrates to v3', detail: 'user_version=3' };
     },
     checks,
   );
@@ -367,14 +367,14 @@ export async function runNativeSqliteFixture(
         db,
         "SELECT COUNT(*) AS count FROM locations WHERE name = 'RollbackProbe'",
       );
-      if (version !== 2 || probes !== 0) {
+      if (version !== 3 || probes !== 0) {
         throw new Error(
-          `version=${version} probes=${probes}, want 2/0 rolled back`,
+          `version=${version} probes=${probes}, want 3/0 rolled back`,
         );
       }
       return {
         name: 'forced transaction failure rolls back',
-        detail: 'version=2 probes=0',
+        detail: 'version=3 probes=0',
       };
     },
     checks,

@@ -16,7 +16,11 @@ import type {
   RepositoryDb,
   TransactionHandle,
 } from '../src/inventory/database';
-import { EntityNotFoundError, StorageError } from '../src/inventory/errors';
+import {
+  EntityConflictError,
+  EntityNotFoundError,
+  StorageError,
+} from '../src/inventory/errors';
 import {
   createItem,
   createItemFromDraft,
@@ -172,6 +176,12 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
     }
     if (/FROM items/i.test(source)) {
       return [...items.values()].sort((a, b) => a.id - b.id);
+    }
+    if (/FROM locations/i.test(source)) {
+      return [...locations.values()].sort((a, b) => a.id - b.id);
+    }
+    if (/FROM categories/i.test(source)) {
+      return [...categories.values()].sort((a, b) => a.id - b.id);
     }
     throw new Error(`fake: unhandled scan ${source}`);
   };
@@ -572,6 +582,82 @@ describe('item drafts (form atomic saves)', () => {
     expect(f.items.size).toBe(0);
     expect(f.locations.size).toBe(0);
     expect(f.categories.size).toBe(1);
+  });
+});
+
+describe('draft entity-name conflicts (S11)', () => {
+  test('S11 RED: draft with a duplicate new location name fails typed conflict with no rows', async () => {
+    const f = makeFakeDb();
+    f.seedLocation('Pantry');
+    const before = f.items.size;
+    const failure = (await createItemFromDraft(f.db, {
+      name: 'Rice',
+      quantity: 1,
+      location: { kind: 'new', location: { name: ' pantry ' } },
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'location' });
+    expect(f.locations.size).toBe(1);
+    expect(f.items.size).toBe(before);
+  });
+
+  test('S11 RED: draft with a duplicate new category name fails typed conflict', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    f.seedCategory('café');
+    const failure = (await createItemFromDraft(f.db, {
+      name: 'Rice',
+      quantity: 1,
+      location: { kind: 'existing', locationId: loc },
+      categories: [{ kind: 'new', category: { name: 'CAFÉ' } }],
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'category' });
+    expect(f.categories.size).toBe(1);
+    expect(f.items.size).toBe(0);
+  });
+
+  test('S11 RED: two colliding new categories in one draft fail typed conflict', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    await expect(
+      createItemFromDraft(f.db, {
+        name: 'Rice',
+        quantity: 1,
+        location: { kind: 'existing', locationId: loc },
+        categories: [
+          { kind: 'new', category: { name: 'Bulk' } },
+          { kind: 'new', category: { name: ' bulk ' } },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: 'conflict', entity: 'category' });
+    expect(f.categories.size).toBe(0);
+    expect(f.items.size).toBe(0);
+  });
+
+  test('S11 RED: raw UNIQUE failure on an inline insert maps to conflict without leaking text', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    // Hide the existing rows from the domain pre-check so the driver-level
+    // backstop is exercised, then fail the inline write like the v3 index.
+    const txnGetAll = f.txn.getAllAsync as jest.Mock;
+    txnGetAll.mockImplementationOnce(async () => []);
+    f.failMatchingWith(
+      /INSERT INTO categories/i,
+      new Error(
+        'SQLite error: UNIQUE constraint failed: categories.name (code 2067 SQLITE_CONSTRAINT_UNIQUE)',
+      ),
+    );
+    const failure = (await createItemFromDraft(f.db, {
+      name: 'Rice',
+      quantity: 1,
+      location: { kind: 'existing', locationId: loc },
+      categories: [{ kind: 'new', category: { name: 'Bulk' } }],
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'category' });
+    expect(failure.message).not.toContain('UNIQUE');
+    expect(f.items.size).toBe(0);
   });
 });
 

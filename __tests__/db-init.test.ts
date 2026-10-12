@@ -75,15 +75,19 @@ describe('initializeDatabase (mocked native boundary)', () => {
     expect(SQLite.openDatabaseAsync).toHaveBeenCalledWith(DATABASE_NAME);
   });
 
-  test('fresh database applies migrations 1 then 2 and records version 2', async () => {
+  test('fresh database applies migrations 1 then 2 and 3 and records version 3', async () => {
     const { db, execCalls, getVersion } = makeFakeDb({ version: 0 });
     await initializeDatabase(db);
     expect(execCalls).toContain(MIGRATIONS[1]);
     expect(execCalls).toContain(MIGRATIONS[2]);
+    expect(execCalls).toContain(MIGRATIONS[3]);
     expect(execCalls.indexOf(MIGRATIONS[1])).toBeLessThan(
       execCalls.indexOf(MIGRATIONS[2]),
     );
-    expect(getVersion()).toBe(2);
+    expect(execCalls.indexOf(MIGRATIONS[2])).toBeLessThan(
+      execCalls.indexOf(MIGRATIONS[3]),
+    );
+    expect(getVersion()).toBe(3);
   });
 
   test('foreign keys are enabled first, outside any transaction', async () => {
@@ -97,24 +101,35 @@ describe('initializeDatabase (mocked native boundary)', () => {
   test('each migration and its version update share one transaction', async () => {
     const { db, execCalls, events } = makeFakeDb({ version: 0 });
     await initializeDatabase(db);
-    expect(events).toEqual(['fk-on', 'begin', 'commit', 'begin', 'commit']);
+    expect(events).toEqual([
+      'fk-on',
+      'begin',
+      'commit',
+      'begin',
+      'commit',
+      'begin',
+      'commit',
+    ]);
     expect(execCalls).toEqual([
       expect.stringMatching(/PRAGMA\s+foreign_keys\s*=\s*ON/i),
       MIGRATIONS[1],
       expect.stringMatching(/PRAGMA\s+user_version\s*=\s*1/i),
       MIGRATIONS[2],
       expect.stringMatching(/PRAGMA\s+user_version\s*=\s*2/i),
+      MIGRATIONS[3],
+      expect.stringMatching(/PRAGMA\s+user_version\s*=\s*3/i),
     ]);
   });
 
-  test('empty v1 database migrates cleanly to version 2', async () => {
+  test('empty v1 database migrates cleanly to version 3', async () => {
     const { db, execCalls, getVersion } = makeFakeDb({
       version: 1,
       rowCount: 0,
     });
     await initializeDatabase(db);
     expect(execCalls).toContain(MIGRATIONS[2]);
-    expect(getVersion()).toBe(2);
+    expect(execCalls).toContain(MIGRATIONS[3]);
+    expect(getVersion()).toBe(3);
   });
 
   test('nonempty v1 blocks migration with a typed error and preserves rows/version', async () => {

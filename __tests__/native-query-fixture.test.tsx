@@ -77,7 +77,7 @@ function makeDeps(store: Store, calls: string[]): QueryFixtureDeps {
       if (/fixture_state/.test(sql)) {
         return store.marker ? { value: store.marker } : null;
       }
-      if (/PRAGMA user_version/.test(sql)) return { user_version: 2 };
+      if (/PRAGMA user_version/.test(sql)) return { user_version: 3 };
       if (/PRAGMA foreign_keys/.test(sql)) return { foreign_keys: 1 };
       return null;
     }),

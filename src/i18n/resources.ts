@@ -86,8 +86,12 @@ export const en = {
   itemFormErrorLocationRequired: 'Choose or create a location.',
   itemFormErrorLocationNameTooLong:
     'Enter a location name of 80 characters or fewer.',
+  itemFormErrorLocationNameConflict:
+    'A location with this name already exists.',
   itemFormErrorCategoryNameTooLong:
     'Enter a category name of 80 characters or fewer.',
+  itemFormErrorCategoryNameConflict:
+    'A category with this name already exists.',
   itemFormSaved: 'Item saved.',
   itemFormDeleted: 'Item deleted.',
 };
@@ -175,8 +179,10 @@ export const es: typeof en = {
   itemFormErrorLocationRequired: 'Elige o crea una ubicación.',
   itemFormErrorLocationNameTooLong:
     'Escribe un nombre de ubicación de 80 caracteres o menos.',
+  itemFormErrorLocationNameConflict: 'Ya existe una ubicación con este nombre.',
   itemFormErrorCategoryNameTooLong:
     'Escribe un nombre de categoría de 80 caracteres o menos.',
+  itemFormErrorCategoryNameConflict: 'Ya existe una categoría con este nombre.',
   itemFormSaved: 'Artículo guardado.',
   itemFormDeleted: 'Artículo eliminado.',
 };

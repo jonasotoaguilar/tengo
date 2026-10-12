@@ -8,14 +8,25 @@
  * approved M1 model: `locations` and `categories` entities, `items` with a
  * required `location_id` foreign key plus `quantity`, and an
  * `item_categories` join. Domain CRUD arrives later (M2); no query helpers
- * live here.
+ * live here. Migration 3 (adopted S11) adds one `UNIQUE` expression index
+ * per entity table over the normalized name (`lower(trim(name))`, an
+ * SQLite expression index): the database enforces the case/whitespace part
+ * of name uniqueness. SQLite cannot fold accents, so the accent part is
+ * enforced in the domain layer (`normalizeNameKey`), which runs before
+ * every write; the index stays the backstop authority for races.
  *
  * Migration 2 never backfills or fabricates locations. The runner (see
  * `src/db/index.ts`) refuses to apply it while v1 `items` holds any rows and
  * raises `MigrationRequiredError` instead, leaving rows and `user_version`
  * untouched.
+ *
+ * Migration 3 never rewrites or fabricates names. Its guard aborts with a
+ * clear `Migration to schema version 3 blocked` message while duplicate
+ * names exist (checked first, inside the same runner transaction), leaving
+ * rows and `user_version` untouched: no silent rewrite, no row loss, no
+ * invented data.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const MIGRATIONS: Record<number, string> = {
   1: `
@@ -61,11 +72,41 @@ CREATE TABLE IF NOT EXISTS item_categories (
 CREATE INDEX IF NOT EXISTS idx_items_location_id ON items (location_id);
 CREATE INDEX IF NOT EXISTS idx_item_categories_category_id ON item_categories (category_id);
 `.trim(),
+  // Guard (enforced by this SQL before the indexes are built): the v2
+  // tables must hold no duplicate names after trim/case normalization.
+  // `RAISE` only runs inside a trigger, so the guard is a TEMP scratch
+  // table plus a single-firing TEMP trigger (TEMP objects vanish when the
+  // connection closes, so only the trigger is dropped explicitly). The
+  // runner applies this whole script in one transaction with the version
+  // bump, so a blocked migration rolls back to untouched rows and
+  // `user_version`. A nonempty v2 database with duplicates stops with a
+  // clear `Migration to schema version 3 blocked` message instead of being
+  // rewritten; an empty v2 database migrates cleanly.
+  3: `
+CREATE TEMP TABLE _migration_v3_guard (id INTEGER);
+CREATE TEMP TRIGGER _migration_v3_guard_check BEFORE INSERT ON _migration_v3_guard
+BEGIN
+  SELECT CASE
+    WHEN (SELECT COUNT(*) FROM (SELECT lower(trim(name)) AS k FROM locations GROUP BY k HAVING COUNT(*) > 1)) > 0
+    THEN RAISE(ABORT, 'Migration to schema version 3 blocked: locations holds duplicate names after trim/case normalization. Rows and schema version are preserved; rename the duplicates before retrying. No data was modified.')
+    WHEN (SELECT COUNT(*) FROM (SELECT lower(trim(name)) AS k FROM categories GROUP BY k HAVING COUNT(*) > 1)) > 0
+    THEN RAISE(ABORT, 'Migration to schema version 3 blocked: categories holds duplicate names after trim/case normalization. Rows and schema version are preserved; rename the duplicates before retrying. No data was modified.')
+  END;
+END;
+INSERT INTO _migration_v3_guard (id) VALUES (1);
+DROP TRIGGER IF EXISTS temp._migration_v3_guard_check;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_locations_name_norm ON locations (lower(trim(name)));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_name_norm ON categories (lower(trim(name)));
+`.trim(),
 };
 
 /**
  * Notes on what migration 2 deliberately does NOT contain (all proposed,
- * none user-approved): name/address length caps, name/address uniqueness,
+ * none user-approved at the time): name/address length caps, product
+ * quantity caps, accent folding, and any synthetic-location backfill.
+ * Name uniqueness arrived later as adopted S11 and lives in migration 3
+ * (case/whitespace `UNIQUE` index) plus the domain layer (accent folding),
+ * so migration 2 still carries no `UNIQUE` clause.
  * product quantity caps, accent folding, and any synthetic-location backfill.
  * The `9007199254740991` bound is `Number.MAX_SAFE_INTEGER`, a technical
  * JavaScript-integer guard (documented in `src/inventory/validation.ts`), not

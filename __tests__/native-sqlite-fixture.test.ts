@@ -71,7 +71,7 @@ describe('native fixture gate (mocked, not native proof)', () => {
       getFirstAsync: jest.fn(async (sql: string) => {
         if (/foreign_keys/.test(sql)) return 1;
         if (/COUNT/.test(sql)) return { count: 1 };
-        return { user_version: 2 };
+        return { user_version: 3 };
       }),
       getAllAsync: jest.fn(async () => []),
       runAsync: jest.fn(async () => ({ lastInsertRowId: 1, changes: 1 })),

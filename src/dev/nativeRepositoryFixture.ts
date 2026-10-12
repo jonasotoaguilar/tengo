@@ -245,15 +245,15 @@ async function runPhase1(
         user_version: number;
       } | null
     )?.user_version;
-    assert(version === 2, `user_version=${version}, want 2`);
+    assert(version === 3, `user_version=${version}, want 3`);
     assert(
       (await readForeignKeys(db)) === 1,
       'outer connection must enforce FK',
     );
     checks.push({
-      name: 'phase-1 initialized fixture database to v2 with FK ON',
+      name: 'phase-1 initialized fixture database to v3 with FK ON',
       pass: true,
-      detail: 'user_version=2 foreign_keys=1 on the outer connection',
+      detail: 'user_version=3 foreign_keys=1 on the outer connection',
     });
     const { repos } = deps;
     const locA = await repos.createLocation(db, { name: 'Fixture Kitchen' });

@@ -33,6 +33,7 @@ import {
 } from '../components/ItemForm';
 import type { RepositoryDb } from '../inventory/database';
 import {
+  EntityConflictError,
   EntityNotFoundError,
   LocationInUseError,
   ValidationError,
@@ -306,6 +307,18 @@ export default function useItemFormController(
       }
       if (error instanceof EntityNotFoundError) {
         return { errors: { form: 'not-found' }, code: 'not-found' };
+      }
+      if (error instanceof EntityConflictError) {
+        if (error.entity === 'location') {
+          return {
+            errors: { location: t('itemFormErrorLocationNameConflict') },
+            code: null,
+          };
+        }
+        return {
+          errors: { categories: t('itemFormErrorCategoryNameConflict') },
+          code: null,
+        };
       }
       if (error instanceof LocationInUseError) {
         return { errors: { form: 'in-use' }, code: 'in-use' };

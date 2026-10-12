@@ -327,12 +327,12 @@ export async function runNativeQueryFixture(
       'CREATE TABLE IF NOT EXISTS fixture_state (key TEXT PRIMARY KEY, value TEXT)',
     );
     const version = await readPragmaNumber(db, 'user_version');
-    if (version !== 2) throw new Error(`user_version=${version}, want 2`);
+    if (version !== 3) throw new Error(`user_version=${version}, want 3`);
     const fk = await readPragmaNumber(db, 'foreign_keys');
     if (fk !== 1) throw new Error(`PRAGMA foreign_keys=${fk}, want 1`);
     pass(
-      'fixture database initialized to v2 with FK ON',
-      `user_version=2 foreign_keys=1 ${database}`,
+      'fixture database initialized to v3 with FK ON',
+      `user_version=3 foreign_keys=1 ${database}`,
     );
 
     if (database === QUERY_FIXTURE_EMPTY_DB) {

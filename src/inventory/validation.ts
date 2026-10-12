@@ -85,6 +85,23 @@ export function normalizeName(
   return trimmed;
 }
 
+/**
+ * Comparison key for S11 name uniqueness: trim, Unicode NFD, strip
+ * combining marks, then lowercase. `Café` and `cafe` share a key, and
+ * ` Pantry ` shares one with `Pantry`. Comparison-only: stored names
+ * keep their verbatim text (`café` stays `café`). The database v3 index
+ * enforces the case/whitespace part (`lower(trim(name))`); SQLite cannot
+ * fold accents, so the accent part is enforced here in the domain layer,
+ * which is the only writer path that can see both spellings.
+ */
+export function normalizeNameKey(value: string): string {
+  return value
+    .trim()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase();
+}
+
 /** Normalize the optional address: any blank form becomes `null`. */
 export function normalizeAddress(value: unknown): string | null {
   if (value === undefined || value === null) {

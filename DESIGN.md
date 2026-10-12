@@ -7,8 +7,9 @@ confirmations. The Android verification cited below was observed on the previous
 carries the approved token values through `src/theme/tokens.ts`. The
 defaults that were deferred — trimmed bounds, name uniqueness, accent
 folding, and location/category text matching — were adopted and implemented
-on 2026-10-12; the managed-entity screen is the one deferred item still
-unimplemented, and address uniqueness was never adopted. Product truth lives in
+on 2026-10-12, and the managed-entity screen was adopted by the user and
+implemented on the same date (its device verification is still pending);
+address uniqueness was never adopted. Product truth lives in
 [PRODUCT.md](PRODUCT.md); build order and acceptance live in
 [ROADMAP.md](ROADMAP.md) (M1–M5, gates, checklist).
 
@@ -205,8 +206,9 @@ Category    [ Grains (optional)]
   per item via multi-select (selecting several filters with OR and
   dedup). Bounds (name 1–120, quantity 1–999999 per stock row with 0
   dropped, location 1–80,
-  category 80) and name uniqueness are adopted and implemented; the
-  category-management UI remains deferred.
+  category 80) and name uniqueness are adopted and implemented, and so is
+  the category-management UI (adopted and implemented on 2026-10-12,
+  device verification still pending).
 - Cancel/Back with unsaved changes asks to discard (no silent loss).
 
 ### 3.4 Edit item (the "detail" surface)
@@ -385,9 +387,10 @@ resolve per theme:
   confirmation stating the impact), and confirmed deletion with no
   trash. Closed by adoption on 2026-10-12: numeric/string bounds, name
   uniqueness, accent-folding semantics, and location/category text
-  matching. Still needing a gate: the managed-entity screen, address
-  uniqueness, category management and suggestion behavior, and the v4
-  rebuild rule — never fabricate a location; the v4 migration carries
+  matching. Still needing a gate: address
+  uniqueness, suggestion behavior, and the v4
+  rebuild rule — the managed-entity screen was adopted and implemented on
+  2026-10-12. Never fabricate a location; the v4 migration carries
   one stock row per old item with `quantity > 0` under a
   preserve-and-stop guard per ROADMAP.md (the v1 backfill rule stands
   as the record of that earlier migration).

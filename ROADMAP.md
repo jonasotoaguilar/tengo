@@ -317,8 +317,8 @@ Fixture/native rows above are verified (see section 1 and
 [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
 device metrics, locale detection, accessibility (device accessibility tree),
 responsive layout and performance budgets are recorded there as well. Section 9
-records the adopted decisions and the one item still deferred (the
-managed-entity screen); DESIGN.md sections 3–5 describe built behavior and the
+records the adopted decisions (the managed-entity screen was adopted and
+implemented on 2026-10-12); DESIGN.md sections 3–5 describe built behavior and the
 approved tokens.
 
 ## 7. Cross-cutting requirements (MVP must meet all)
@@ -381,10 +381,10 @@ come from emulator or hardware. None of these is decided.
 
 | Gate | Closes in | Status |
 | ---- | --------- | ------ |
-| Wireframes + gate defaults reviewed | G0 (before M1) | Recorded 2026-10-12: the boards and DESIGN.md sections 3–5 were reviewed against the built screens, and the entries below are the approved contract. The defaults deferred here were then adopted by the user as the named owner and implemented on 2026-10-12: trimmed bounds, name uniqueness, accent folding, and location/category text matching, each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen stays deferred and unimplemented, and address uniqueness was never adopted |
+| Wireframes + gate defaults reviewed | G0 (before M1) | Recorded 2026-10-12: the boards and DESIGN.md sections 3–5 were reviewed against the built screens, and the entries below are the approved contract. The defaults deferred here were then adopted by the user as the named owner and implemented on 2026-10-12: trimmed bounds, name uniqueness, accent folding, and location/category text matching, each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen was then adopted by the user and implemented on 2026-10-12, and address uniqueness was never adopted |
 | Quantity semantics | M1 | Approved: each stock row carries 1–999999; a 0-quantity row is dropped rather than stored and an item with no rows shows as "sin stock". Bounds adopted and implemented (1–999999 per row with 0 dropped, typed `out-of-range`); negatives are rejected by that same bound; units stay out of MVP scope |
-| Locations | M1/M4 | Approved: location entity, name required, address optional, free entry; one item may hold stock in several locations and zero locations is a valid state. Name uniqueness adopted and implemented (accent-aware domain check plus the v3 unique index); deleting a location cascades its stock rows and never deletes items, with the confirmation stating the impact; `LocationInUseError` no longer exists; the managed-location UI stays deferred and unimplemented |
-| Categories | M1/M4 | Approved: independent entities, zero or many per item, multi-select OR filter with dedup. Location/category text matching adopted and implemented; deleting a category removes only the association with items (confirmation states the impact); the management UI stays deferred and unimplemented |
+| Locations | M1/M4 | Approved: location entity, name required, address optional, free entry; one item may hold stock in several locations and zero locations is a valid state. Name uniqueness adopted and implemented (accent-aware domain check plus the v3 unique index); deleting a location cascades its stock rows and never deletes items, with the confirmation stating the impact; `LocationInUseError` no longer exists; the managed-location UI was adopted and implemented on 2026-10-12 |
+| Categories | M1/M4 | Approved: independent entities, zero or many per item, multi-select OR filter with dedup. Location/category text matching adopted and implemented; deleting a category removes only the association with items (confirmation states the impact); the management UI was adopted and implemented on 2026-10-12 |
 | Deletion/backup | M4 | Approved: confirm every delete, no trash/undo in MVP, irreversibility stated in the dialog; location deletion states how many existencias go (items survive) and category deletion states the association removal; an item is deleted only explicitly, never as a side effect; anything beyond that undecided |
 
 No milestone is complete while its gate decision is unrecorded.
@@ -429,6 +429,6 @@ accumulated branch.
   re-observation on v4 pending); see
   [verified native evidence](docs/testing.md#verified-native-evidence-android-only).
 - [x] M5: `en`/`es` audit (guard), accessibility-tree pass with 48dp targets, contrast floor implemented and guarded, performance budgets observed on a device pass, and extended Maestro flows (1.0x 97/97, 2.0x 78/78) observed on a debug build. TalkBack speech is a stated boundary, not claimed.
-- [x] Section 9 recorded and then closed by adoption: the approved quantity/location/category/deletion entries stay approved, and the defaults deferred to the user as the named owner were adopted on 2026-10-12 and implemented — trimmed bounds, name uniqueness, accent folding, and location/category text matching — each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen is the one deferred item still unimplemented.
+- [x] Section 9 recorded and then closed by adoption: the approved quantity/location/category/deletion entries stay approved, and the defaults deferred to the user as the named owner were adopted on 2026-10-12 and implemented — trimmed bounds, name uniqueness, accent folding, and location/category text matching — each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen was then adopted by the user and implemented on 2026-10-12, so no adopted proposal remains unimplemented; address uniqueness was never adopted.
 - [x] No backend/accounts/sync introduced; `npm run web` still fails fast
   (`node -e` exits 1) and releases stay source-only (`release.yml` on tag `v*`).

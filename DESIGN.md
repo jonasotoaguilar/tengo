@@ -11,7 +11,7 @@ carries the approved token values through `src/theme/tokens.ts`. The
 defaults that were deferred — trimmed bounds, name uniqueness, accent
 folding, and location/category text matching — were adopted and implemented
 on 2026-10-12, and the managed-entity screen was adopted by the user and
-implemented on the same date (its device verification is still pending);
+implemented on the same date (its device verification is no longer pending: the entity flow passes on the device at 89 and then 124 commands with zero failures; TalkBack speech on that screen remains unobserved);
 address uniqueness was never adopted. Product truth lives in
 [PRODUCT.md](PRODUCT.md); build order and acceptance live in
 [ROADMAP.md](ROADMAP.md) (M1–M5, gates, checklist).
@@ -211,7 +211,7 @@ Category    [ Grains (optional)]
   dropped, location 1–80,
   category 80) and name uniqueness are adopted and implemented, and so is
   the category-management UI (adopted and implemented on 2026-10-12,
-  device verification still pending).
+  device verification observed on the device through the entity flow).
 - Cancel/Back with unsaved changes asks to discard (no silent loss).
 
 ### 3.4 Edit item (the "detail" surface)

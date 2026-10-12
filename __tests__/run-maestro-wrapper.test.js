@@ -171,6 +171,27 @@ test('a flow path containing spaces reaches maestro intact', () => {
   expect(outDir).not.toMatch(/-$/);
 });
 
+test.each([
+  ['m4-forms.yaml', 'm4-forms'],
+  ['my flow.yaml', 'my-flow'],
+  ['my  flow.yaml', 'my-flow'],
+  ['a.b.c.yaml', 'a.b.c'],
+  ['flow .yaml', 'flow'],
+  ['@@.yaml', 'flow'],
+])('sanitizes the run directory name for %s', (name, expected) => {
+  const dir = path.join(scratch, 'names');
+  fs.mkdirSync(dir, { recursive: true });
+  const flow = path.join(dir, name);
+  fs.writeFileSync(flow, '- assertVisible: x\n');
+  const result = run([flow], { env: env() });
+
+  expect(result.status).toBe(0);
+  const maestro = invocations().find((line) => line.startsWith('maestro '));
+  const runName = path.basename(maestro.match(/--test-output-dir (\S+)/)[1]);
+  expect(runName).toMatch(new RegExp(`_${expected.replace(/\./g, '\\.')}$`));
+  expect(runName).not.toMatch(/--/);
+});
+
 test('the adb reverse workaround is opt-in and removed on exit', () => {
   const flow = path.join(scratch, 'flow.yaml');
   fs.writeFileSync(flow, '- assertVisible: x\n');

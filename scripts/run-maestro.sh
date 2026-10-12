@@ -69,10 +69,17 @@ fi
 
 serial="${MAESTRO_SERIAL:-emulator-5554}"
 # Sanitize the flow name for the artifact directory: a flow file with a space
-# in its name would otherwise create an artifact path that has to be quoted
-# forever after. The flow path itself is passed through untouched.
+# or a separator in its name would otherwise create an artifact path that has
+# to be quoted forever after, and `basename` alone would carry its own newline
+# through a pipeline into the name. Repeats collapse, leading/trailing
+# separators are stripped, and a name that sanitizes to nothing falls back.
+# The flow path itself is passed through untouched.
 flow_name="$(basename "$flow" .yaml)"
 flow_name="${flow_name//[^A-Za-z0-9._-]/-}"
+flow_name="$(printf '%s' "$flow_name" | tr -s '-')"
+flow_name="${flow_name#-}"
+flow_name="${flow_name%-}"
+[ -n "$flow_name" ] || flow_name="flow"
 out_dir="$run_root/$(date +%Y%m%d_%H%M%S)_$flow_name"
 mkdir -p "$out_dir"
 

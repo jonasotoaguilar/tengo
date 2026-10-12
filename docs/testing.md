@@ -121,12 +121,15 @@ no-fold contract) and was re-observed on emulator-5554 through
 `scripts/run-maestro.sh`: exit 0, 72 commands COMPLETED, 0 FAILED, JUnit
 `tests=1 failures=0` in 117.6s, including the `^3 (of|de) 5$` café assertion.
 An earlier attempt failed honestly with a native fixture NPE, which did not
-reappear once the bundle was served from a tree with no uncommitted source
-changes: a device run served from a mid-flight worktree is an inconsistent
+reappear when the bundle was served from a tree whose `src/` had no
+uncommitted changes (as that run reported): a device run served from a mid-flight worktree is an inconsistent
 snapshot and proves nothing. Two stale pre-realignment DEV databases were
-recorded with their sizes and sha256 digests and then deleted, after the
-fixture refused to overwrite a partial seed; the CRUD fixture and production
-`tengo.db` were never created, opened or modified.
+captured with their sizes and sha256 prefixes in that run's report and then
+deleted after the fixture refused to overwrite a partial seed; the CRUD
+fixture and production `tengo.db` were never created, opened or modified. That
+evidence lives in the run's gitignored `.maestro/runs/` artifacts rather than
+in committed files, so it is cited from the run report and cannot be
+re-derived from the repository alone.
 
 The query fixture embeds the real `InventoryContainer` with an injected
 isolated bootstrap, so the list on screen is the actual read model — no

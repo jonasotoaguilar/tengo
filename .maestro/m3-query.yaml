@@ -10,8 +10,9 @@
 #   EXPO_PUBLIC_NATIVE_FIXTURE=1 EXPO_PUBLIC_NATIVE_QUERY=1 npx expo start --port 8082
 #   maestro test .maestro/m3-query.yaml
 # Stable numeric IDs below assume the fixture-verified fresh-seed order:
-# locations Kuche=1, Garage=2; categories Tools=1, Kitchen=2, 100%_stock=3;
-# items 1=Cafe Grinder, 2=CAFE filter, 3=100%-literal, 4=Hammer, 5=Cafe Napkin.
+# locations Küche=1, Garage=2; categories Tools=1, Kitchen=2, 100%_stock=3;
+# items 1=Cafe Grinder, 2=CAFE filter, 3=100%_literal\blend, 4=Hammer,
+# 5=Cafe Napkin.
 # Selectors use stable testIDs; count regexes accept the existing en/es copy.
 # Disabled states (FAB, empty CTA) are visible-only here; disabled itself
 # is unit-proven. This flow is not native proof until a separate verifier

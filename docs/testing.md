@@ -67,8 +67,10 @@ confirmation, and delete persistence across restart. Production
 previously failed attempts are in the CRUD fixture section below.
 
 Locale detection, accessibility, responsive layout (orientation, large
-font, keyboard, contrast, light/dark) and the performance budgets remain
-separate pending checks.
+font, keyboard, contrast, light/dark) and the performance budgets are
+recorded below as their own observed passes; the only native behavior
+still unproven is typing a new value into a non-empty numeric quantity
+field, which the form flow edits with the stepper.
 
 ## DEV-only native fixture protocol
 

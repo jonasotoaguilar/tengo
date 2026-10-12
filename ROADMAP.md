@@ -155,19 +155,19 @@ Status: done — bounded `queryItems`, the controlled
 `InventoryList` and App integration are wired, and the Android query flow
 passed on the isolated fixture database with its device metrics measured
 under M5 (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
-Proposed surfaces: list screen, search field, empty/first-run states,
+Surfaces: list screen, search field, empty/first-run states,
 loading/error states. Design contract: [DESIGN.md](DESIGN.md)
 sections 3–4 (list, search, states, tokens).
 
 - List grouped or filterable by location entities; search matches name
   plus approved multi-category OR filtering with dedup (further
-  location/category text matching per the adopted decision in
-  section 9).
+  location/category text matching stays a proposal deferred to the user,
+  see section 9).
 - Acceptance: empty DB teaches the user how to add the first item
   (not a bare "nothing here"); search is case-insensitive for
-  `en`/`es` with accent folding per the adopted gate decision
-  (section 9); loading shows skeletons, not a
-  bare spinner; DB error shows retry.
+  `en`/`es` by Unicode-lowercase substring matching, and accent folding
+  stays a proposal deferred to the user (section 9); loading shows
+  skeletons, not a bare spinner; DB error shows retry.
 - Test-first (for the pending App integration): RED with
   integration tests for empty, populated, and error states (the
   presentational component cases already exist host-side); GREEN with the screen; TRIANGULATE no-match search
@@ -184,7 +184,7 @@ Still pending from this area: native proof for typing into a non-empty
 numeric quantity field (the flow edits quantity with the stepper). The
 responsive, theme, keyboard, locale and accessibility checks belong to M5
 and are recorded there.
-Proposed surfaces: add/edit form screen (or bottom sheet per Android convention),
+Surfaces: add/edit form screen (or bottom sheet per Android convention),
 location input, delete confirmation, validation messages. Design
 contract: [DESIGN.md](DESIGN.md) sections 3–5.
 

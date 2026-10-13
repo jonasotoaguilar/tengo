@@ -83,3 +83,10 @@ These rules also exist because they were broken, twice each.
   worktree only when their allowed edit surfaces do not overlap; a unit that
   changes a shared type or the data model lands before the units that consume it,
   not beside them.
+- **Check that a unit can be finished inside the surfaces you grant.** A brief
+  whose allowed files cannot reach the feature's goal produces a half-feature that
+  reports itself as complete. The scanner unit could open the add form for an
+  unknown barcode but could not carry the code into the created item, because the
+  form plumbing sat outside its surfaces, so re-scanning reached nothing — the
+  exact value the feature existed for. Trace the data path from entry to stored
+  value before delegating, and grant every file it crosses.

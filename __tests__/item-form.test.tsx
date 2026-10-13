@@ -818,3 +818,38 @@ describe('S10 product quantity bound (999999)', () => {
     });
   });
 });
+
+describe('T4 form per-keystroke work (S2.6)', () => {
+  test('T4 RED: typing a quantity does not re-request error focus for an unchanged error', async () => {
+    const onRequestErrorFocus = jest.fn();
+    const view = await render(
+      <ControlledHarness
+        initial={{ ...emptyValues, stock: [row('1'), row('2', 11)] }}
+        props={{
+          errors: { stock: [{ location: 'Choose or create a location.' }] },
+          onRequestErrorFocus,
+        }}
+      />,
+    );
+    expect(onRequestErrorFocus).toHaveBeenCalledTimes(1);
+    expect(onRequestErrorFocus).toHaveBeenCalledWith(
+      'item-form/error-stock-0-location',
+    );
+    await fireEvent.changeText(
+      view.getByTestId('item-form/stock-1/quantity'),
+      '25',
+    );
+    expect(onRequestErrorFocus).toHaveBeenCalledTimes(1);
+  });
+
+  test('T4 RED: stock rows are isolated memo components', async () => {
+    const { ItemStockRow } =
+      require('../src/components/ItemForm') as unknown as {
+        ItemStockRow: unknown;
+      };
+    expect(ItemStockRow).toBeTruthy();
+    expect((ItemStockRow as { $$typeof?: symbol }).$$typeof).toBe(
+      Symbol.for('react.memo'),
+    );
+  });
+});

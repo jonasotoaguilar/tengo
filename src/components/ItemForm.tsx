@@ -21,7 +21,7 @@
  */
 
 import type { Ref, RefObject } from 'react';
-import { useEffect, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AccessibilityInfo,
@@ -255,6 +255,484 @@ function FieldError({
   );
 }
 
+export interface ItemStockRowProps {
+  row: ItemStockRowValues;
+  index: number;
+  locationNameById: Map<number, string>;
+  rowErrors: ItemStockRowErrors | undefined;
+  pending: boolean;
+  palette: Palette;
+  onQuantityChange: (index: number, quantityRaw: string) => void;
+  onStep: (index: number, delta: 1 | -1) => void;
+  onRemove: (index: number) => void;
+  onEditNewLocation: (index: number, patch: Partial<NewLocationInput>) => void;
+  onQuantityBlur: (index: number) => void;
+  registerNode: (testID: string) => (node: TextInput | View | null) => void;
+}
+
+/**
+ * One memoized per-location editor row. Unchanged rows keep their prop
+ * references across a sibling's keystroke (the parent updates stock
+ * immutably, preserving untouched row objects), so a quantity keystroke
+ * re-renders only the edited row. All copy, testIDs, and composed
+ * accessibility labels are verbatim from the inline row this replaces.
+ */
+export const ItemStockRow = memo(function ItemStockRow({
+  row,
+  index,
+  locationNameById,
+  rowErrors,
+  pending,
+  palette,
+  onQuantityChange,
+  onStep,
+  onRemove,
+  onEditNewLocation,
+  onQuantityBlur,
+  registerNode,
+}: ItemStockRowProps) {
+  const { t } = useTranslation();
+  const parsed = parseQuantityRaw(row.quantityRaw);
+  const rowValid = parsed !== null;
+  // Null-parse raw (blank/invalid/non-integer/unsafe) disables
+  // BOTH steppers: no quiet rewrite to a default, the text stays
+  // for errors.
+  const rowDecrementDisabled = pending || !rowValid || (parsed as number) <= 0;
+  // Product cap: the stepper never steps above
+  // PRODUCT_MAX_QUANTITY. At the cap increment is disabled; above
+  // the cap the parse is null so both steppers stay disabled and
+  // the raw text is preserved for the parent's out-of-range error.
+  const rowIncrementDisabled =
+    pending || !rowValid || parsed === PRODUCT_MAX_QUANTITY;
+  const rowIsExhausted = parsed === 0;
+  const selector = row.location;
+  const rowName =
+    selector.kind === 'existing'
+      ? (locationNameById.get(selector.locationId) ?? `#${selector.locationId}`)
+      : selector.location.name.trim() !== ''
+        ? selector.location.name
+        : t('itemFormLocationNew');
+  const quantityTestID = `item-form/stock-${index}/quantity`;
+  return (
+    <View style={styles.stockRow}>
+      <View style={styles.stockRowHeader}>
+        <Text
+          testID={`item-form/stock-${index}/name`}
+          style={[styles.stockRowName, { color: palette.text }]}
+        >
+          {rowName}
+        </Text>
+        <Pressable
+          testID={`item-form/stock-${index}/remove`}
+          accessibilityRole="button"
+          accessibilityLabel={t('itemFormRemoveStockRow', {
+            name: rowName,
+          })}
+          accessibilityState={{ disabled: pending }}
+          disabled={pending}
+          onPress={() => onRemove(index)}
+          style={styles.draftRemove}
+        >
+          <Text style={[styles.draftRemoveText, { color: palette.accent }]}>
+            {REMOVE_GLYPH}
+          </Text>
+        </Pressable>
+      </View>
+      {row.location.kind === 'new' ? (
+        <View style={styles.inlineGroup}>
+          <Text style={[styles.subLabel, { color: palette.text }]}>
+            {t('itemFormNewLocationNameLabel')}
+          </Text>
+          <TextInput
+            testID={`item-form/stock-${index}/location-new/name`}
+            ref={registerNode(`item-form/stock-${index}/location-new/name`)}
+            accessibilityLabel={t('itemFormNewLocationNameLabel')}
+            placeholder={t('itemFormNewLocationNamePlaceholder')}
+            placeholderTextColor={palette.secondary}
+            value={row.location.location.name}
+            onChangeText={(next) => onEditNewLocation(index, { name: next })}
+            editable={!pending}
+            autoCorrect={false}
+            style={[
+              styles.input,
+              {
+                color: palette.text,
+                borderColor: palette.controlBorder,
+              },
+            ]}
+          />
+          <Text style={[styles.subLabel, { color: palette.text }]}>
+            {t('itemFormNewLocationAddressLabel')}
+          </Text>
+          <TextInput
+            testID={`item-form/stock-${index}/location-new/address`}
+            accessibilityLabel={t('itemFormNewLocationAddressLabel')}
+            placeholder={t('itemFormNewLocationAddressPlaceholder')}
+            placeholderTextColor={palette.secondary}
+            value={row.location.location.address ?? ''}
+            onChangeText={(next) =>
+              onEditNewLocation(index, {
+                address: next === '' ? null : next,
+              })
+            }
+            editable={!pending}
+            autoCorrect={false}
+            style={[
+              styles.input,
+              {
+                color: palette.text,
+                borderColor: palette.controlBorder,
+              },
+            ]}
+          />
+        </View>
+      ) : null}
+      <View style={styles.quantityRow}>
+        <Pressable
+          testID={`item-form/stock-${index}/decrement`}
+          accessibilityRole="button"
+          accessibilityLabel={t('itemFormDecrement')}
+          accessibilityState={{ disabled: rowDecrementDisabled }}
+          disabled={rowDecrementDisabled}
+          onPress={() => onStep(index, -1)}
+          style={[
+            styles.stepper,
+            {
+              borderColor: palette.controlBorder,
+              backgroundColor: rowDecrementDisabled
+                ? palette.surface
+                : 'transparent',
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.stepperText,
+              {
+                color: rowDecrementDisabled ? palette.secondary : palette.text,
+              },
+            ]}
+          >
+            {DECREMENT_GLYPH}
+          </Text>
+        </Pressable>
+        <TextInput
+          testID={quantityTestID}
+          ref={registerNode(quantityTestID)}
+          accessibilityLabel={`${rowName}, ${t('itemFormQuantityLabel')}`}
+          placeholder={t('itemFormQuantityPlaceholder')}
+          placeholderTextColor={palette.secondary}
+          value={row.quantityRaw}
+          onChangeText={(next) => onQuantityChange(index, next)}
+          onBlur={() => onQuantityBlur(index)}
+          editable={!pending}
+          keyboardType="number-pad"
+          inputMode="numeric"
+          returnKeyType="done"
+          style={[
+            styles.quantityInput,
+            {
+              color: palette.text,
+              borderColor: palette.controlBorder,
+            },
+          ]}
+        />
+        <Pressable
+          testID={`item-form/stock-${index}/increment`}
+          accessibilityRole="button"
+          accessibilityLabel={t('itemFormIncrement')}
+          accessibilityState={{ disabled: rowIncrementDisabled }}
+          disabled={rowIncrementDisabled}
+          onPress={() => onStep(index, 1)}
+          style={[
+            styles.stepper,
+            {
+              borderColor: palette.controlBorder,
+              backgroundColor: rowIncrementDisabled
+                ? palette.surface
+                : 'transparent',
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.stepperText,
+              {
+                color: rowIncrementDisabled ? palette.secondary : palette.text,
+              },
+            ]}
+          >
+            {INCREMENT_GLYPH}
+          </Text>
+        </Pressable>
+      </View>
+      {rowIsExhausted ? (
+        <Text
+          testID={`item-form/stock-${index}/exhausted`}
+          style={[styles.exhausted, { color: palette.error }]}
+        >
+          {t('inventoryExhausted')}
+        </Text>
+      ) : null}
+      {rowErrors?.quantity ? (
+        <FieldError
+          testID={`item-form/error-stock-${index}-quantity`}
+          message={rowErrors.quantity}
+          palette={palette}
+        />
+      ) : null}
+      {rowErrors?.location ? (
+        <FieldError
+          testID={`item-form/error-stock-${index}-location`}
+          message={rowErrors.location}
+          palette={palette}
+          focusRef={registerNode(`item-form/error-stock-${index}-location`)}
+        />
+      ) : null}
+    </View>
+  );
+});
+
+interface LocationChipsProps {
+  availableLocations: Location[];
+  pending: boolean;
+  palette: Palette;
+  onAppendExisting: (locationId: number) => void;
+  onAppendNew: () => void;
+}
+
+/**
+ * Memoized add-location chips: props keep their identity across
+ * quantity-only keystrokes (stable filtered list + stable callbacks),
+ * so typing a quantity skips this section.
+ */
+const LocationChips = memo(function LocationChips({
+  availableLocations,
+  pending,
+  palette,
+  onAppendExisting,
+  onAppendNew,
+}: LocationChipsProps) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <Text style={[styles.subLabel, { color: palette.text }]}>
+        {t('itemFormAddLocationLabel')}
+      </Text>
+      <View style={styles.chipWrap}>
+        {availableLocations.map((location) => (
+          <Pressable
+            key={location.id}
+            testID={`item-form/location-${location.id}`}
+            accessibilityRole="button"
+            accessibilityLabel={location.name}
+            accessibilityState={{ selected: false, disabled: pending }}
+            disabled={pending}
+            onPress={() => onAppendExisting(location.id)}
+            style={[
+              styles.chip,
+              {
+                borderColor: palette.controlBorder,
+                backgroundColor: 'transparent',
+              },
+            ]}
+          >
+            <Text style={{ color: palette.text }}>{location.name}</Text>
+          </Pressable>
+        ))}
+        <Pressable
+          testID="item-form/location-new"
+          accessibilityRole="button"
+          accessibilityLabel={t('itemFormLocationNew')}
+          accessibilityState={{ selected: false, disabled: pending }}
+          disabled={pending}
+          onPress={onAppendNew}
+          style={[
+            styles.chip,
+            {
+              borderColor: palette.controlBorder,
+              backgroundColor: 'transparent',
+            },
+          ]}
+        >
+          <Text style={{ color: palette.text }}>
+            {t('itemFormLocationNew')}
+          </Text>
+        </Pressable>
+      </View>
+    </>
+  );
+});
+
+interface CategorySectionProps {
+  categories: Category[];
+  selectedIds: Set<number>;
+  drafts: { name: string; index: number; key: string }[];
+  pendingName: string;
+  pending: boolean;
+  categoriesError: string | undefined;
+  palette: Palette;
+  onToggle: (categoryId: number) => void;
+  onPendingNameChange: (next: string) => void;
+  onAddDraft: () => void;
+  onRemoveDraft: (index: number) => void;
+  registerNode: (testID: string) => (node: TextInput | View | null) => void;
+}
+
+/**
+ * Memoized category section (chips, new-draft chips, new-name input).
+ * Every prop is referentially stable across name/stock keystrokes, so a
+ * quantity keystroke skips the whole section. Copy, testIDs, and chip
+ * selection semantics are verbatim from the inline section this replaces.
+ */
+const CategorySection = memo(function CategorySection({
+  categories,
+  selectedIds,
+  drafts,
+  pendingName,
+  pending,
+  categoriesError,
+  palette,
+  onToggle,
+  onPendingNameChange,
+  onAddDraft,
+  onRemoveDraft,
+  registerNode,
+}: CategorySectionProps) {
+  const { t } = useTranslation();
+  const addCategoryDisabled = pending || pendingName.trim() === '';
+  return (
+    <>
+      <Text style={[styles.label, { color: palette.text }]}>
+        {t('itemFormCategoriesLabel')}
+      </Text>
+      <View style={styles.chipWrap}>
+        {categories.map((category) => {
+          const selected = selectedIds.has(category.id);
+          return (
+            <Pressable
+              key={category.id}
+              testID={`item-form/category-${category.id}`}
+              accessibilityRole="button"
+              accessibilityLabel={category.name}
+              accessibilityState={{ selected, disabled: pending }}
+              disabled={pending}
+              onPress={() => onToggle(category.id)}
+              style={[
+                styles.chip,
+                {
+                  borderColor: palette.controlBorder,
+                  backgroundColor: selected ? palette.accent : 'transparent',
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  color: selected ? palette.accentOn : palette.text,
+                }}
+              >
+                {category.name}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {drafts.length > 0 ? (
+        <View style={styles.draftRow}>
+          {drafts.map(({ name, index, key }) => (
+            <View
+              key={key}
+              style={[styles.draftChip, { borderColor: palette.separator }]}
+            >
+              <Text
+                style={[styles.draftText, { color: palette.text }]}
+                numberOfLines={1}
+              >
+                {name}
+              </Text>
+              <Pressable
+                testID={`item-form/new-category/remove-${index}`}
+                accessibilityRole="button"
+                accessibilityLabel={t('itemFormRemoveCategory', {
+                  name,
+                })}
+                accessibilityState={{ disabled: pending }}
+                disabled={pending}
+                onPress={() => onRemoveDraft(index)}
+                style={styles.draftRemove}
+              >
+                <Text
+                  style={[styles.draftRemoveText, { color: palette.accent }]}
+                >
+                  {REMOVE_GLYPH}
+                </Text>
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      <Text style={[styles.subLabel, { color: palette.text }]}>
+        {t('itemFormNewCategoryLabel')}
+      </Text>
+      <View style={styles.newCategoryRow}>
+        <TextInput
+          testID="item-form/new-category/name"
+          ref={registerNode('item-form/new-category/name')}
+          accessibilityLabel={t('itemFormNewCategoryLabel')}
+          placeholder={t('itemFormNewCategoryPlaceholder')}
+          placeholderTextColor={palette.secondary}
+          value={pendingName}
+          onChangeText={onPendingNameChange}
+          editable={!pending}
+          autoCorrect={false}
+          style={[
+            styles.newCategoryInput,
+            { color: palette.text, borderColor: palette.controlBorder },
+          ]}
+        />
+        <Pressable
+          testID="item-form/new-category/add"
+          accessibilityRole="button"
+          accessibilityLabel={t('itemFormNewCategoryAdd')}
+          accessibilityState={{
+            disabled: addCategoryDisabled,
+          }}
+          disabled={addCategoryDisabled}
+          onPress={onAddDraft}
+          style={[
+            styles.addButton,
+            {
+              backgroundColor: addCategoryDisabled
+                ? palette.surface
+                : palette.accent,
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.addButtonText,
+              {
+                color: addCategoryDisabled
+                  ? palette.secondary
+                  : palette.accentOn,
+              },
+            ]}
+          >
+            {t('itemFormNewCategoryAdd')}
+          </Text>
+        </Pressable>
+      </View>
+      {categoriesError ? (
+        <FieldError
+          testID="item-form/error-categories"
+          message={categoriesError}
+          palette={palette}
+        />
+      ) : null}
+    </>
+  );
+});
+
 export default function ItemForm({
   mode,
   values,
@@ -275,150 +753,258 @@ export default function ItemForm({
   const palette = scheme === 'dark' ? DARK : LIGHT;
   const pending = submitting === true;
 
+  // Live-values mirror so stable callbacks read current input without
+  // depending on `values` identity: memoized rows and chip sections keep
+  // stable props (and skip re-renders) across sibling keystrokes.
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
+
   // Mounted-node registry for error focus: every focusable target
   // registers its testID here, and the error effect routes through
   // `onRequestErrorFocus` plus this map (never native focus under Jest).
   const nodeRefs = useRef(new Map<string, TextInput | View | null>());
-  const registerNode = (testID: string) => (node: TextInput | View | null) => {
-    if (node === null) nodeRefs.current.delete(testID);
-    else nodeRefs.current.set(testID, node);
-  };
+  // Stable across renders (registry lives in a ref) so memoized rows can
+  // receive it without losing their memoization.
+  const registerNode = useCallback(
+    (testID: string) => (node: TextInput | View | null) => {
+      if (node === null) nodeRefs.current.delete(testID);
+      else nodeRefs.current.set(testID, node);
+    },
+    [],
+  );
 
+  // Error focus fires once per error update with the same resolved target
+  // for the same error. The row-location lookup reads live stock through
+  // the mirror instead of depending on `values.stock`, so a quantity
+  // keystroke (new stock identity, unchanged error) no longer refires the
+  // request nor reruns the resolution helpers.
   useEffect(() => {
     const field = firstErrorField(errors);
     const locationKind =
       typeof field === 'object' && field !== null
-        ? values.stock[field.row]?.location.kind
+        ? valuesRef.current.stock[field.row]?.location.kind
         : undefined;
     const target = resolveErrorFocusTarget(field, locationKind);
     if (!field || !target) return;
     onRequestErrorFocus?.(target);
     focusNode({ current: nodeRefs.current.get(target) ?? null });
-  }, [errors, values.stock, onRequestErrorFocus]);
+  }, [errors, onRequestErrorFocus]);
 
-  const setRow = (index: number, patch: Partial<ItemStockRowValues>) => {
-    onChange({
-      ...values,
-      stock: values.stock.map((row, i) =>
-        i === index ? { ...row, ...patch } : row,
-      ),
-    });
-  };
-
-  const stepRowQuantity = (index: number, delta: 1 | -1) => {
-    if (pending) return;
-    const base = parseQuantityRaw(values.stock[index]?.quantityRaw ?? '');
-    if (base === null) return;
-    const next = base + delta;
-    if (next < 0 || next > PRODUCT_MAX_QUANTITY) return;
-    setRow(index, { quantityRaw: String(next) });
-  };
-
-  const addedExistingIds = new Set<number>();
-  for (const row of values.stock) {
-    if (row.location.kind === 'existing') {
-      addedExistingIds.add(row.location.locationId);
-    }
-  }
-  const availableLocations = locations.filter(
-    (location) => !addedExistingIds.has(location.id),
+  // Row patch with untouched-row identity preserved: `map` reuses the
+  // same object for every other row, which is what lets memoized rows
+  // skip a sibling's keystroke. Reads live values from the mirror so the
+  // callback stays stable across renders.
+  const setRow = useCallback(
+    (index: number, patch: Partial<ItemStockRowValues>) => {
+      const current = valuesRef.current;
+      onChange({
+        ...current,
+        stock: current.stock.map((row, i) =>
+          i === index ? { ...row, ...patch } : row,
+        ),
+      });
+    },
+    [onChange],
   );
 
-  const appendExistingLocation = (locationId: number) => {
-    if (pending || addedExistingIds.has(locationId)) return;
-    onChange({
-      ...values,
-      stock: [
-        ...values.stock,
-        { location: { kind: 'existing', locationId }, quantityRaw: '' },
-      ],
-    });
-  };
+  const stepRowQuantity = useCallback(
+    (index: number, delta: 1 | -1) => {
+      if (pending) return;
+      const base = parseQuantityRaw(
+        valuesRef.current.stock[index]?.quantityRaw ?? '',
+      );
+      if (base === null) return;
+      const next = base + delta;
+      if (next < 0 || next > PRODUCT_MAX_QUANTITY) return;
+      setRow(index, { quantityRaw: String(next) });
+    },
+    [pending, setRow],
+  );
 
-  const appendNewLocation = () => {
+  const handleQuantityChange = useCallback(
+    (index: number, quantityRaw: string) => {
+      if (pending) return;
+      setRow(index, { quantityRaw });
+    },
+    [pending, setRow],
+  );
+
+  const handleQuantityBlur = useCallback(
+    (index: number) => {
+      if (!pending) onFieldBlur?.('quantity', index);
+    },
+    [pending, onFieldBlur],
+  );
+
+  // Location-identity projection of the stock rows: quantity-only
+  // keystrokes keep this key, so the membership set and the filtered chip
+  // list below keep their identities and memoized sections skip those
+  // renders. Rebuilt only when a row's location identity changes.
+  const stockLocationKey = values.stock
+    .map((row) =>
+      row.location.kind === 'existing' ? `e:${row.location.locationId}` : 'n',
+    )
+    .join('|');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the memo reads values.stock but must recompute only when a row's location identity changes; quantity-only keystrokes keep the key, so the chip list keeps its identity.
+  const locationChoices = useMemo(() => {
+    const addedExistingIds = new Set<number>();
+    for (const row of values.stock) {
+      if (row.location.kind === 'existing') {
+        addedExistingIds.add(row.location.locationId);
+      }
+    }
+    return {
+      addedExistingIds,
+      availableLocations: locations.filter(
+        (location) => !addedExistingIds.has(location.id),
+      ),
+    };
+  }, [locations, stockLocationKey]);
+  const { addedExistingIds, availableLocations } = locationChoices;
+
+  const appendExistingLocation = useCallback(
+    (locationId: number) => {
+      if (pending || addedExistingIds.has(locationId)) return;
+      const current = valuesRef.current;
+      onChange({
+        ...current,
+        stock: [
+          ...current.stock,
+          { location: { kind: 'existing', locationId }, quantityRaw: '' },
+        ],
+      });
+    },
+    [onChange, pending, addedExistingIds],
+  );
+
+  const appendNewLocation = useCallback(() => {
     if (pending) return;
+    const current = valuesRef.current;
     onChange({
-      ...values,
+      ...current,
       stock: [
-        ...values.stock,
+        ...current.stock,
         {
           location: { kind: 'new', location: { name: '', address: null } },
           quantityRaw: '',
         },
       ],
     });
-  };
+  }, [onChange, pending]);
 
-  const editRowNewLocation = (
-    index: number,
-    patch: Partial<NewLocationInput>,
-  ) => {
-    if (pending) return;
-    const row = values.stock[index];
-    if (row?.location.kind !== 'new') return;
-    const next: NewLocationInput = { ...row.location.location, ...patch };
-    setRow(index, { location: { kind: 'new', location: next } });
-  };
+  const editRowNewLocation = useCallback(
+    (index: number, patch: Partial<NewLocationInput>) => {
+      if (pending) return;
+      const row = valuesRef.current.stock[index];
+      if (row?.location.kind !== 'new') return;
+      const next: NewLocationInput = { ...row.location.location, ...patch };
+      setRow(index, { location: { kind: 'new', location: next } });
+    },
+    [pending, setRow],
+  );
 
-  const removeRow = (index: number) => {
-    if (pending) return;
+  const removeRow = useCallback(
+    (index: number) => {
+      if (pending) return;
+      const current = valuesRef.current;
+      onChange({
+        ...current,
+        stock: current.stock.filter((_, i) => i !== index),
+      });
+    },
+    [onChange, pending],
+  );
+
+  const selectedCategoryIds = useMemo(() => {
+    const selected = new Set<number>();
+    for (const entry of values.categories) {
+      if (entry.kind === 'existing') selected.add(entry.categoryId);
+    }
+    return selected;
+  }, [values.categories]);
+
+  const locationNameById = useMemo(
+    () =>
+      new Map<number, string>(
+        locations.map((location): [number, string] => [
+          location.id,
+          location.name,
+        ]),
+      ),
+    [locations],
+  );
+
+  const toggleExistingCategory = useCallback(
+    (categoryId: number) => {
+      if (pending) return;
+      const current = valuesRef.current;
+      const selected = current.categories.some(
+        (entry) => entry.kind === 'existing' && entry.categoryId === categoryId,
+      );
+      onChange({
+        ...current,
+        categories: selected
+          ? current.categories.filter(
+              (entry) =>
+                !(entry.kind === 'existing' && entry.categoryId === categoryId),
+            )
+          : [...current.categories, { kind: 'existing', categoryId }],
+      });
+    },
+    [onChange, pending],
+  );
+
+  const addNewCategoryDraft = useCallback(() => {
+    const current = valuesRef.current;
+    if (pending || current.pendingNewCategoryName.trim() === '') return;
     onChange({
-      ...values,
-      stock: values.stock.filter((_, i) => i !== index),
-    });
-  };
-
-  const toggleExistingCategory = (categoryId: number) => {
-    if (pending) return;
-    const selected = values.categories.some(
-      (entry) => entry.kind === 'existing' && entry.categoryId === categoryId,
-    );
-    onChange({
-      ...values,
-      categories: selected
-        ? values.categories.filter(
-            (entry) =>
-              !(entry.kind === 'existing' && entry.categoryId === categoryId),
-          )
-        : [...values.categories, { kind: 'existing', categoryId }],
-    });
-  };
-
-  const addNewCategoryDraft = () => {
-    if (pending || values.pendingNewCategoryName.trim() === '') return;
-    onChange({
-      ...values,
+      ...current,
       categories: [
-        ...values.categories,
-        { kind: 'new', category: { name: values.pendingNewCategoryName } },
+        ...current.categories,
+        { kind: 'new', category: { name: current.pendingNewCategoryName } },
       ],
       pendingNewCategoryName: '',
     });
-  };
+  }, [onChange, pending]);
 
-  const removeCategoryAt = (index: number) => {
-    if (pending) return;
-    onChange({
-      ...values,
-      categories: values.categories.filter((_, i) => i !== index),
-    });
-  };
+  const handlePendingNameChange = useCallback(
+    (next: string) => {
+      if (pending) return;
+      const current = valuesRef.current;
+      onChange({ ...current, pendingNewCategoryName: next });
+    },
+    [onChange, pending],
+  );
+
+  const removeCategoryAt = useCallback(
+    (index: number) => {
+      if (pending) return;
+      const current = valuesRef.current;
+      onChange({
+        ...current,
+        categories: current.categories.filter((_, i) => i !== index),
+      });
+    },
+    [onChange, pending],
+  );
 
   // New-draft chips keyed by name + append ordinal (duplicates allowed);
   // removal still targets the draft's position in values.categories.
-  const newDrafts: { name: string; index: number; key: string }[] = [];
-  {
+  // Memoized so quantity/name keystrokes reuse the same array.
+  const newDrafts = useMemo(() => {
+    const drafts: { name: string; index: number; key: string }[] = [];
     let ordinal = 0;
     values.categories.forEach((entry, index) => {
       if (entry.kind !== 'new') return;
       ordinal += 1;
-      newDrafts.push({
+      drafts.push({
         name: entry.category.name,
         index,
         key: `new-category-${entry.category.name}-${ordinal}`,
       });
     });
-  }
+    return drafts;
+  }, [values.categories]);
 
   const saveDisabled = pending || onSubmit === undefined;
   const closeDisabled = pending || onRequestClose === undefined;
@@ -426,8 +1012,6 @@ export default function ItemForm({
   // callback only, never while a write is in flight.
   const showDelete = mode === 'edit' && onRequestDelete !== undefined;
   const deleteDisabled = pending;
-  const addCategoryDisabled =
-    pending || values.pendingNewCategoryName.trim() === '';
 
   return (
     <KeyboardAvoidingView
@@ -519,406 +1103,50 @@ export default function ItemForm({
           {t('itemFormStockLabel')}
         </Text>
         {values.stock.map((row, index) => {
-          const parsed = parseQuantityRaw(row.quantityRaw);
-          const rowValid = parsed !== null;
-          // Null-parse raw (blank/invalid/non-integer/unsafe) disables
-          // BOTH steppers: no quiet rewrite to a default, the text stays
-          // for errors.
-          const rowDecrementDisabled =
-            pending || !rowValid || (parsed as number) <= 0;
-          // Product cap: the stepper never steps above
-          // PRODUCT_MAX_QUANTITY. At the cap increment is disabled; above
-          // the cap the parse is null so both steppers stay disabled and
-          // the raw text is preserved for the parent's out-of-range error.
-          const rowIncrementDisabled =
-            pending || !rowValid || parsed === PRODUCT_MAX_QUANTITY;
-          const rowIsExhausted = parsed === 0;
-          const rowErrors = errors?.stock?.[index];
-          const selector = row.location;
-          const rowName =
-            selector.kind === 'existing'
-              ? (locations.find(
-                  (location) => location.id === selector.locationId,
-                )?.name ?? `#${selector.locationId}`)
-              : selector.location.name.trim() !== ''
-                ? selector.location.name
-                : t('itemFormLocationNew');
-          const quantityTestID = `item-form/stock-${index}/quantity`;
+          // Rows are append/remove-by-index with no stable id; the
+          // controller aligns per-row errors by this same index, so the
+          // index is the row identity here and not a reordering hazard.
+          const rowKey = `stock-${index}`;
           return (
-            // Rows are append/remove-by-index with no stable id; the
-            // controller aligns per-row errors by this same index.
-            // biome-ignore lint/suspicious/noArrayIndexKey: index is the row identity here.
-            <View key={`stock-${index}`} style={styles.stockRow}>
-              <View style={styles.stockRowHeader}>
-                <Text
-                  testID={`item-form/stock-${index}/name`}
-                  style={[styles.stockRowName, { color: palette.text }]}
-                >
-                  {rowName}
-                </Text>
-                <Pressable
-                  testID={`item-form/stock-${index}/remove`}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('itemFormRemoveStockRow', {
-                    name: rowName,
-                  })}
-                  accessibilityState={{ disabled: pending }}
-                  disabled={pending}
-                  onPress={() => removeRow(index)}
-                  style={styles.draftRemove}
-                >
-                  <Text
-                    style={[styles.draftRemoveText, { color: palette.accent }]}
-                  >
-                    {REMOVE_GLYPH}
-                  </Text>
-                </Pressable>
-              </View>
-              {row.location.kind === 'new' ? (
-                <View style={styles.inlineGroup}>
-                  <Text style={[styles.subLabel, { color: palette.text }]}>
-                    {t('itemFormNewLocationNameLabel')}
-                  </Text>
-                  <TextInput
-                    testID={`item-form/stock-${index}/location-new/name`}
-                    ref={registerNode(
-                      `item-form/stock-${index}/location-new/name`,
-                    )}
-                    accessibilityLabel={t('itemFormNewLocationNameLabel')}
-                    placeholder={t('itemFormNewLocationNamePlaceholder')}
-                    placeholderTextColor={palette.secondary}
-                    value={row.location.location.name}
-                    onChangeText={(next) =>
-                      editRowNewLocation(index, { name: next })
-                    }
-                    editable={!pending}
-                    autoCorrect={false}
-                    style={[
-                      styles.input,
-                      {
-                        color: palette.text,
-                        borderColor: palette.controlBorder,
-                      },
-                    ]}
-                  />
-                  <Text style={[styles.subLabel, { color: palette.text }]}>
-                    {t('itemFormNewLocationAddressLabel')}
-                  </Text>
-                  <TextInput
-                    testID={`item-form/stock-${index}/location-new/address`}
-                    accessibilityLabel={t('itemFormNewLocationAddressLabel')}
-                    placeholder={t('itemFormNewLocationAddressPlaceholder')}
-                    placeholderTextColor={palette.secondary}
-                    value={row.location.location.address ?? ''}
-                    onChangeText={(next) =>
-                      editRowNewLocation(index, {
-                        address: next === '' ? null : next,
-                      })
-                    }
-                    editable={!pending}
-                    autoCorrect={false}
-                    style={[
-                      styles.input,
-                      {
-                        color: palette.text,
-                        borderColor: palette.controlBorder,
-                      },
-                    ]}
-                  />
-                </View>
-              ) : null}
-              <View style={styles.quantityRow}>
-                <Pressable
-                  testID={`item-form/stock-${index}/decrement`}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('itemFormDecrement')}
-                  accessibilityState={{ disabled: rowDecrementDisabled }}
-                  disabled={rowDecrementDisabled}
-                  onPress={() => stepRowQuantity(index, -1)}
-                  style={[
-                    styles.stepper,
-                    {
-                      borderColor: palette.controlBorder,
-                      backgroundColor: rowDecrementDisabled
-                        ? palette.surface
-                        : 'transparent',
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.stepperText,
-                      {
-                        color: rowDecrementDisabled
-                          ? palette.secondary
-                          : palette.text,
-                      },
-                    ]}
-                  >
-                    {DECREMENT_GLYPH}
-                  </Text>
-                </Pressable>
-                <TextInput
-                  testID={quantityTestID}
-                  ref={registerNode(quantityTestID)}
-                  accessibilityLabel={`${rowName}, ${t('itemFormQuantityLabel')}`}
-                  placeholder={t('itemFormQuantityPlaceholder')}
-                  placeholderTextColor={palette.secondary}
-                  value={row.quantityRaw}
-                  onChangeText={(next) => {
-                    if (!pending) setRow(index, { quantityRaw: next });
-                  }}
-                  onBlur={() => {
-                    if (!pending) onFieldBlur?.('quantity', index);
-                  }}
-                  editable={!pending}
-                  keyboardType="number-pad"
-                  inputMode="numeric"
-                  returnKeyType="done"
-                  style={[
-                    styles.quantityInput,
-                    {
-                      color: palette.text,
-                      borderColor: palette.controlBorder,
-                    },
-                  ]}
-                />
-                <Pressable
-                  testID={`item-form/stock-${index}/increment`}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('itemFormIncrement')}
-                  accessibilityState={{ disabled: rowIncrementDisabled }}
-                  disabled={rowIncrementDisabled}
-                  onPress={() => stepRowQuantity(index, 1)}
-                  style={[
-                    styles.stepper,
-                    {
-                      borderColor: palette.controlBorder,
-                      backgroundColor: rowIncrementDisabled
-                        ? palette.surface
-                        : 'transparent',
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.stepperText,
-                      {
-                        color: rowIncrementDisabled
-                          ? palette.secondary
-                          : palette.text,
-                      },
-                    ]}
-                  >
-                    {INCREMENT_GLYPH}
-                  </Text>
-                </Pressable>
-              </View>
-              {rowIsExhausted ? (
-                <Text
-                  testID={`item-form/stock-${index}/exhausted`}
-                  style={[styles.exhausted, { color: palette.error }]}
-                >
-                  {t('inventoryExhausted')}
-                </Text>
-              ) : null}
-              {rowErrors?.quantity ? (
-                <FieldError
-                  testID={`item-form/error-stock-${index}-quantity`}
-                  message={rowErrors.quantity}
-                  palette={palette}
-                />
-              ) : null}
-              {rowErrors?.location ? (
-                <FieldError
-                  testID={`item-form/error-stock-${index}-location`}
-                  message={rowErrors.location}
-                  palette={palette}
-                  focusRef={registerNode(
-                    `item-form/error-stock-${index}-location`,
-                  )}
-                />
-              ) : null}
-            </View>
+            <ItemStockRow
+              key={rowKey}
+              row={row}
+              index={index}
+              locationNameById={locationNameById}
+              rowErrors={errors?.stock?.[index]}
+              pending={pending}
+              palette={palette}
+              onQuantityChange={handleQuantityChange}
+              onStep={stepRowQuantity}
+              onRemove={removeRow}
+              onEditNewLocation={editRowNewLocation}
+              onQuantityBlur={handleQuantityBlur}
+              registerNode={registerNode}
+            />
           );
         })}
-        <Text style={[styles.subLabel, { color: palette.text }]}>
-          {t('itemFormAddLocationLabel')}
-        </Text>
-        <View style={styles.chipWrap}>
-          {availableLocations.map((location) => (
-            <Pressable
-              key={location.id}
-              testID={`item-form/location-${location.id}`}
-              accessibilityRole="button"
-              accessibilityLabel={location.name}
-              accessibilityState={{ selected: false, disabled: pending }}
-              disabled={pending}
-              onPress={() => appendExistingLocation(location.id)}
-              style={[
-                styles.chip,
-                {
-                  borderColor: palette.controlBorder,
-                  backgroundColor: 'transparent',
-                },
-              ]}
-            >
-              <Text style={{ color: palette.text }}>{location.name}</Text>
-            </Pressable>
-          ))}
-          <Pressable
-            testID="item-form/location-new"
-            accessibilityRole="button"
-            accessibilityLabel={t('itemFormLocationNew')}
-            accessibilityState={{ selected: false, disabled: pending }}
-            disabled={pending}
-            onPress={appendNewLocation}
-            style={[
-              styles.chip,
-              {
-                borderColor: palette.controlBorder,
-                backgroundColor: 'transparent',
-              },
-            ]}
-          >
-            <Text style={{ color: palette.text }}>
-              {t('itemFormLocationNew')}
-            </Text>
-          </Pressable>
-        </View>
+        <LocationChips
+          availableLocations={availableLocations}
+          pending={pending}
+          palette={palette}
+          onAppendExisting={appendExistingLocation}
+          onAppendNew={appendNewLocation}
+        />
 
-        <Text style={[styles.label, { color: palette.text }]}>
-          {t('itemFormCategoriesLabel')}
-        </Text>
-        <View style={styles.chipWrap}>
-          {categories.map((category) => {
-            const selected = values.categories.some(
-              (entry) =>
-                entry.kind === 'existing' && entry.categoryId === category.id,
-            );
-            return (
-              <Pressable
-                key={category.id}
-                testID={`item-form/category-${category.id}`}
-                accessibilityRole="button"
-                accessibilityLabel={category.name}
-                accessibilityState={{ selected, disabled: pending }}
-                disabled={pending}
-                onPress={() => toggleExistingCategory(category.id)}
-                style={[
-                  styles.chip,
-                  {
-                    borderColor: palette.controlBorder,
-                    backgroundColor: selected ? palette.accent : 'transparent',
-                  },
-                ]}
-              >
-                <Text
-                  style={{
-                    color: selected ? palette.accentOn : palette.text,
-                  }}
-                >
-                  {category.name}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        {newDrafts.length > 0 ? (
-          <View style={styles.draftRow}>
-            {newDrafts.map(({ name, index, key }) => (
-              <View
-                key={key}
-                style={[styles.draftChip, { borderColor: palette.separator }]}
-              >
-                <Text
-                  style={[styles.draftText, { color: palette.text }]}
-                  numberOfLines={1}
-                >
-                  {name}
-                </Text>
-                <Pressable
-                  testID={`item-form/new-category/remove-${index}`}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('itemFormRemoveCategory', {
-                    name,
-                  })}
-                  accessibilityState={{ disabled: pending }}
-                  disabled={pending}
-                  onPress={() => removeCategoryAt(index)}
-                  style={styles.draftRemove}
-                >
-                  <Text
-                    style={[styles.draftRemoveText, { color: palette.accent }]}
-                  >
-                    {REMOVE_GLYPH}
-                  </Text>
-                </Pressable>
-              </View>
-            ))}
-          </View>
-        ) : null}
-        <Text style={[styles.subLabel, { color: palette.text }]}>
-          {t('itemFormNewCategoryLabel')}
-        </Text>
-        <View style={styles.newCategoryRow}>
-          <TextInput
-            testID="item-form/new-category/name"
-            ref={registerNode('item-form/new-category/name')}
-            accessibilityLabel={t('itemFormNewCategoryLabel')}
-            placeholder={t('itemFormNewCategoryPlaceholder')}
-            placeholderTextColor={palette.secondary}
-            value={values.pendingNewCategoryName}
-            onChangeText={(next) => {
-              if (!pending)
-                onChange({ ...values, pendingNewCategoryName: next });
-            }}
-            editable={!pending}
-            autoCorrect={false}
-            style={[
-              styles.newCategoryInput,
-              { color: palette.text, borderColor: palette.controlBorder },
-            ]}
-          />
-          <Pressable
-            testID="item-form/new-category/add"
-            accessibilityRole="button"
-            accessibilityLabel={t('itemFormNewCategoryAdd')}
-            accessibilityState={{
-              disabled: addCategoryDisabled,
-            }}
-            disabled={addCategoryDisabled}
-            onPress={addNewCategoryDraft}
-            style={[
-              styles.addButton,
-              {
-                backgroundColor: addCategoryDisabled
-                  ? palette.surface
-                  : palette.accent,
-              },
-            ]}
-          >
-            <Text
-              style={[
-                styles.addButtonText,
-                {
-                  color: addCategoryDisabled
-                    ? palette.secondary
-                    : palette.accentOn,
-                },
-              ]}
-            >
-              {t('itemFormNewCategoryAdd')}
-            </Text>
-          </Pressable>
-        </View>
-        {errors?.categories ? (
-          <FieldError
-            testID="item-form/error-categories"
-            message={errors.categories}
-            palette={palette}
-          />
-        ) : null}
+        <CategorySection
+          categories={categories}
+          selectedIds={selectedCategoryIds}
+          drafts={newDrafts}
+          pendingName={values.pendingNewCategoryName}
+          pending={pending}
+          categoriesError={errors?.categories}
+          palette={palette}
+          onToggle={toggleExistingCategory}
+          onPendingNameChange={handlePendingNameChange}
+          onAddDraft={addNewCategoryDraft}
+          onRemoveDraft={removeCategoryAt}
+          registerNode={registerNode}
+        />
 
         <Pressable
           testID="item-form/save"

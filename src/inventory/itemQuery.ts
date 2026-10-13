@@ -2,21 +2,24 @@
  * Bounded item query/read model over catalog + stock (host-fake unit;
  * real SQLite proof is isolated-fixture work).
  *
- * `queryItems(db, filter)` returns the `ItemDetail` read model with at most
- * three SQL reads regardless of N: one catalog `items` select (`id, name,
+ * `queryItems(db, filter)` returns the `ItemDetail` read model with one
+ * catalog `items` select (`id, name,
  * created_at`, optional membership filter `EXISTS (SELECT 1 FROM stock s
  * WHERE s.item_id = i.id AND s.location_id = ?)` for the location filter,
  * `ORDER BY item id ASC`), then — only when the item page is non-empty —
- * one batched `item_categories JOIN categories` select constrained to the
+ * chunked `item_categories JOIN categories` selects constrained to the
  * page ids (`WHERE jc.item_id IN (?,…)` with generated placeholders and
- * bound params, `ORDER BY item/category id ASC`), then — only when rows
- * survive the category-OR predicate — one batched stock+locations join
+ * bound params, `ORDER BY item/category id ASC`, at most
+ * `ITEM_QUERY_IN_CHUNK_SIZE` ids per statement), then — only when rows
+ * survive the category-OR predicate — chunked stock+locations joins
  * (`SELECT s.item_id, s.quantity, l.* FROM stock s JOIN locations l ON
- * l.id = s.location_id WHERE s.item_id IN (…) ORDER BY s.item_id, l.id`)
- * that delivers the breakdown AND the location names in a single read,
- * so the bound stays three. No unbounded full-table scan is ever issued,
+ * l.id = s.location_id WHERE s.item_id IN (…) ORDER BY s.item_id, l.id`,
+ * same per-statement id bound)
+ * that deliver the breakdown AND the location names, so the read count
+ * now grows with the chunk count by design: 1 + ceil(pages / chunk) +
+ * ceil(survivors / chunk). No unbounded full-table scan is ever issued,
  * and empty intermediate sets skip their follow-up reads (no items → 1
- * read; category eliminates all → 2 reads).
+ * read; category eliminates all → 1 + link chunks).
  *
  * Cross-entity text matching means the name-only prefilter cannot decide
  * the result set: a query matches when the folded query is a substring of
@@ -26,7 +29,7 @@
  * covers the whole page (not just name survivors) and the stock read
  * covers every category survivor (an undecided row may still match
  * through a location name). The worst case per keystroke is the same
- * full 3-read shape the unfiltered list already pays; a name miss no
+ * full chunked shape the unfiltered list already pays; a name miss no
  * longer short-circuits after read 1.
  *
  * The text predicate, the category-OR target-set predicate, and the
@@ -71,7 +74,11 @@
  * `StorageError('item', 'query')` with `cause`.
  */
 import type { RepositoryDb } from './database';
-import { StorageError } from './errors';
+import {
+  EntityConflictError,
+  EntityNotFoundError,
+  StorageError,
+} from './errors';
 import type {
   Category,
   ItemDetail,
@@ -82,6 +89,25 @@ import type {
 import { ValidationError, validateId } from './validation';
 
 export type { ItemFilter } from './types';
+
+/**
+ * T5: only driver/storage failures map to `StorageError`. Programming
+ * errors (`TypeError` and siblings) and non-`Error` throws are unexpected,
+ * so they propagate unchanged instead of surfacing as "storage unavailable".
+ */
+function isUnexpectedError(error: unknown): boolean {
+  if (
+    error instanceof TypeError ||
+    error instanceof RangeError ||
+    error instanceof ReferenceError ||
+    error instanceof SyntaxError ||
+    error instanceof URIError ||
+    error instanceof EvalError
+  ) {
+    return true;
+  }
+  return !(error instanceof Error);
+}
 
 /** Validated filter: trimmed query or null, resolved location, deduped cats. */
 export interface NormalizedItemFilter {
@@ -212,6 +238,39 @@ function inPlaceholders(count: number): string {
 }
 
 /**
+ * Max ids per batched `IN` statement. Well under the legacy SQLite
+ * variable limit (999) so the link/stock reads keep working at any
+ * catalog size — which limit this expo-sqlite build enforces (999 vs
+ * 32766) is unconfirmed, so the smaller bound governs — while keeping
+ * the chunk (and therefore read) count low.
+ */
+export const ITEM_QUERY_IN_CHUNK_SIZE = 450;
+
+/**
+ * Run one parameterized `IN` select per id chunk and concatenate the rows
+ * in chunk order. Chunks partition the already-`id ASC` page, and every
+ * chunk carries the same `ORDER BY`, so the concatenated rows match a
+ * single unchunked read exactly. Each statement binds at most
+ * `ITEM_QUERY_IN_CHUNK_SIZE` ids; the read count grows with the chunk
+ * count by design.
+ */
+async function getAllInIdChunks<Row>(
+  db: RepositoryDb,
+  buildSource: (chunkLength: number) => string,
+  ids: number[],
+): Promise<Row[]> {
+  const rows: Row[] = [];
+  for (let start = 0; start < ids.length; start += ITEM_QUERY_IN_CHUNK_SIZE) {
+    const chunk = ids.slice(start, start + ITEM_QUERY_IN_CHUNK_SIZE);
+    const chunkRows = await db.getAllAsync<Row>(buildSource(chunk.length), [
+      ...chunk,
+    ]);
+    rows.push(...chunkRows);
+  }
+  return rows;
+}
+
+/**
  * Fold text for search comparison only: NFD, strip combining marks, then
  * lowercase. Stored names and the returned read model stay verbatim.
  */
@@ -223,10 +282,14 @@ function foldSearchText(value: string): string {
 }
 
 /**
- * Query items with bounded reads (max three `getAllAsync` calls): the
- * catalog item page (with an optional stock-membership location filter),
- * one batched category-link read for the page ids, and one batched
- * stock+locations join for the category survivors. JS accent-folded
+ * Query items with bounded-per-statement reads: the catalog item page
+ * (with an optional stock-membership location filter), chunked
+ * category-link reads for the page ids, and chunked stock+locations joins
+ * for the category survivors. Each `IN` statement carries at most
+ * `ITEM_QUERY_IN_CHUNK_SIZE` ids and chunk results are concatenated in
+ * page (`id ASC`) order, so the merged rows match a single unchunked
+ * read. The read count now grows with the chunk count — 1 + ceil(pages /
+ * chunk) + ceil(survivors / chunk) — instead of at most three. JS accent-folded
  * substring (NFD + strip Diacritic + lowercase, literal `%_\\`) runs
  * against the raw item, link, and stock rows — matching the item name, a
  * stocked location name, or any category name with OR-with-dedup — and
@@ -256,9 +319,15 @@ export async function queryItems(
       );
     }
   } catch (error) {
-    if (error instanceof ValidationError || error instanceof StorageError) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof EntityConflictError ||
+      error instanceof StorageError
+    ) {
       throw error;
     }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('item', 'query', error);
   }
   if (itemRows.length === 0) return [];
@@ -275,28 +344,38 @@ export async function queryItems(
     foldedItemName.set(row.item_id, foldSearchText(row.item_name));
   }
 
-  // Category links batched to the whole page (id ASC order preserved). The
+  // Category links chunked over the whole page (id ASC order preserved
+  // by concatenating chunk results in order). The
   // text predicate needs every row's category names before it can run, so
-  // the read-1 name short-circuit is gone: the bound stays three reads and
-  // the worst case is the full shape the unfiltered list already pays.
+  // the read-1 name short-circuit is gone: the worst case is the full
+  // chunked shape the unfiltered list already pays, and the read count
+  // grows with the chunk count by design.
   const pageIds = itemRows.map((row) => row.item_id);
   let linkRows: CategoryLinkRow[];
   try {
-    linkRows = await db.getAllAsync<CategoryLinkRow>(
-      `${CATEGORY_LINKS_SELECT_BASE} WHERE jc.item_id IN (${inPlaceholders(pageIds.length)}) ` +
+    linkRows = await getAllInIdChunks<CategoryLinkRow>(
+      db,
+      (chunkLength) =>
+        `${CATEGORY_LINKS_SELECT_BASE} WHERE jc.item_id IN (${inPlaceholders(chunkLength)}) ` +
         'ORDER BY jc.item_id ASC, c.id ASC',
-      [...pageIds],
+      pageIds,
     );
   } catch (error) {
-    if (error instanceof ValidationError || error instanceof StorageError) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof EntityConflictError ||
+      error instanceof StorageError
+    ) {
       throw error;
     }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('item', 'query', error);
   }
 
   // Category-OR predicate on raw link id pairs — still no entity
   // allocation. Unchanged semantics: empty filter means no filtering, and
-  // a miss here still skips the stock read (2 reads total).
+  // a miss here still skips the stock read (1 + link chunks total).
   const wanted =
     normalized.categoryIds.length > 0 ? new Set(normalized.categoryIds) : null;
   const foldedCategoryName = new Map<number, string>();
@@ -352,7 +431,8 @@ export async function queryItems(
     byItem.set(link.link_item_id, list);
   }
 
-  // Stock + locations batched to the category survivors in one join. A
+  // Stock + locations chunked over the category survivors in one join
+  // shape per chunk. A
   // row undecided by name/category may still match through a stocked
   // location name, so this read cannot be skipped while survivors remain.
   // The join is inner on the stock level: a stock row whose location is
@@ -361,15 +441,23 @@ export async function queryItems(
   const survivorPageIds = categorySurvivors.map((row) => row.item_id);
   let rawStockRows: StockRow[];
   try {
-    rawStockRows = await db.getAllAsync<StockRow>(
-      `${STOCK_JOIN_SELECT_BASE} WHERE s.item_id IN (${inPlaceholders(survivorPageIds.length)}) ` +
+    rawStockRows = await getAllInIdChunks<StockRow>(
+      db,
+      (chunkLength) =>
+        `${STOCK_JOIN_SELECT_BASE} WHERE s.item_id IN (${inPlaceholders(chunkLength)}) ` +
         'ORDER BY s.item_id ASC, l.id ASC',
-      [...survivorPageIds],
+      survivorPageIds,
     );
   } catch (error) {
-    if (error instanceof ValidationError || error instanceof StorageError) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof EntityConflictError ||
+      error instanceof StorageError
+    ) {
       throw error;
     }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('item', 'query', error);
   }
   // Fail loudly on a malformed stock row (dropped column/broken alias):

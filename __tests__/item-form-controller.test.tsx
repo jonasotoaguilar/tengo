@@ -1990,3 +1990,39 @@ describe('S11 duplicate-name conflict inline errors (current language)', () => {
     expect(result.current.errors.form).toBeUndefined();
   });
 });
+
+describe('T4 form per-keystroke work (S2.6)', () => {
+  test('T4 RED: a quantity keystroke performs no JSON serialization for the dirty check', async () => {
+    const stringifySpy = jest.spyOn(JSON, 'stringify');
+    try {
+      const { result } = await renderController(baseOptions());
+      await act(async () => {
+        result.current.onChange({
+          ...(result.current.values as object),
+          name: 'Rice',
+          stock: [existingRow(10, '1'), existingRow(11, '2')],
+        });
+      });
+      stringifySpy.mockClear();
+      await act(async () => {
+        const current = result.current.values as unknown as {
+          name: string;
+          stock: { location: unknown; quantityRaw: string }[];
+        };
+        result.current.onChange({
+          ...(result.current.values as object),
+          stock: [{ ...current.stock[0], quantityRaw: '12' }, current.stock[1]],
+        });
+      });
+      const serializedFormValues = stringifySpy.mock.calls.filter(
+        ([arg]) =>
+          typeof arg === 'object' &&
+          arg !== null &&
+          'pendingNewCategoryName' in (arg as object),
+      );
+      expect(serializedFormValues).toHaveLength(0);
+    } finally {
+      stringifySpy.mockRestore();
+    }
+  });
+});

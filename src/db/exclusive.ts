@@ -12,6 +12,15 @@
  * narrow fix enables + verifies FK on the isolated connection BEFORE
  * `BEGIN IMMEDIATE` — a driver/open-path change, never a harness override.
  *
+ * T3 additionally offers `withSharedExclusiveTransactionAsync`: one lazily
+ * opened isolated connection reused across mutations (the seed pays one
+ * open, not one per row). `PRAGMA foreign_keys = ON` is a no-op inside a
+ * transaction, so the pragma is set exactly once at open — while no
+ * transaction is open — and the readback verification runs before EVERY
+ * `BEGIN IMMEDIATE`. Each task still gets its own BEGIN/COMMIT/ROLLBACK
+ * unit; tasks serialize through a promise queue so overlapping callers
+ * never share the handle mid-transaction.
+ *
  * Uses ONLY public `expo-sqlite` `openDatabaseAsync` plus
  * `SQLiteDatabase.databasePath`/`options`. No internal `NativeDatabase`
  * imports, private fields, `node_modules` patches, or monkeypatching.
@@ -66,6 +75,16 @@ export interface ManagedDatabase {
   getAllAsync<T>(source: string, params?: ManagedBindParams): Promise<T[]>;
   withTransactionAsync(task: () => Promise<void>): Promise<void>;
   withExclusiveTransactionAsync(
+    task: (txn: ManagedTransactionHandle) => Promise<void>,
+  ): Promise<void>;
+  /**
+   * Shared-connection variant (T3): reuses ONE FK-enforced isolated
+   * connection across mutations instead of opening one per mutation.
+   * Optional so fakes and older drivers keep working; item writes prefer
+   * it when present and fall back to `withExclusiveTransactionAsync`.
+   * Same one-exclusive-transaction-per-mutation guarantees.
+   */
+  withSharedExclusiveTransactionAsync?(
     task: (txn: ManagedTransactionHandle) => Promise<void>,
   ): Promise<void>;
   closeAsync(): Promise<void>;
@@ -247,6 +266,139 @@ export async function openManagedDatabase(
     closeAsync?: () => Promise<void>;
   };
   const loose = outer as unknown as LooseOuter;
+
+  // T3 shared isolated connection: lazily opened once, FK-enabled while no
+  // transaction is open, then reused across mutations. The pragma is set
+  // exactly once at open (never between BEGIN/COMMIT, where it would be a
+  // no-op) while the readback verification runs before EVERY `BEGIN
+  // IMMEDIATE`. Each task still gets its own BEGIN/COMMIT/ROLLBACK unit
+  // with the same messages as the classic path. The handle is dropped
+  // (closed) on any infrastructure failure or unrolled-back task failure,
+  // so the next mutation opens fresh; a clean rollback keeps the healthy
+  // handle cached. Nothing here changes the classic per-mutation path.
+  let shared: SQLiteDatabase | null = null;
+  let sharedQueue: Promise<void> = Promise.resolve();
+
+  async function dropShared(handle: SQLiteDatabase): Promise<void> {
+    if (shared === handle) shared = null;
+    try {
+      await handle.closeAsync();
+    } catch {
+      // The primary failure already describes the outage; close noise
+      // must not replace it.
+    }
+  }
+
+  async function ensureShared(): Promise<SQLiteDatabase> {
+    if (shared !== null) return shared;
+    const target = splitDatabasePath(databasePath);
+    const isolatedOptions: SQLiteOpenOptions = {
+      ...snapshotOptions,
+      useNewConnection: true,
+    };
+    let handle: SQLiteDatabase;
+    try {
+      handle = await opener(target.name, isolatedOptions, target.directory);
+    } catch (error) {
+      throw new ManagedDatabaseError(
+        'managed database: failed to open isolated exclusive connection',
+        { cause: error },
+      );
+    }
+    try {
+      await handle.execAsync('PRAGMA foreign_keys = ON');
+    } catch (error) {
+      await dropShared(handle);
+      throw new ManagedDatabaseError(
+        'managed database: failed to enable foreign-key enforcement',
+        { cause: error },
+      );
+    }
+    shared = handle;
+    return handle;
+  }
+
+  async function runShared(
+    task: (txn: ManagedTransactionHandle) => Promise<void>,
+  ): Promise<void> {
+    const handle = await ensureShared();
+    let flag = -1;
+    try {
+      flag = await readForeignKeysFlag(handle);
+    } catch (error) {
+      await dropShared(handle);
+      throw new ManagedDatabaseError(
+        'managed database: failed to verify foreign-key enforcement',
+        { cause: error },
+      );
+    }
+    if (flag !== 1) {
+      await dropShared(handle);
+      throw new ManagedDatabaseError(
+        `managed database: exclusive connection rejected foreign-key enforcement (PRAGMA foreign_keys=${flag})`,
+      );
+    }
+    let begun = false;
+    // Explicit failure flag: the task may reject with ANY value (null,
+    // undefined, or other falsy values), so null itself is never a valid
+    // "no failure" sentinel.
+    let failed = false;
+    let failure: unknown;
+    let rolledBack = false;
+    try {
+      try {
+        await handle.execAsync('BEGIN IMMEDIATE');
+      } catch (error) {
+        throw new ManagedDatabaseError(
+          'managed database: failed to begin exclusive transaction',
+          { cause: error },
+        );
+      }
+      begun = true;
+      await task(handle as unknown as ManagedTransactionHandle);
+      try {
+        await handle.execAsync('COMMIT');
+      } catch (error) {
+        throw new ManagedDatabaseError(
+          'managed database: failed to commit exclusive transaction',
+          { cause: error },
+        );
+      }
+    } catch (error) {
+      failed = true;
+      failure = error;
+      if (begun) {
+        try {
+          await handle.execAsync('ROLLBACK');
+          rolledBack = true;
+        } catch {
+          // Retain the primary failure; rollback noise must not replace it.
+        }
+      }
+    }
+    if (failed) {
+      // A clean rollback leaves a healthy handle, so the next mutation
+      // keeps reusing the connection. Anything else (BEGIN/COMMIT
+      // failure, a rollback that itself failed, or an infrastructure
+      // failure raised as the task error) resets the handle so the next
+      // mutation opens fresh instead of inheriting suspect state.
+      const keep =
+        begun && rolledBack && !(failure instanceof ManagedDatabaseError);
+      if (!keep) await dropShared(handle);
+      throw failure;
+    }
+  }
+
+  function withSharedExclusiveTransactionAsync(
+    task: (txn: ManagedTransactionHandle) => Promise<void>,
+  ): Promise<void> {
+    const next = sharedQueue.then(() => runShared(task));
+    sharedQueue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
   return {
     databaseName,
     directory,
@@ -278,8 +430,31 @@ export async function openManagedDatabase(
       return loose.withTransactionAsync(task);
     },
     withExclusiveTransactionAsync,
-    closeAsync: () => {
-      if (typeof loose.closeAsync !== 'function') return Promise.resolve();
+    withSharedExclusiveTransactionAsync,
+    closeAsync: async () => {
+      // The shared handle is an implementation detail of this factory:
+      // close it here so reuse never leaks a native connection. No
+      // existing caller observes this handle per mutation.
+      const handle = shared;
+      shared = null;
+      if (handle !== null) {
+        try {
+          await handle.closeAsync();
+        } catch (error) {
+          if (typeof loose.closeAsync === 'function') {
+            try {
+              await loose.closeAsync();
+            } catch {
+              // The shared-close failure below stays primary.
+            }
+          }
+          throw new ManagedDatabaseError(
+            'managed database: failed to close exclusive connection',
+            { cause: error },
+          );
+        }
+      }
+      if (typeof loose.closeAsync !== 'function') return;
       return loose.closeAsync();
     },
   };

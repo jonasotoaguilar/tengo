@@ -12,6 +12,8 @@
 
 import type { RepositoryDb, RunResult } from '../src/inventory/database';
 import {
+  assertUniqueCategoryNames,
+  assertUniqueLocationNames,
   categoryDeleteImpact,
   createCategory,
   createLocation,
@@ -522,5 +524,59 @@ describe('entity name uniqueness (S11)', () => {
     expect(failure).toMatchObject({ code: 'conflict', entity: 'location' });
     expect(failure.message).not.toContain('UNIQUE');
     expect(failure.message).not.toContain('SQLITE_CONSTRAINT');
+  });
+});
+
+describe('T3 batched S11 uniqueness checks (RED: singular scan per name today)', () => {
+  test('batch location check throws on the first stored collision after one scan', async () => {
+    const f = makeFakeDb();
+    await createLocation(f.db, { name: 'Pantry' });
+    f.calls.length = 0;
+    const failure = (await assertUniqueLocationNames(f.db, [
+      'Garage',
+      '  PANTRY ',
+      'Cellar',
+    ]).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'location' });
+    // One full-table scan no matter how many candidate names.
+    expect(
+      f.calls.filter((call) => /FROM locations/i.test(call.source)),
+    ).toHaveLength(1);
+  });
+
+  test('batch location check passes all-unique names and honors self-exclusion', async () => {
+    const f = makeFakeDb();
+    const kept = await createLocation(f.db, { name: 'Pantry' });
+    await expect(
+      assertUniqueLocationNames(f.db, ['Garage', 'Cellar']),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertUniqueLocationNames(f.db, ['  pantry '], kept.id),
+    ).resolves.toBeUndefined();
+    const failure = (await assertUniqueLocationNames(
+      f.db,
+      ['  pantry '],
+      kept.id + 999,
+    ).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+  });
+
+  test('batch category check throws on the first stored collision after one scan', async () => {
+    const f = makeFakeDb();
+    await createCategory(f.db, { name: 'Bulk' });
+    f.calls.length = 0;
+    const failure = (await assertUniqueCategoryNames(f.db, [
+      'Grains',
+      'bulk',
+    ]).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'category' });
+    expect(
+      f.calls.filter((call) => /FROM categories/i.test(call.source)),
+    ).toHaveLength(1);
+    await expect(
+      assertUniqueCategoryNames(f.db, ['Grains', 'Dairy']),
+    ).resolves.toBeUndefined();
   });
 });

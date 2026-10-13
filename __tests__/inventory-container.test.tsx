@@ -208,9 +208,13 @@ test('filter change during pending bootstrap opens only once and reads the curre
   expect(screen.getByTestId('inventory-loading')).toBeTruthy();
 
   // Filter while the first open is still in flight: the pending bootstrap
-  // must be shared, never opened again.
+  // must be shared, never opened again. T1: the keystroke settles past
+  // the debounce window first, so the single shared round already
+  // carries the current filter (the stale mount round publishes nothing).
   await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
-  await act(async () => {});
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  });
   expect(initializeDatabase).toHaveBeenCalledTimes(1);
 
   const fake = makeFakeDb();
@@ -223,8 +227,8 @@ test('filter change during pending bootstrap opens only once and reads the curre
   );
   expect(screen.getByTestId('inventory-row-1')).toBeTruthy();
   expect(screen.queryByTestId('inventory-row-2')).toBeNull();
-  // Two rounds of three bounded reads (items + links + locations each)
-  // plus the shared entity reads: stale round A publishes nothing.
+  // One shared full round carrying the settled filter (filtered + total
+  // item pages plus the choice lists): stale round A publishes nothing.
   expect(fake.getAllAsync).toHaveBeenCalledTimes(8);
   expect(initializeDatabase).toHaveBeenCalledTimes(1);
 });
@@ -240,6 +244,11 @@ test('pending bootstrap rejection after a filter change errors once, retry recov
   await renderContainer();
   await act(async () => {});
   await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
+  // T1: let the keystroke settle past the debounce window so the
+  // pending-bootstrap round already carries the current filter.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  });
   await act(async () => {});
   expect(initializeDatabase).toHaveBeenCalledTimes(1);
 
@@ -320,15 +329,21 @@ test('out-of-order filter completion lets the latest filter win', async () => {
     '2 of 2',
   );
 
-  // Filter A (Rice) starts but its item read stays slow.
+  // Filter A (Rice) starts but its item read stays slow. T1: each
+  // keystroke settles past the debounce window so A and B are two
+  // separate rounds (rapid typing without the wait would coalesce).
   await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
-  await act(async () => {});
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  });
   const roundA = pending.splice(0, pending.length);
   expect(roundA.length).toBeGreaterThan(0);
 
   // Filter B (Lentils) starts on top of A.
   await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Lentils');
-  await act(async () => {});
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  });
   const roundB = pending.splice(0, pending.length);
   expect(roundB.length).toBeGreaterThan(0);
 
@@ -359,11 +374,15 @@ test('a stale read error never replaces a newer ready list', async () => {
   await settle();
 
   await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
-  await act(async () => {});
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  });
   const roundA = pending.splice(0, pending.length);
 
   await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Lentils');
-  await act(async () => {});
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  });
   const roundB = pending.splice(0, pending.length);
 
   await act(async () => {
@@ -397,7 +416,11 @@ test('rapid rounds race safely: only the newest round renders', async () => {
   const retried = pending.splice(0, pending.length);
   expect(retried.length).toBeGreaterThan(0);
   await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
-  await act(async () => {});
+  // T1: the keystroke settles past the debounce window before its round
+  // is captured as the superseding one.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  });
   const superseding = pending.splice(0, pending.length);
   expect(superseding.length).toBeGreaterThan(0);
 
@@ -425,6 +448,10 @@ test('filtered zero with a nonzero total is no-results, not first-run', async ()
   );
 
   await fireEvent.changeText(screen.getByTestId('inventory-search'), 'quinoa');
+  // T1: the keystroke settles past the debounce window before settling.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  });
   await settle();
   expect(await screen.findByTestId('inventory-noresults-message')).toBeTruthy();
   expect(screen.queryByTestId('inventory-empty-title')).toBeNull();
@@ -683,6 +710,12 @@ describe('U2b opt-in mutations (enableMutations)', () => {
     expect(await screen.findByTestId('inventory-count')).toBeTruthy();
 
     await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
+    // T1: loading appears once the keystroke settles past the debounce
+    // window and the debounced round starts; the old page stays visible
+    // through the window itself.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
     expect(screen.getByTestId('inventory-loading')).toBeTruthy();
     await settle();
     expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
@@ -1015,6 +1048,219 @@ describe('Entity-management entry point (D6/S12 adopted)', () => {
     expect(String(manage.props.accessibilityHint ?? '')).toMatch(
       /not available/i,
     );
+    await cleanup();
+  });
+});
+
+describe('T1 search-cost optimization (S2.1)', () => {
+  function classifyCalls(
+    calls: readonly unknown[][],
+    fromIndex: number,
+  ): { catalog: number; locations: number; categories: number } {
+    let catalog = 0;
+    let locations = 0;
+    let categories = 0;
+    for (let i = fromIndex; i < calls.length; i += 1) {
+      const sql = String((calls[i] as readonly unknown[])[0] ?? '');
+      if (sql.includes('FROM locations')) locations += 1;
+      else if (
+        sql.includes('FROM categories') &&
+        !sql.includes('item_categories')
+      )
+        categories += 1;
+      else if (sql.includes('FROM items')) catalog += 1;
+    }
+    return { catalog, locations, categories };
+  }
+
+  test('rapid keystrokes share one debounced filtered read without re-reading total or choices', async () => {
+    const fake = makeFakeDb();
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderContainer();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '2 of 2',
+    );
+    const callsBefore = fake.getAllAsync.mock.calls.length;
+
+    // Three rapid keystrokes: q -> qui -> quinoa. Only the settled value
+    // may pay for a filtered item query; the unfiltered total
+    // (queryItems(db, {})) and the near-static choice lists
+    // (listLocations/listCategories) must not re-fire per keystroke.
+    await fireEvent.changeText(screen.getByTestId('inventory-search'), 'q');
+    await fireEvent.changeText(screen.getByTestId('inventory-search'), 'qui');
+    await fireEvent.changeText(
+      screen.getByTestId('inventory-search'),
+      'quinoa',
+    );
+    // Account for the debounce window before settling the reads.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    await settle();
+
+    const extra = classifyCalls(fake.getAllAsync.mock.calls, callsBefore);
+    // One debounced filtered item query (a single catalog read); zero
+    // total re-reads beyond it and zero choice-list re-reads.
+    expect(extra.catalog).toBeLessThanOrEqual(1);
+    expect(extra.locations).toBe(0);
+    expect(extra.categories).toBe(0);
+    // The settled query still filters: nothing matches 'quinoa'.
+    expect(
+      await screen.findByTestId('inventory-noresults-message'),
+    ).toBeTruthy();
+    await cleanup();
+  });
+
+  test('location selection stays view-only and costs zero reads', async () => {
+    const fake = makeFakeDb();
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderContainer();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '2 of 2',
+    );
+    const callsBefore = fake.getAllAsync.mock.calls.length;
+
+    // Fridge holds no stock: both rows stay visible (L9a), marked sin
+    // stock — with no query issued, since the location is a view only.
+    await fireEvent.press(screen.getByTestId('inventory-location-11'));
+    await settle();
+    expect(screen.getByTestId('inventory-row-1-quantity')).toHaveTextContent(
+      /Quantity 0/,
+    );
+    expect(screen.getByTestId('inventory-row-1-exhausted')).toBeTruthy();
+    expect(screen.getByTestId('inventory-row-1-breakdown')).toHaveTextContent(
+      'Pantry 2',
+    );
+    expect(screen.getByTestId('inventory-row-2-exhausted')).toBeTruthy();
+    expect(fake.getAllAsync.mock.calls.length).toBe(callsBefore);
+    await cleanup();
+  });
+
+  test('category selection still filters through the query without reloading choices', async () => {
+    const fake = makeFakeDb();
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderContainer();
+    await settle();
+    const callsBefore = fake.getAllAsync.mock.calls.length;
+
+    // No seeded links carry Bulk, so selecting it filters everything out
+    // through the category OR while the total stays honest.
+    await fireEvent.press(screen.getByTestId('inventory-category-20'));
+    await settle();
+    expect(
+      await screen.findByTestId('inventory-noresults-message'),
+    ).toBeTruthy();
+    expect(screen.getByTestId('inventory-count')).toHaveTextContent('0 of 2');
+    const extra = classifyCalls(fake.getAllAsync.mock.calls, callsBefore);
+    expect(extra.locations).toBe(0);
+    expect(extra.categories).toBe(0);
+    await cleanup();
+  });
+
+  test('clearing the search reuses the cached unfiltered page with zero reads', async () => {
+    const fake = makeFakeDb();
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderContainer();
+    await settle();
+
+    await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '1 of 2',
+    );
+    const callsBefore = fake.getAllAsync.mock.calls.length;
+
+    await fireEvent.changeText(screen.getByTestId('inventory-search'), '');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '2 of 2',
+    );
+    expect(screen.getByTestId('inventory-row-1')).toBeTruthy();
+    expect(screen.getByTestId('inventory-row-2')).toBeTruthy();
+    expect(fake.getAllAsync.mock.calls.length).toBe(callsBefore);
+    await cleanup();
+  });
+
+  test('post-write refresh reloads the total and the choice lists', async () => {
+    const repository = require('../src/inventory/itemRepository') as {
+      getItem: jest.Mock;
+      createItemFromDraft: jest.Mock;
+      updateItemFromDraft: jest.Mock;
+      deleteItem: jest.Mock;
+    };
+    repository.getItem.mockReset();
+    repository.createItemFromDraft.mockReset();
+    repository.updateItemFromDraft.mockReset();
+    repository.deleteItem.mockReset();
+    repository.createItemFromDraft.mockResolvedValue({
+      id: 3,
+      name: 'Quinoa',
+      stock: [],
+      totalQuantity: 0,
+      categoryIds: [],
+      categories: [],
+      created_at: 'created-3',
+    });
+    const fake = makeFakeDb();
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await render(
+      <I18nextProvider i18n={i18n}>
+        <InventoryContainer enableMutations />
+      </I18nextProvider>,
+    );
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '2 of 2',
+    );
+
+    // The write adds a row, a location, and a category behind the
+    // container: the background refresh must pick all three up.
+    await fireEvent.press(screen.getByTestId('inventory-add-header'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+    await fireEvent.changeText(screen.getByTestId('item-form/name'), 'Quinoa');
+    await fireEvent.press(screen.getByTestId('item-form/location-10'));
+    await fireEvent.changeText(
+      screen.getByTestId('item-form/stock-0/quantity'),
+      '1',
+    );
+    store.items = [...store.items, itemRow(3, 'Quinoa')];
+    store.locations = [
+      ...store.locations,
+      {
+        id: 12,
+        name: 'Cellar',
+        address: null,
+        created_at: 'loc-created-12',
+      },
+    ];
+    store.categories = [
+      ...store.categories,
+      { id: 21, name: 'Grains', created_at: 'cat-created-21' },
+    ];
+    const callsBefore = fake.getAllAsync.mock.calls.length;
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    await settle();
+    const extra = classifyCalls(fake.getAllAsync.mock.calls, callsBefore);
+    // The refresh re-read the total and both choice lists.
+    expect(extra.catalog).toBeGreaterThan(0);
+    expect(extra.locations).toBeGreaterThan(0);
+    expect(extra.categories).toBeGreaterThan(0);
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '3 of 3',
+    );
+    expect(screen.getByTestId('inventory-location-12')).toBeTruthy();
+    expect(screen.getByTestId('inventory-category-21')).toBeTruthy();
     await cleanup();
   });
 });

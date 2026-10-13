@@ -756,3 +756,185 @@ describe('entity-management entry point (D6)', () => {
     );
   });
 });
+
+describe('T6 list memoization (S2.7)', () => {
+  test('T6 RED: rows and group headers are isolated memo components', async () => {
+    const module = require('../src/components/InventoryList') as unknown as {
+      InventoryItemRow: unknown;
+      InventoryGroupHeader: unknown;
+    };
+    expect(module.InventoryItemRow).toBeTruthy();
+    expect((module.InventoryItemRow as { $$typeof?: symbol }).$$typeof).toBe(
+      Symbol.for('react.memo'),
+    );
+    expect(module.InventoryGroupHeader).toBeTruthy();
+    expect(
+      (module.InventoryGroupHeader as { $$typeof?: symbol }).$$typeof,
+    ).toBe(Symbol.for('react.memo'));
+  });
+
+  test('T6 RED: a search keystroke keeps the entry list identity', async () => {
+    // `data` passes through FlatList unwrapped (unlike `renderItem`, which
+    // FlatList rewraps per render in RN 0.86), so its identity observes our
+    // `entries` memo directly: the same page under the next keystroke must
+    // hand FlatList the same array, letting memoized rows skip the render.
+    const items = [makeItem({ id: 1 }), makeItem({ id: 2 })];
+    const props = baseProps({
+      items,
+      totalCount: 2,
+      filter: { query: 'Ri' },
+      onOpenItem: jest.fn(),
+    });
+    const view = await renderList(props);
+    const data = view.getByTestId('inventory-list').props.data as unknown[];
+    expect(data).toHaveLength(3);
+    await view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <InventoryList {...props} filter={{ query: 'Rice' }} />
+      </I18nextProvider>,
+    );
+    expect(view.getByTestId('inventory-list').props.data).toBe(data);
+  });
+
+  test('T6 RED: a data-unchanged parent render keeps the header element', async () => {
+    // Same filter values in a fresh object (as a parent re-render
+    // produces): the memoized header must keep its element identity instead
+    // of rebuilding the whole control tree per keystroke.
+    const props = baseProps({
+      items: [makeItem({ id: 1 })],
+      totalCount: 1,
+      filter: { query: 'Ri' },
+      onOpenItem: jest.fn(),
+    });
+    const view = await renderList(props);
+    const header = view.getByTestId('inventory-list').props
+      .ListHeaderComponent as unknown;
+    await view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <InventoryList {...props} filter={{ query: 'Ri' }} />
+      </I18nextProvider>,
+    );
+    expect(view.getByTestId('inventory-list').props.ListHeaderComponent).toBe(
+      header,
+    );
+  });
+
+  test('T6: keyExtractor keeps group-* and item-<id> values', async () => {
+    const view = await renderList(
+      baseProps({
+        items: [makeItem({ id: 7, stock: [stockAt(pantry, 1)] })],
+        totalCount: 1,
+        onOpenItem: jest.fn(),
+      }),
+    );
+    const keyExtractor = view.getByTestId('inventory-list').props
+      .keyExtractor as (entry: unknown) => string;
+    expect(
+      keyExtractor({ kind: 'group', key: 'group-10', locationId: 10 }),
+    ).toBe('group-10');
+    expect(keyExtractor({ kind: 'group', key: 'group-nostock' })).toBe(
+      'group-nostock',
+    );
+    expect(keyExtractor({ kind: 'item', item: { id: 7 } })).toBe('item-7');
+  });
+
+  test('T6: grouping order keeps the trailing sin-stock group', async () => {
+    const items = [
+      makeItem({ id: 1, stock: [stockAt(pantry, 1)] }),
+      makeItem({ id: 2, stock: [] }),
+      makeItem({ id: 3, stock: [stockAt(fridge, 1)] }),
+    ];
+    const view = await renderList(baseProps({ items, totalCount: 3 }));
+    const order = view
+      .getAllByTestId(/^inventory-(group-\w+-(name|count)|row-\d+)$/)
+      .map((node) => node.props.testID);
+    expect(order).toEqual([
+      'inventory-group-10-name',
+      'inventory-group-10-count',
+      'inventory-row-1',
+      'inventory-group-11-name',
+      'inventory-group-11-count',
+      'inventory-row-3',
+      'inventory-group-nostock-name',
+      'inventory-group-nostock-count',
+      'inventory-row-2',
+    ]);
+    expect(view.getByTestId('inventory-group-10-count')).toHaveTextContent(
+      '1 item',
+    );
+  });
+
+  test('T6: composed row label, hint, exhausted, breakdown and category copy', async () => {
+    const items = [
+      makeItem({
+        id: 4,
+        name: 'Leche',
+        stock: [stockAt(pantry, 1), stockAt(fridge, 2)],
+        categories: [bulk],
+      }),
+      makeItem({ id: 5, name: 'Salt', stock: [] }),
+    ];
+    const pressable = await renderList(
+      baseProps({ items, totalCount: 2, onOpenItem: jest.fn() }),
+    );
+    const label = String(
+      pressable.getByTestId('inventory-row-4').props.accessibilityLabel ?? '',
+    );
+    expect(label).toMatch(/Leche/);
+    expect(label).toMatch(/Quantity 3/);
+    expect(label).toMatch(/Pantry 1 · Fridge 2/);
+    expect(label).toMatch(/Bulk/);
+    expect(
+      String(
+        pressable.getByTestId('inventory-row-4').props.accessibilityHint ?? '',
+      ),
+    ).toMatch(/open/i);
+    await pressable.unmount();
+    const view = await renderList(baseProps({ items, totalCount: 2 }));
+    const staticLabel = String(
+      view.getByTestId('inventory-row-4').props.accessibilityLabel ?? '',
+    );
+    expect(staticLabel).toBe(label);
+    expect(
+      String(view.getByTestId('inventory-row-4').props.accessibilityHint ?? ''),
+    ).toMatch(/not available/i);
+    expect(view.getByTestId('inventory-row-5-exhausted')).toHaveTextContent(
+      'Exhausted',
+    );
+    expect(view.getByTestId('inventory-row-5-location')).toHaveTextContent(
+      'No stock',
+    );
+    expect(view.getByTestId('inventory-row-5-categories')).toHaveTextContent(
+      'No categories',
+    );
+  });
+
+  test('T6: L9a item with 0 at the selected location stays visible and marked', async () => {
+    const view = await renderList(
+      baseProps({
+        items: [
+          makeItem({
+            id: 8,
+            name: 'Rice',
+            stock: [stockAt(pantry, 2)],
+          }),
+        ],
+        totalCount: 1,
+        filter: { locationId: 11 },
+        onOpenItem: jest.fn(),
+      }),
+    );
+    expect(view.getByTestId('inventory-row-8-quantity')).toHaveTextContent(
+      /Quantity 0/,
+    );
+    expect(view.getByTestId('inventory-row-8-exhausted')).toBeTruthy();
+    expect(view.getByTestId('inventory-row-8-breakdown')).toHaveTextContent(
+      'Pantry 2',
+    );
+    const label = String(
+      view.getByTestId('inventory-row-8').props.accessibilityLabel ?? '',
+    );
+    expect(label).toMatch(/exhausted/i);
+    expect(label).toMatch(/Pantry 2/);
+  });
+});

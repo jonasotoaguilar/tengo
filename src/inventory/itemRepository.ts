@@ -57,6 +57,25 @@ import {
   validateLocationInput,
 } from './validation';
 
+/**
+ * T5: only driver/storage failures map to `StorageError`. Programming
+ * errors (`TypeError` and siblings) and non-`Error` throws are unexpected,
+ * so they propagate unchanged instead of surfacing as "storage unavailable".
+ */
+function isUnexpectedError(error: unknown): boolean {
+  if (
+    error instanceof TypeError ||
+    error instanceof RangeError ||
+    error instanceof ReferenceError ||
+    error instanceof SyntaxError ||
+    error instanceof URIError ||
+    error instanceof EvalError
+  ) {
+    return true;
+  }
+  return !(error instanceof Error);
+}
+
 interface ItemRow {
   id: number;
   name: string;
@@ -157,6 +176,7 @@ async function runExclusive(
     ) {
       throw error;
     }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('item', operation, error);
   }
 }
@@ -199,6 +219,15 @@ async function requireLocations(
         [...group],
       );
     } catch (error) {
+      if (
+        error instanceof ValidationError ||
+        error instanceof EntityNotFoundError ||
+        error instanceof EntityConflictError ||
+        error instanceof StorageError
+      ) {
+        throw error;
+      }
+      if (isUnexpectedError(error)) throw error;
       throw new StorageError('item', 'fetch', error);
     }
     for (const row of rows) found.set(row.id, row);
@@ -228,6 +257,15 @@ async function requireCategories(
         [...group],
       );
     } catch (error) {
+      if (
+        error instanceof ValidationError ||
+        error instanceof EntityNotFoundError ||
+        error instanceof EntityConflictError ||
+        error instanceof StorageError
+      ) {
+        throw error;
+      }
+      if (isUnexpectedError(error)) throw error;
       throw new StorageError('item', 'fetch', error);
     }
     for (const row of rows) found.set(row.id, row);
@@ -263,9 +301,15 @@ async function detailForRow(
       created_at: row.created_at,
     };
   } catch (error) {
-    if (error instanceof EntityNotFoundError || error instanceof StorageError) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof EntityConflictError ||
+      error instanceof StorageError
+    ) {
       throw error;
     }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('item', 'fetch', error);
   }
 }
@@ -280,7 +324,15 @@ async function requireItemRow(db: RepositoryDb, id: number): Promise<ItemRow> {
     if (row === null) throw new EntityNotFoundError('item', id);
     return row;
   } catch (error) {
-    if (error instanceof EntityNotFoundError) throw error;
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof EntityConflictError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('item', 'fetch', error);
   }
 }
@@ -571,6 +623,15 @@ async function resolveEntityIds(
         [...group],
       );
     } catch (error) {
+      if (
+        error instanceof ValidationError ||
+        error instanceof EntityNotFoundError ||
+        error instanceof EntityConflictError ||
+        error instanceof StorageError
+      ) {
+        throw error;
+      }
+      if (isUnexpectedError(error)) throw error;
       throw new StorageError('item', 'fetch', error);
     }
     for (const row of rows) idsByKey.set(normalizeNameKey(row.name), row.id);
@@ -700,9 +761,15 @@ export async function listItems(db: RepositoryDb): Promise<ItemDetail[]> {
     }
     return details;
   } catch (error) {
-    if (error instanceof EntityNotFoundError || error instanceof StorageError) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof EntityConflictError ||
+      error instanceof StorageError
+    ) {
       throw error;
     }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('item', 'list', error);
   }
 }

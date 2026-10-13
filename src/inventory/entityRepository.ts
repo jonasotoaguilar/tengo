@@ -33,6 +33,7 @@ import type {
 } from './types';
 import {
   normalizeNameKey,
+  ValidationError,
   validateCategoryInput,
   validateId,
   validateLocationInput,
@@ -70,6 +71,25 @@ function toCategory(row: CategoryRow): Category {
 interface NameRow {
   id: number;
   name: string;
+}
+
+/**
+ * T5: only driver/storage failures map to `StorageError`. Programming
+ * errors (`TypeError` and siblings) and non-`Error` throws are unexpected,
+ * so they propagate unchanged instead of surfacing as "storage unavailable".
+ */
+function isUnexpectedError(error: unknown): boolean {
+  if (
+    error instanceof TypeError ||
+    error instanceof RangeError ||
+    error instanceof ReferenceError ||
+    error instanceof SyntaxError ||
+    error instanceof URIError ||
+    error instanceof EvalError
+  ) {
+    return true;
+  }
+  return !(error instanceof Error);
 }
 
 /**
@@ -187,8 +207,15 @@ export async function createLocation(
     }
     return toLocation(row);
   } catch (error) {
-    if (error instanceof EntityConflictError) throw error;
-    if (error instanceof StorageError) throw error;
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     if (isUniqueConstraintViolation(error)) {
       throw new EntityConflictError('location', normalized.name);
     }
@@ -204,6 +231,15 @@ export async function listLocations(db: RepositoryDb): Promise<Location[]> {
     );
     return rows.map(toLocation);
   } catch (error) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('location', 'list', error);
   }
 }
@@ -222,7 +258,15 @@ export async function getLocation(
     if (row === null) throw new EntityNotFoundError('location', validId);
     return toLocation(row);
   } catch (error) {
-    if (error instanceof EntityNotFoundError) throw error;
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('location', 'fetch', error);
   }
 }
@@ -249,8 +293,15 @@ export async function updateLocation(
     }
     return await getLocation(db, validId);
   } catch (error) {
-    if (error instanceof EntityConflictError) throw error;
-    if (error instanceof EntityNotFoundError) throw error;
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     if (isUniqueConstraintViolation(error)) {
       throw new EntityConflictError('location', normalized.name);
     }
@@ -277,7 +328,15 @@ export async function deleteLocation(
       throw new EntityNotFoundError('location', validId);
     }
   } catch (error) {
-    if (error instanceof EntityNotFoundError) throw error;
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('location', 'delete', error);
   }
 }
@@ -316,7 +375,15 @@ export async function locationDeleteImpact(
       unstockedItems: unstocked?.count ?? 0,
     };
   } catch (error) {
-    if (error instanceof EntityNotFoundError) throw error;
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('location', 'fetch', error);
   }
 }
@@ -342,8 +409,15 @@ export async function createCategory(
     }
     return toCategory(row);
   } catch (error) {
-    if (error instanceof EntityConflictError) throw error;
-    if (error instanceof StorageError) throw error;
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     if (isUniqueConstraintViolation(error)) {
       throw new EntityConflictError('category', normalized.name);
     }
@@ -359,6 +433,15 @@ export async function listCategories(db: RepositoryDb): Promise<Category[]> {
     );
     return rows.map(toCategory);
   } catch (error) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('category', 'list', error);
   }
 }
@@ -377,7 +460,15 @@ export async function getCategory(
     if (row === null) throw new EntityNotFoundError('category', validId);
     return toCategory(row);
   } catch (error) {
-    if (error instanceof EntityNotFoundError) throw error;
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('category', 'fetch', error);
   }
 }
@@ -404,8 +495,15 @@ export async function updateCategory(
     }
     return await getCategory(db, validId);
   } catch (error) {
-    if (error instanceof EntityConflictError) throw error;
-    if (error instanceof EntityNotFoundError) throw error;
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     if (isUniqueConstraintViolation(error)) {
       throw new EntityConflictError('category', normalized.name);
     }
@@ -437,7 +535,15 @@ export async function categoryDeleteImpact(
     );
     return { items: linked?.count ?? 0 };
   } catch (error) {
-    if (error instanceof EntityNotFoundError) throw error;
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('category', 'fetch', error);
   }
 }
@@ -460,7 +566,15 @@ export async function deleteCategory(
       throw new EntityNotFoundError('category', validId);
     }
   } catch (error) {
-    if (error instanceof EntityNotFoundError) throw error;
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityConflictError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('category', 'delete', error);
   }
 }

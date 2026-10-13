@@ -2026,3 +2026,64 @@ describe('T4 form per-keystroke work (S2.6)', () => {
     }
   });
 });
+
+test('U1: create with a last-used location starts with exactly one empty-quantity row', async () => {
+  const { result } = await renderController(
+    baseOptions({ route: { kind: 'create', prefilledLocationId: 10 } }),
+  );
+  expect(result.current.mode).toBe('add');
+  expect(result.current.loadState).toBe('ready');
+  expect(result.current.values).toEqual({
+    name: '',
+    stock: [existingRow(10, '')],
+    categories: [],
+    pendingNewCategoryName: '',
+  });
+  // A prefill is a starting point, not a user edit: clean, no confirm.
+  expect(result.current.dirty).toBe(false);
+});
+
+test('U1: an invalid prefilled location falls back to the blank form', async () => {
+  const { result } = await renderController(
+    baseOptions({
+      route: { kind: 'create', prefilledLocationId: 0 },
+    }),
+  );
+  expect(result.current.values.stock).toEqual([]);
+});
+
+test('U1: an untouched prefill saves catalog-only (blank-and-droppable unchanged)', async () => {
+  const repository = makeRepository();
+  const { result } = await renderController(
+    baseOptions({
+      repository,
+      route: { kind: 'create', prefilledLocationId: 10 },
+    }),
+  );
+  await act(async () => {
+    result.current.onChange({
+      ...(result.current.values as object),
+      name: 'Rice',
+    });
+  });
+  await act(async () => {
+    await result.current.onSave();
+  });
+  expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+  const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+    string,
+    unknown
+  >;
+  expect(draft.stock).toEqual([]);
+});
+
+test('U1 PRESERVE: edit loads only the detail rows and never gains a prefilled row', async () => {
+  const repository = makeRepository();
+  const { result } = await renderController(
+    baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+  );
+  await act(async () => {});
+  expect(result.current.mode).toBe('edit');
+  expect(result.current.loadState).toBe('ready');
+  expect(result.current.values.stock).toEqual([existingRow(10, '2')]);
+});

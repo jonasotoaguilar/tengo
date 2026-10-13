@@ -37,7 +37,7 @@ import InventoryList, {
 import { initializeDatabase } from '../db';
 import type { RepositoryDb } from '../inventory/database';
 import { listCategories, listLocations } from '../inventory/entityRepository';
-import { queryItems } from '../inventory/itemQuery';
+import { getLastUsedLocationId, queryItems } from '../inventory/itemQuery';
 import type {
   Category,
   ItemDetail,
@@ -151,6 +151,11 @@ export default function InventoryContainer({
   // App-lifetime managed handle: set once by a successful bootstrap and
   // reused by every filter/retry round. Never closed here.
   const dbRef = useRef<RepositoryDb | null>(null);
+  // U1: live mirror of the loaded locations so the Add press can
+  // validate the derived last-used id without churning handleAdd's
+  // identity (which the list holds by ref).
+  const locationsRef = useRef<Location[]>([]);
+  locationsRef.current = locations;
   // Pending bootstrap shared by every round: a filter change or retry while
   // the first open is still in flight must reuse it, never open again (the
   // stale winner's handle would otherwise be discarded and leak). Cleared
@@ -175,8 +180,34 @@ export default function InventoryContainer({
   const staticLoadedRef = useRef(false);
   const allItemsRef = useRef<ItemDetail[]>([]);
 
+  // U1 quick capture: the form opens already pointed at the household's
+  // last-used location, derived from the database (bounded single-row
+  // read, no new state). A fresh database (null), a location deleted
+  // after the choice lists loaded (unknown id), and a read failure all
+  // fall back to the blank form, exactly as today — Add never fails.
   const handleAdd = useCallback((prefilledName?: string) => {
-    setRoute({ kind: 'create', prefilledName });
+    const db = dbRef.current;
+    const open = (prefilledLocationId?: number) => {
+      setRoute({ kind: 'create', prefilledName, prefilledLocationId });
+    };
+    if (db === null) {
+      open();
+      return;
+    }
+    const known = new Set(locationsRef.current.map((location) => location.id));
+    void (async () => {
+      try {
+        const lastUsed = await getLastUsedLocationId(db);
+        if (lastUsed !== null && known.has(lastUsed)) {
+          open(lastUsed);
+          return;
+        }
+      } catch {
+        // Fall through to the blank form below: a prefill miss must
+        // never block adding an item.
+      }
+      open();
+    })();
   }, []);
   const handleOpenItem = useCallback((id: number) => {
     setRoute({ kind: 'edit', itemId: id });

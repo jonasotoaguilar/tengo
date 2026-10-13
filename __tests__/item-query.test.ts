@@ -16,7 +16,11 @@
  */
 import type { RepositoryDb } from '../src/inventory/database';
 import { StorageError } from '../src/inventory/errors';
-import { normalizeItemFilter, queryItems } from '../src/inventory/itemQuery';
+import {
+  getLastUsedLocationId,
+  normalizeItemFilter,
+  queryItems,
+} from '../src/inventory/itemQuery';
 import { ValidationError } from '../src/inventory/validation';
 
 function makeQueryFake() {
@@ -796,5 +800,141 @@ test('v5 PRESERVE: one answer per product with total and stable order', async ()
   expect(got[0].id).toBe(many);
   expect(got[0].totalQuantity).toBe(7);
   expect(got[0].stock.map((s) => s.locationId)).toEqual([pantry, garage]);
+  expect(f.calls).toHaveLength(3);
+});
+
+/**
+ * U1 quick capture: the last-used location is derived from the data —
+ * the location of the newest stocked item — with no new table, no
+ * preference, and no schema change. These tests run RED before the read
+ * exists and GREEN after.
+ */
+function makeLastUsedFake() {
+  const calls: { source: string; params: unknown[] }[] = [];
+  const locations = new Map<number, string>();
+  const stock: { itemId: number; locationId: number }[] = [];
+  let nextId = 1;
+  const db = {
+    runAsync: jest.fn(),
+    getFirstAsync: jest.fn(async (source: string, params: unknown[] = []) => {
+      calls.push({ source, params });
+      if (/FROM stock s/i.test(source)) {
+        // Honest executor for the U1 shape: only stock whose location
+        // still exists ranks, newest item first, smallest location on
+        // ties — mirroring the ORDER BY the implementation must carry.
+        const ranked = stock
+          .filter((s) => locations.has(s.locationId))
+          .sort((a, b) => b.itemId - a.itemId || a.locationId - b.locationId);
+        const top = ranked[0];
+        return top === undefined ? null : { location_id: top.locationId };
+      }
+      throw new Error(`fake: unhandled ${source}`);
+    }),
+    getAllAsync: jest.fn(),
+  } as unknown as RepositoryDb;
+  const loc = (name: string) => {
+    const id = nextId++;
+    locations.set(id, name);
+    return id;
+  };
+  const item = (stockAt: number[]) => {
+    const id = nextId++;
+    for (const locationId of stockAt) stock.push({ itemId: id, locationId });
+    return id;
+  };
+  // Cascade-equivalent removal: deleting a location drops its stock rows
+  // (stock.location_id ON DELETE CASCADE), never the items.
+  const deleteLocation = (locationId: number) => {
+    locations.delete(locationId);
+    for (let i = stock.length - 1; i >= 0; i -= 1) {
+      if (stock[i].locationId === locationId) stock.splice(i, 1);
+    }
+  };
+  return { db, calls, loc, item, deleteLocation };
+}
+
+test('U1: last-used location is the newest stocked item location in one bounded read', async () => {
+  const f = makeLastUsedFake();
+  const pantry = f.loc('Pantry');
+  const fridge = f.loc('Fridge');
+  f.item([pantry]);
+  f.item([fridge]);
+  expect(await getLastUsedLocationId(f.db)).toBe(fridge);
+  // Bounded by design: exactly one single-row read, no params, and the
+  // order that answers "last used" (newest item first) is in the SQL.
+  expect(f.calls).toHaveLength(1);
+  expect(f.calls[0].params).toEqual([]);
+  expect(f.calls[0].source).toContain('JOIN locations');
+  expect(f.calls[0].source).toContain('ORDER BY');
+  expect(f.calls[0].source).toContain('DESC');
+  expect(f.calls[0].source).toContain('LIMIT 1');
+});
+
+test('U1: a newest item with no stock is skipped; multi-location ties break smallest-first', async () => {
+  const f = makeLastUsedFake();
+  const pantry = f.loc('Pantry');
+  const garage = f.loc('Garage');
+  f.item([pantry]);
+  f.item([garage, pantry]);
+  // Newest stocked item holds two locations: deterministic smallest id.
+  expect(await getLastUsedLocationId(f.db)).toBe(pantry);
+  // A newer catalog-only item contributes no stock, so the answer stands.
+  f.item([]);
+  expect(await getLastUsedLocationId(f.db)).toBe(pantry);
+});
+
+test('U1: a fresh database with no stock reads as null', async () => {
+  const empty = makeLastUsedFake();
+  empty.loc('Pantry');
+  expect(await getLastUsedLocationId(empty.db)).toBeNull();
+  // Catalog-only items are legitimate sin-stock rows, never a location.
+  const sinStock = makeLastUsedFake();
+  const pantry = sinStock.loc('Pantry');
+  void pantry;
+  sinStock.item([]);
+  sinStock.item([]);
+  expect(await getLastUsedLocationId(sinStock.db)).toBeNull();
+});
+
+test('U1: a deleted location never surfaces — older stock or null wins', async () => {
+  const f = makeLastUsedFake();
+  const pantry = f.loc('Pantry');
+  const fridge = f.loc('Fridge');
+  f.item([pantry]);
+  f.item([fridge]);
+  f.deleteLocation(fridge);
+  expect(await getLastUsedLocationId(f.db)).toBe(pantry);
+  f.deleteLocation(pantry);
+  expect(await getLastUsedLocationId(f.db)).toBeNull();
+});
+
+test('U1: driver failure maps to a generic storage query error with cause', async () => {
+  const failing = {
+    runAsync: jest.fn(),
+    getFirstAsync: jest.fn().mockRejectedValue(new Error('disk I/O error 9')),
+    getAllAsync: jest.fn(),
+  } as unknown as RepositoryDb;
+  const failure = (await getLastUsedLocationId(failing).catch(
+    (e: unknown) => e,
+  )) as StorageError;
+  expect(failure).toBeInstanceOf(StorageError);
+  expect(failure).toMatchObject({
+    code: 'storage',
+    entity: 'item',
+    operation: 'query',
+  });
+  expect(failure.message).not.toContain('disk I/O');
+  expect(String(failure.cause ?? failure)).toMatch(/disk I\/O/);
+});
+
+test('U1 PRESERVE: the bounded queryItems shape is unchanged by the new read', async () => {
+  const f = makeQueryFake();
+  const pantry = f.loc('Pantry');
+  const rice = f.item('Rice', [{ locationId: pantry, quantity: 2 }]);
+  f.item('Ghost', [], []);
+  const page = await queryItems(f.db);
+  expect(page.map((i) => i.id)).toEqual([rice, rice + 1]);
+  expect(page[0].totalQuantity).toBe(2);
+  expect(page[1].totalQuantity).toBe(0);
   expect(f.calls).toHaveLength(3);
 });

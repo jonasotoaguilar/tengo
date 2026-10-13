@@ -61,7 +61,18 @@ import {
 } from '../inventory/validation';
 
 export type ItemFormRoute =
-  | { kind: 'create'; prefilledName?: string }
+  | {
+      kind: 'create';
+      prefilledName?: string;
+      /**
+       * U1 quick capture: the derived last-used location. The create
+       * session starts with exactly one stock row pointed at it (empty
+       * quantity, so the blank-and-droppable rule is unchanged). Absent
+       * or invalid means the blank form, exactly as before; edit routes
+       * never carry it and never change.
+       */
+      prefilledLocationId?: number;
+    }
   | { kind: 'edit'; itemId: number };
 
 /** Injectable repository seam: real functions by default, fakes in tests. */
@@ -148,11 +159,34 @@ export interface ItemFormController {
   onRetry: () => void;
 }
 
-/** Blank controlled values: a name plus zero stock rows (sin stock). */
-export function blankItemFormValues(prefilledName = ''): ItemFormValues {
+/**
+ * Blank controlled values: a name plus zero stock rows (sin stock) — or,
+ * for U1 quick capture, exactly one row pointed at the derived last-used
+ * location with an empty quantity (still droppable on save). Only a
+ * positive safe-integer location id prefills; anything else (absent,
+ * stale, malformed) falls back to the blank form rather than a stale row.
+ */
+export function blankItemFormValues(
+  prefilledName = '',
+  prefilledLocationId?: number,
+): ItemFormValues {
+  const prefilled =
+    prefilledLocationId !== undefined &&
+    Number.isSafeInteger(prefilledLocationId) &&
+    prefilledLocationId > 0
+      ? [
+          {
+            location: {
+              kind: 'existing' as const,
+              locationId: prefilledLocationId,
+            },
+            quantityRaw: '',
+          },
+        ]
+      : [];
   return {
     name: prefilledName,
-    stock: [],
+    stock: prefilled,
     categories: [],
     pendingNewCategoryName: '',
   };
@@ -245,8 +279,12 @@ function sameValues(a: ItemFormValues, b: ItemFormValues): boolean {
  * of a route epoch used by the session-epoch guard. Do not duplicate.
  */
 function routeIdentityOf(route: ItemFormRoute): string {
+  // The create identity carries the prefill: two creates at different
+  // last-used locations are different epochs, so a stale session can
+  // never publish one route's prefill onto another. Edit identity is
+  // byte-identical to before (U1 leaves edit mode untouched).
   return route.kind === 'create'
-    ? `create:${route.prefilledName ?? ''}`
+    ? `create:${route.prefilledName ?? ''}:${route.prefilledLocationId ?? ''}`
     : `edit:${route.itemId}`;
 }
 
@@ -259,15 +297,23 @@ export default function useItemFormController(
   const routeItemId = route.kind === 'edit' ? route.itemId : null;
   const routePrefill =
     route.kind === 'create' ? (route.prefilledName ?? '') : '';
+  const routePrefilledLocationId =
+    route.kind === 'create' ? route.prefilledLocationId : undefined;
 
   const [values, setValues] = useState<ItemFormValues>(() =>
     route.kind === 'create'
-      ? blankItemFormValues(route.prefilledName ?? '')
+      ? blankItemFormValues(
+          route.prefilledName ?? '',
+          route.prefilledLocationId,
+        )
       : blankItemFormValues(),
   );
   const [baseline, setBaseline] = useState<ItemFormValues>(() =>
     route.kind === 'create'
-      ? blankItemFormValues(route.prefilledName ?? '')
+      ? blankItemFormValues(
+          route.prefilledName ?? '',
+          route.prefilledLocationId,
+        )
       : blankItemFormValues(),
   );
   const [errors, setErrors] = useState<ItemFormErrors>({});
@@ -474,7 +520,7 @@ export default function useItemFormController(
     sessionEpoch.current = routeIdentityOf(savedCallbacks.current.route);
     if (routeKind === 'create') {
       loadTicket.current += 1;
-      const blank = blankItemFormValues(routePrefill);
+      const blank = blankItemFormValues(routePrefill, routePrefilledLocationId);
       valuesRef.current = blank;
       setValues(blank);
       setBaseline(blank);
@@ -503,7 +549,7 @@ export default function useItemFormController(
     confirmDeleteArmed.current = false;
     setLoadState('loading');
     if (routeItemId !== null) loadEditRef.current(routeItemId);
-  }, [routeKind, routeItemId, routePrefill]);
+  }, [routeKind, routeItemId, routePrefill, routePrefilledLocationId]);
 
   const validateForSave = useCallback(
     (

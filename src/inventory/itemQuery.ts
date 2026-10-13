@@ -535,3 +535,58 @@ export async function queryItems(
   }
   return details;
 }
+
+/**
+ * U1 quick capture: derive the last-used location from the data — the
+ * location of the newest item's stock — with no new table, no
+ * preference, and no schema change. A single bounded `LIMIT 1` read:
+ * `ORDER BY items.id DESC` answers "last used" because catalog ids are
+ * the creation-order authority (`AUTOINCREMENT`; `created_at` is only a
+ * default timestamp and `stock` carries no timestamp of its own, so the
+ * newest stocked item is the proxy for the household's latest habit).
+ * The `locations` join means a deleted location can never surface (its
+ * stock rows are cascade-removed, and any remnant is filtered here), and
+ * the `locations.id ASC` tie-break keeps a multi-location newest item
+ * deterministic. A fresh database (no stock rows) reads as `null` so the
+ * add form opens exactly as it does today. Driver failures map to the
+ * same generic `StorageError('item', 'query')` as `queryItems`; a
+ * malformed row fails loudly instead of prefilling a bogus location.
+ */
+export async function getLastUsedLocationId(
+  db: RepositoryDb,
+): Promise<number | null> {
+  let row: { location_id: unknown } | null;
+  try {
+    row = await db.getFirstAsync<{ location_id: unknown }>(
+      'SELECT l.id AS location_id FROM stock s ' +
+        'JOIN items i ON i.id = s.item_id ' +
+        'JOIN locations l ON l.id = s.location_id ' +
+        'ORDER BY i.id DESC, l.id ASC LIMIT 1',
+    );
+  } catch (error) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof EntityConflictError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
+    throw new StorageError('item', 'query', error);
+  }
+  if (row === null) return null;
+  const locationId = (row as { location_id: unknown }).location_id;
+  if (
+    typeof locationId !== 'number' ||
+    !Number.isSafeInteger(locationId) ||
+    locationId <= 0
+  ) {
+    throw new StorageError(
+      'item',
+      'query',
+      new Error(`malformed last-used location row: ${JSON.stringify(row)}`),
+    );
+  }
+  return locationId;
+}

@@ -20,6 +20,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -172,8 +173,71 @@ function detailToValues(detail: ItemDetail): ItemFormValues {
   };
 }
 
+function locationDraftEquals(
+  a: ItemStockRowValues['location'],
+  b: ItemStockRowValues['location'],
+): boolean {
+  if (a?.kind !== b?.kind) return false;
+  if (a.kind === 'existing' && b.kind === 'existing') {
+    return a.locationId === b.locationId;
+  }
+  if (a.kind === 'new' && b.kind === 'new') {
+    return (
+      a.location.name === b.location.name &&
+      a.location.address === b.location.address
+    );
+  }
+  return false;
+}
+
+function stockRowEquals(a: ItemStockRowValues, b: ItemStockRowValues): boolean {
+  return (
+    a.quantityRaw === b.quantityRaw &&
+    locationDraftEquals(a.location, b.location)
+  );
+}
+
+function categoryDraftEquals(
+  a: ItemCategoryDraft,
+  b: ItemCategoryDraft,
+): boolean {
+  if (a?.kind !== b?.kind) return false;
+  if (a.kind === 'existing' && b.kind === 'existing') {
+    return a.categoryId === b.categoryId;
+  }
+  if (a.kind === 'new' && b.kind === 'new') {
+    return a.category?.name === b.category?.name;
+  }
+  return false;
+}
+
+// Cheap dirty comparison: field-wise with early exit, no JSON
+// serialization. Compares every persisted field plus the UI-only pending
+// text (which still counts as dirty), so it agrees with the previous
+// stringify comparison on every value the form can produce.
 function sameValues(a: ItemFormValues, b: ItemFormValues): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  if (a === b) return true;
+  if (
+    a.name !== b.name ||
+    a.pendingNewCategoryName !== b.pendingNewCategoryName
+  ) {
+    return false;
+  }
+  const aStock = a.stock ?? [];
+  const bStock = b.stock ?? [];
+  if (aStock.length !== bStock.length) return false;
+  for (let index = 0; index < aStock.length; index += 1) {
+    if (!stockRowEquals(aStock[index], bStock[index])) return false;
+  }
+  const aCategories = a.categories ?? [];
+  const bCategories = b.categories ?? [];
+  if (aCategories.length !== bCategories.length) return false;
+  for (let index = 0; index < aCategories.length; index += 1) {
+    if (!categoryDraftEquals(aCategories[index], bCategories[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -896,6 +960,14 @@ export default function useItemFormController(
     loadEdit(activeRoute.itemId);
   }, [loadEdit]);
 
+  // Cheap dirty flag, memoized so renders that touch neither values nor
+  // baseline (error updates, submitting toggles) skip the comparison
+  // entirely; keystrokes run the early-exit field walk, never stringify.
+  const dirty = useMemo(
+    () => !sameValues(values, baseline),
+    [values, baseline],
+  );
+
   return {
     mode: route.kind === 'create' ? 'add' : 'edit',
     loadState,
@@ -904,7 +976,7 @@ export default function useItemFormController(
     errors,
     formErrorCode,
     submitting: saving || deleting,
-    dirty: !sameValues(values, baseline),
+    dirty,
     confirmDiscard,
     confirmDelete,
     onChange,

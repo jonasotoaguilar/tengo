@@ -63,3 +63,23 @@ These rules exist because they were broken and the user reported the damage.
 - **Never serve a bundle from a dirty `src/`.** A device run on a worktree with
   uncommitted source edits is an inconsistent snapshot and proves nothing; one
   such run already produced a misleading native crash in this project.
+
+## Worktree and delegation hygiene
+
+These rules also exist because they were broken, twice each.
+
+- **A task's spec document must exist inside the worktree the worker reads.** A
+  spec written only in another checkout is invisible to the worker: it happened
+  with `odd/tasks/optimizations.md` and again with `odd/tasks/product-v2.md`, and
+  both times the worker correctly said the document was missing and worked from
+  the brief alone. Copy the spec into the worktree before delegating, and commit
+  it with the unit it governs.
+- **Format and commit per unit, with an explicit file list.** The pre-commit hook
+  rejects unformatted or lint-failing files, so run `npx biome check --write` on
+  exactly the files of the unit being committed — never across another writer's
+  in-flight files — and stage those files by name. Never `git add .` in a shared
+  worktree: it sweeps up other units and the `node_modules` symlink.
+- **Parallel writers need disjoint surfaces.** Several workers may share one
+  worktree only when their allowed edit surfaces do not overlap; a unit that
+  changes a shared type or the data model lands before the units that consume it,
+  not beside them.

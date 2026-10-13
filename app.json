@@ -29,7 +29,8 @@
         {
           "cameraPermission": "Allow Tengo to scan barcodes with your camera."
         }
-      ]
+      ],
+      "expo-notifications"
     ]
   }
 }

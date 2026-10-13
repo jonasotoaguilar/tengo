@@ -105,6 +105,10 @@ export const en = {
     'A category with this name already exists.',
   itemFormSaved: 'Item saved.',
   itemFormDeleted: 'Item deleted.',
+  reminderLowStockTitle: 'Running low',
+  reminderLowStockBody: '"{{name}}" is down to {{quantity}}.',
+  reminderExpiryTitle: 'Expiring soon',
+  reminderExpiryBody: '"{{name}}" expires on {{date}}.',
   inventoryScan: 'Scan',
   inventoryScanUnavailableHint:
     'Scanning barcodes is not available in this preview yet.',
@@ -259,6 +263,10 @@ export const es: typeof en = {
   itemFormErrorCategoryNameConflict: 'Ya existe una categoría con este nombre.',
   itemFormSaved: 'Artículo guardado.',
   itemFormDeleted: 'Artículo eliminado.',
+  reminderLowStockTitle: 'Queda poco',
+  reminderLowStockBody: '"{{name}}" queda en {{quantity}}.',
+  reminderExpiryTitle: 'Caduca pronto',
+  reminderExpiryBody: '"{{name}}" caduca el {{date}}.',
   inventoryScan: 'Escanear',
   inventoryScanUnavailableHint:
     'Escanear códigos aún no está disponible en esta vista previa.',

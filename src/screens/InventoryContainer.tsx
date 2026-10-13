@@ -61,11 +61,15 @@ const LIGHT: Palette = {
   noticeBackground: '#1A1C19',
   noticeText: '#FFFFFF',
 };
-
 const DARK: Palette = {
   noticeBackground: '#F2F1ED',
   noticeText: '#121212',
 };
+
+// T1: search debounce window. Keystrokes that land inside this window
+// collapse into one filtered item query; the choice lists and the
+// unfiltered total never re-fire for typing (see the read effect).
+const SEARCH_DEBOUNCE_MS = 300;
 
 /**
  * Stable default bootstrap: the single production `tengo.db` open. A
@@ -107,6 +111,13 @@ export default function InventoryContainer({
   const palette = scheme === 'dark' ? DARK : LIGHT;
   const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState<ItemFilter>({});
+  // T1: debounced search text. Typing updates `filter` (and the visible
+  // input) immediately, but the read effect below only sees
+  // `debouncedQuery`, so a burst of keystrokes settles into a single
+  // filtered item query instead of one full round per character.
+  // Location/category selections bypass the debounce: they flow through
+  // `filter` directly (see the read effect deps).
+  const [debouncedQuery, setDebouncedQuery] = useState<string>('');
   const [retryToken, setRetryToken] = useState(0);
   // Post-write refresh trigger (U2b): re-reads list/total/choices without
   // blanking a ready list. Trigger-only dep, like `retryToken`.
@@ -152,6 +163,17 @@ export default function InventoryContainer({
   // exactly one round; a batched filter change shares that round and
   // still converges to the newest page.
   const backgroundRefreshRef = useRef(false);
+  // T1: near-static read cache. The unfiltered total and the
+  // location/category choice lists do not depend on the search text, so
+  // filter-only rounds reuse them with zero extra reads. `staticKeyRef`
+  // records which retry/refresh generation filled the cache; any retry
+  // or post-write refresh bumps the key and forces a full reload, so the
+  // total and the choices stay right after saves, deletes, and entity
+  // writes. `allItemsRef` caches the last unfiltered page so clearing
+  // back to an unfiltered view costs no query at all.
+  const staticKeyRef = useRef<string | null>(null);
+  const staticLoadedRef = useRef(false);
+  const allItemsRef = useRef<ItemDetail[]>([]);
 
   const handleAdd = useCallback((prefilledName?: string) => {
     setRoute({ kind: 'create', prefilledName });
@@ -214,11 +236,31 @@ export default function InventoryContainer({
     };
   }, [noticeToken]);
 
+  // T1 search debounce: commit the visible query into `debouncedQuery`
+  // 300ms after the last keystroke. Rapid typing restarts the timer, so
+  // only the settled value reaches the read effect. Selections that do
+  // not type (location/category chips) never touch this timer.
+  const liveQuery = filter.query ?? '';
+  useEffect(() => {
+    // Already settled: mount and programmatic clears stay immediate.
+    if (liveQuery === debouncedQuery) return;
+    const timer = setTimeout(() => {
+      setDebouncedQuery(liveQuery);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [liveQuery, debouncedQuery]);
+
   // `retryToken` and `refreshToken` below are trigger-only deps by
   // design: they replay the current filter (retry after a failure,
   // refresh after a write) while the handle lives in its ref, so no dep
-  // value is consumed for reading.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: retryToken/refreshToken retrigger the round without being read
+  // value is consumed for reading. `debouncedQuery` (not `filter.query`)
+  // drives item queries so keystrokes debounce; `filter.categoryIds`
+  // drives them immediately (chip taps are discrete, never keystrokes);
+  // `filter.locationId` is intentionally NOT a dep: the location selects
+  // the rendered view only, so switching it costs zero reads.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: debounced query + immediate categories + trigger tokens by design (see above)
   useEffect(() => {
     requestRef.current += 1;
     const requestId = requestRef.current;
@@ -228,6 +270,12 @@ export default function InventoryContainer({
     // round (mount, filter change, retry) loads exactly as before.
     const isBackgroundRefresh = backgroundRefreshRef.current;
     backgroundRefreshRef.current = false;
+    // The static generation this round belongs to: a retry or a
+    // post-write refresh forces the total and the choice lists to
+    // reload; a filter-only round reuses the cache.
+    const staticKey = `${retryToken}:${refreshToken}`;
+    const needStatic =
+      !staticLoadedRef.current || staticKeyRef.current !== staticKey;
     if (!isBackgroundRefresh) {
       setViewState('loading');
     }
@@ -265,32 +313,56 @@ export default function InventoryContainer({
           setDbHandle((prev) => (prev === null ? db : prev));
           if (!isCurrent()) return;
         }
-        const activeFilter = filter;
+        const activeCategoryIds = filter.categoryIds;
         // The location selects the list's view (which quantity each row
         // shows), never the queried rows: items with 0 at the selected
         // location but stock elsewhere stay visible marked sin stock
         // (L9a), so the membership predicate must not filter them out.
         // Search text and the category OR still filter server-side.
+        // The query text comes from the DEBOUNCED value; categories apply
+        // immediately.
         const queryFilter: ItemFilter = {
-          query: activeFilter.query,
-          categoryIds: activeFilter.categoryIds,
+          query: debouncedQuery,
+          categoryIds: activeCategoryIds,
         };
-        const unfilteredPromise = queryItems(db, {});
+        const isUnfiltered =
+          (queryFilter.query?.trim() ?? '') === '' &&
+          (queryFilter.categoryIds ?? []).length === 0;
+        if (!needStatic) {
+          // Filter-only round: the total and the choice lists are already
+          // correct, so pay only for the filtered page (or nothing when
+          // the view is unfiltered and the cached page still applies).
+          if (isUnfiltered) {
+            if (!isCurrent()) return;
+            setItems(allItemsRef.current);
+            setViewState('ready');
+            return;
+          }
+          const assuredDb = db as RepositoryDb;
+          const filteredItems = await queryItems(assuredDb, queryFilter);
+          if (!isCurrent()) return;
+          setItems(filteredItems);
+          setViewState('ready');
+          return;
+        }
+        const assuredDb = db as RepositoryDb;
+        const unfilteredPromise = queryItems(assuredDb, {});
         // Reuse the unfiltered page when nothing but the location view
         // is set, so switching locations costs no second item query.
-        const filteredPromise =
-          (queryFilter.query?.trim() ?? '') === '' &&
-          (queryFilter.categoryIds ?? []).length === 0
-            ? unfilteredPromise
-            : queryItems(db, queryFilter);
+        const filteredPromise = isUnfiltered
+          ? unfilteredPromise
+          : queryItems(assuredDb, queryFilter);
         const [filteredItems, unfilteredItems, nextLocations, nextCategories] =
           await Promise.all([
             filteredPromise,
             unfilteredPromise,
-            listLocations(db),
-            listCategories(db),
+            listLocations(assuredDb),
+            listCategories(assuredDb),
           ]);
         if (!isCurrent()) return;
+        allItemsRef.current = unfilteredItems;
+        staticLoadedRef.current = true;
+        staticKeyRef.current = staticKey;
         setItems(filteredItems);
         setTotalCount(unfilteredItems.length);
         setLocations(nextLocations);
@@ -308,7 +380,7 @@ export default function InventoryContainer({
       cancelled = true;
       requestRef.current += 1;
     };
-  }, [filter, retryToken, refreshToken]);
+  }, [debouncedQuery, filter.categoryIds, retryToken, refreshToken]);
 
   return (
     <View style={styles.root}>

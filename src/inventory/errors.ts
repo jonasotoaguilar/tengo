@@ -4,7 +4,8 @@
  * Codes: `validation` (reuses `ValidationError` from `./validation`),
  * `not-found` (missing row, via `EntityNotFoundError` carrying the
  * `location` | `category` | `item` kind), `conflict` (duplicate
- * location/category name after S11 trim/accent/case normalization, via
+ * location/category name after S11 trim/accent/case normalization, or a
+ * duplicate item barcode after U2 trim/shape normalization, via
  * `EntityConflictError`), `storage` (any other SQLite/driver failure).
  * Deleting a location cascades its stock rows per the v4 schema (R3),
  * so no `in-use` error exists: the delete flow counts the impact first
@@ -30,15 +31,24 @@ export class EntityNotFoundError extends Error {
   }
 }
 
-/** Thrown when a location/category name collides after S11 normalization. */
+/**
+ * Thrown when a location/category name collides after S11 normalization,
+ * or when an item barcode collides after U2 trim/shape normalization
+ * (one code maps to one item, via the v5 UNIQUE index).
+ */
 export class EntityConflictError extends Error {
   readonly code = 'conflict';
-  readonly entity: 'location' | 'category';
+  readonly entity: 'location' | 'category' | 'item';
   readonly conflictingName: string;
 
-  constructor(entity: 'location' | 'category', conflictingName: string) {
+  constructor(
+    entity: 'location' | 'category' | 'item',
+    conflictingName: string,
+  ) {
     super(
-      `A ${entity} named "${conflictingName}" already exists (names are unique ignoring case, accents, and surrounding whitespace).`,
+      entity === 'item'
+        ? `An item with barcode "${conflictingName}" already exists (one code maps to one item).`
+        : `A ${entity} named "${conflictingName}" already exists (names are unique ignoring case, accents, and surrounding whitespace).`,
     );
     this.name = 'EntityConflictError';
     this.entity = entity;

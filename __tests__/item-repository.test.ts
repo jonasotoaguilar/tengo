@@ -27,6 +27,7 @@ import {
   createItem,
   createItemFromDraft,
   deleteItem,
+  findItemByBarcode,
   getItem,
   listItems,
   updateItem,
@@ -49,12 +50,15 @@ interface CatRow {
 interface ItemRow {
   id: number;
   name: string;
+  low_stock_threshold: number | null;
+  barcode: string | null;
   created_at: string;
 }
 interface StockRow {
   itemId: number;
   locationId: number;
   quantity: number;
+  expiresOn: string | null;
 }
 
 /** In-memory fake with FK enforcement, stock cascade, and rollback. */
@@ -143,20 +147,36 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
       return { lastInsertRowId: lastId, changes: groups };
     }
     if (/INSERT INTO items/i.test(source)) {
-      const [name] = params as [string];
+      // v5: the repository binds (name, low_stock_threshold, barcode).
+      const [name, threshold, barcode] = params as [
+        string,
+        number | null,
+        string | null,
+      ];
+      if (barcode !== null && barcode !== undefined) {
+        for (const row of items.values()) {
+          if (row.barcode === barcode) throw uniqueError('items');
+        }
+      }
       const id = nextId++;
-      items.set(id, { id, name, created_at: `ts-${id}` });
+      items.set(id, {
+        id,
+        name,
+        low_stock_threshold: threshold ?? null,
+        barcode: barcode ?? null,
+        created_at: `ts-${id}`,
+      });
       return { lastInsertRowId: id, changes: 1 };
     }
     if (/INSERT INTO stock/i.test(source)) {
-      // T3: one `(item_id, location_id, quantity)` group per stock row.
+      // T3: one `(item_id, location_id, quantity, expires_on)` group per
+      // stock row (v5 appends the optional expiry to the group).
       let groups = 0;
-      for (let i = 0; i < params.length; i += 3) {
-        const [itemId, locationId, quantity] = params.slice(i, i + 3) as [
-          number,
-          number,
-          number,
-        ];
+      for (let i = 0; i < params.length; i += 4) {
+        const [itemId, locationId, quantity, expiresOn] = params.slice(
+          i,
+          i + 4,
+        ) as [number, number, number, string | null];
         if (!items.has(itemId) || !locations.has(locationId)) throw fkError();
         if (quantity <= 0) {
           throw new Error('CHECK constraint failed: quantity > 0');
@@ -168,7 +188,12 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
             'UNIQUE constraint failed: stock.item_id, stock.location_id',
           );
         }
-        stock.push({ itemId, locationId, quantity });
+        stock.push({
+          itemId,
+          locationId,
+          quantity,
+          expiresOn: expiresOn ?? null,
+        });
         groups += 1;
       }
       return { lastInsertRowId: 0, changes: groups };
@@ -185,10 +210,28 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
       return { lastInsertRowId: 0, changes: groups };
     }
     if (/UPDATE items/i.test(source)) {
-      const [name, id] = params as [string, number];
+      // v5: the repository binds (name, low_stock_threshold, barcode, id).
+      const [name, threshold, barcode, id] = params as [
+        string,
+        number | null,
+        string | null,
+        number,
+      ];
       const row = items.get(id);
       if (!row) return { lastInsertRowId: 0, changes: 0 };
-      items.set(id, { ...row, name });
+      if (barcode !== null && barcode !== undefined) {
+        for (const other of items.values()) {
+          if (other.id !== id && other.barcode === barcode) {
+            throw uniqueError('items');
+          }
+        }
+      }
+      items.set(id, {
+        ...row,
+        name,
+        low_stock_threshold: threshold ?? null,
+        barcode: barcode ?? null,
+      });
       return { lastInsertRowId: id, changes: 1 };
     }
     if (/DELETE FROM stock/i.test(source)) {
@@ -226,6 +269,13 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
     if (/FROM locations/i.test(source)) {
       return locations.get(params[0] as number) ?? null;
     }
+    // v5 scanner lookup: exact barcode match before the id branch.
+    if (/FROM items/i.test(source) && /WHERE barcode/i.test(source)) {
+      for (const row of items.values()) {
+        if (row.barcode === (params[0] as string)) return row;
+      }
+      return null;
+    }
     if (/FROM items/i.test(source)) {
       return items.get(params[0] as number) ?? null;
     }
@@ -251,6 +301,7 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
             location_name: loc.name,
             location_address: loc.address,
             location_created_at: loc.created_at,
+            expires_on: s.expiresOn,
           };
         });
     }
@@ -1305,5 +1356,264 @@ describe('T3 write-path batching (RED: per-row statements today)', () => {
       stock: [{ locationId: gloc, quantity: 1 }],
     });
     expect(g.db.withExclusiveTransactionAsync).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('v5 scanner and reminder fields (mocked native boundary)', () => {
+  test('create persists threshold/barcode/expiry and reads them back', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    const cat = f.seedCategory();
+    const created = await createItem(f.db, {
+      name: 'Rice',
+      lowStockThreshold: 3,
+      barcode: '  12345678  ',
+      stock: [{ locationId: loc, quantity: 2, expiresOn: '2027-03-15' }],
+      categoryIds: [cat],
+    });
+    expect(created.lowStockThreshold).toBe(3);
+    expect(created.barcode).toBe('12345678');
+    expect(created.stock).toHaveLength(1);
+    expect(created.stock[0].expiresOn).toBe('2027-03-15');
+    expect(created.totalQuantity).toBe(2);
+    expect(await getItem(f.db, created.id)).toEqual(created);
+    expect((await listItems(f.db)).find((i) => i.id === created.id)).toEqual(
+      created,
+    );
+  });
+
+  test('absent v5 fields stay NULL: old callers behave exactly as before', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    const created = await seedItem(f, loc);
+    expect(created.lowStockThreshold).toBeNull();
+    expect(created.barcode).toBeNull();
+    expect(created.stock[0].expiresOn).toBeNull();
+    expect(created.totalQuantity).toBe(2);
+    const cleared = await updateItem(f.db, created.id, {
+      name: 'Rice',
+      stock: [],
+    });
+    expect(cleared.lowStockThreshold).toBeNull();
+    expect(cleared.barcode).toBeNull();
+    expect(cleared.stock).toEqual([]);
+  });
+
+  test('duplicate barcode maps to EntityConflictError without leaking SQL text', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    await createItem(f.db, {
+      name: 'Rice',
+      barcode: '12345678',
+      stock: [{ locationId: loc, quantity: 1 }],
+    });
+    const failure = (await createItem(f.db, {
+      name: 'Beans',
+      barcode: '12345678',
+      stock: [{ locationId: loc, quantity: 1 }],
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'item' });
+    expect(failure.message).not.toMatch(/UNIQUE/i);
+    expect(failure.message).not.toMatch(/SQLITE_CONSTRAINT/i);
+    expect(f.items.size).toBe(1);
+  });
+
+  test("update keeps its own barcode but takes another item's as a conflict", async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    const rice = await createItem(f.db, {
+      name: 'Rice',
+      barcode: '11112222',
+      stock: [{ locationId: loc, quantity: 1 }],
+    });
+    const beans = await createItem(f.db, {
+      name: 'Beans',
+      barcode: '33334444',
+      stock: [{ locationId: loc, quantity: 1 }],
+    });
+    const kept = await updateItem(f.db, rice.id, {
+      name: 'Rice grande',
+      barcode: '11112222',
+      stock: [{ locationId: loc, quantity: 2 }],
+    });
+    expect(kept.barcode).toBe('11112222');
+    expect(kept.name).toBe('Rice grande');
+    const clash = (await updateItem(f.db, beans.id, {
+      name: 'Beans',
+      barcode: '11112222',
+      stock: [{ locationId: loc, quantity: 1 }],
+    }).catch((e: unknown) => e)) as Error;
+    expect(clash).toBeInstanceOf(EntityConflictError);
+    expect(clash).toMatchObject({ code: 'conflict', entity: 'item' });
+    expect((await getItem(f.db, beans.id)).barcode).toBe('33334444');
+  });
+
+  test('race backstop: raw UNIQUE failure on the catalog write maps to conflict', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    // Hide stored rows from the domain pre-check so the driver backstop
+    // is exercised (mirrors the S11 race test for categories).
+    const txnGetFirst = f.txn.getFirstAsync as jest.Mock;
+    txnGetFirst.mockImplementation(async () => null);
+    f.failMatchingWith(
+      /INSERT INTO items/i,
+      new Error(
+        'SQLite error: UNIQUE constraint failed: items.barcode (code 2067 SQLITE_CONSTRAINT_UNIQUE)',
+      ),
+    );
+    const failure = (await createItem(f.db, {
+      name: 'Rice',
+      barcode: '99990000',
+      stock: [{ locationId: loc, quantity: 1 }],
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'item' });
+    expect(failure.message).not.toContain('UNIQUE');
+    expect(f.items.size).toBe(0);
+  });
+
+  test('findItemByBarcode returns the detail for a known code', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation('Pantry', 'Aisle 1');
+    const created = await createItem(f.db, {
+      name: 'Rice',
+      lowStockThreshold: 2,
+      barcode: '12345678',
+      stock: [{ locationId: loc, quantity: 4, expiresOn: '2027-03-15' }],
+    });
+    // Surrounding whitespace scans the same code (trimmed before binding).
+    expect(await findItemByBarcode(f.db, '  12345678  ')).toEqual(created);
+  });
+
+  test('findItemByBarcode returns null for an unknown code', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    await seedItem(f, loc);
+    expect(await findItemByBarcode(f.db, '00001111')).toBeNull();
+  });
+
+  test('findItemByBarcode validates before touching the driver', async () => {
+    const f = makeFakeDb();
+    const callsBefore = f.outerCalls.length + f.txnCalls.length;
+    for (const bad of ['   ', 'ab', 42, null] as never[]) {
+      await expect(findItemByBarcode(f.db, bad)).rejects.toBeInstanceOf(
+        ValidationError,
+      );
+    }
+    expect(f.outerCalls.length + f.txnCalls.length).toBe(callsBefore);
+  });
+
+  test('findItemByBarcode binds the code: no interpolation, storage stays generic', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    await createItem(f.db, {
+      name: 'Rice',
+      barcode: '12345678',
+      stock: [{ locationId: loc, quantity: 1 }],
+    });
+    // A shaped-but-unknown code reaches the driver as a bound param.
+    expect(await findItemByBarcode(f.db, '87654321')).toBeNull();
+    const lookup = f.outerCalls.find((call) => /barcode/i.test(call.source));
+    expect(lookup?.source).toMatch(/\?/);
+    expect(lookup?.source).not.toContain('87654321');
+    expect(lookup?.params).toEqual(['87654321']);
+    // An injection-shaped input never reaches SQL: the shape rejects first.
+    const evil = "12345678' OR '1'='1";
+    const callsBefore = f.outerCalls.length + f.txnCalls.length;
+    await expect(findItemByBarcode(f.db, evil)).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    expect(f.outerCalls.length + f.txnCalls.length).toBe(callsBefore);
+    f.failNextWith(new Error('disk I/O error on sqlite3_step'));
+    const failure = (await findItemByBarcode(f.db, '12345678').catch(
+      (e: unknown) => e,
+    )) as Error;
+    expect(failure).toBeInstanceOf(StorageError);
+    expect(failure).toMatchObject({ code: 'storage', entity: 'item' });
+    expect(failure.message).not.toContain('disk I/O');
+  });
+
+  test('draft create and update carry the v5 fields atomically', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    const created = await createItemFromDraft(f.db, {
+      name: 'Oats',
+      lowStockThreshold: 1,
+      barcode: '55556666',
+      stock: [
+        {
+          location: { kind: 'existing', locationId: loc },
+          quantity: 4,
+          expiresOn: '2028-01-31',
+        },
+      ],
+    });
+    expect(created.lowStockThreshold).toBe(1);
+    expect(created.barcode).toBe('55556666');
+    expect(created.stock[0].expiresOn).toBe('2028-01-31');
+    const updated = await updateItemFromDraft(f.db, created.id, {
+      name: 'Oats',
+      lowStockThreshold: null,
+      barcode: null,
+      stock: [
+        {
+          location: { kind: 'existing', locationId: loc },
+          quantity: 2,
+        },
+      ],
+    });
+    expect(updated.lowStockThreshold).toBeNull();
+    expect(updated.barcode).toBeNull();
+    expect(updated.stock[0].expiresOn).toBeNull();
+  });
+
+  test('invalid v5 input rejects before any write and leaves no rows', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation();
+    for (const input of [
+      {
+        name: 'x',
+        stock: [{ locationId: loc, quantity: 1 }],
+        lowStockThreshold: -1,
+      },
+      {
+        name: 'x',
+        stock: [{ locationId: loc, quantity: 1 }],
+        lowStockThreshold: 1000000,
+      },
+      { name: 'x', stock: [{ locationId: loc, quantity: 1 }], barcode: 'ab' },
+      {
+        name: 'x',
+        stock: [{ locationId: loc, quantity: 1, expiresOn: 'soon' }],
+      },
+    ] as NewItemInput[]) {
+      await expect(createItem(f.db, input)).rejects.toBeInstanceOf(
+        ValidationError,
+      );
+    }
+    expect(f.items.size).toBe(0);
+    expect(f.stock).toEqual([]);
+  });
+
+  test('v5 PRESERVE: stock-set replacement still batches one INSERT per chunk', async () => {
+    const f = makeFakeDb();
+    const locA = f.seedLocation('Pantry');
+    const locB = f.seedLocation('Garage');
+    const created = await seedItem(f, locA);
+    f.txnCalls.length = 0;
+    await updateItem(f.db, created.id, {
+      name: 'Rice',
+      stock: [
+        { locationId: locA, quantity: 1, expiresOn: null },
+        { locationId: locB, quantity: 2, expiresOn: '2027-12-31' },
+      ],
+    });
+    const inserts = f.txnCalls.filter((call) =>
+      /INSERT INTO stock/i.test(call.source),
+    );
+    expect(inserts).toHaveLength(1);
+    // Four bound values per row: item, location, quantity, expiry.
+    expect(inserts[0].params).toHaveLength(8);
   });
 });

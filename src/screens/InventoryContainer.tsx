@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next';
 import {
   AccessibilityInfo,
   Modal,
+  Pressable,
   StyleSheet,
   Text,
   useColorScheme,
@@ -45,6 +46,8 @@ import type {
   Location,
 } from '../inventory/types';
 import ItemFormScreen from './ItemFormScreen';
+import ScanScreen from './ScanScreen';
+import type { ScanRoute } from './useBarcodeScanController';
 import type { ItemFormRoute } from './useItemFormController';
 import useReducedMotion from './useReducedMotion';
 
@@ -139,6 +142,10 @@ export default function InventoryContainer({
   // form screen. Independent of the read effect so a post-write refresh
   // never unmounts it before dismissal.
   const [entitiesOpen, setEntitiesOpen] = useState(false);
+  // U3 scanner entry: hosted in the same conditional pattern as the form
+  // screen (`ScanScreen` owns its own Modal). Independent of the read
+  // effect so a background refresh never unmounts it mid-scan.
+  const [scanOpen, setScanOpen] = useState(false);
   // M4 Gap A transient confirmation: a small non-blocking notice near
   // the bottom of the container, rendered OUTSIDE the form modal so it
   // stays visible after the modal dismisses. The token lets a newer
@@ -227,6 +234,26 @@ export default function InventoryContainer({
   }, []);
   const handleManageEntities = useCallback(() => {
     setEntitiesOpen(true);
+  }, []);
+  const handleOpenScan = useCallback(() => {
+    setScanOpen(true);
+  }, []);
+  const handleCloseScan = useCallback(() => {
+    setScanOpen(false);
+  }, []);
+  // U3 scan-to-route: a known code opens that item's edit route; an
+  // unknown code opens create carrying the normalized code as its
+  // invisible identity, so the saved item owns the code and a re-scan
+  // reaches it (closed loop via `prefilledBarcode`).
+  const handleScanResolved = useCallback((route: ScanRoute) => {
+    setScanOpen(false);
+    if (route.kind === 'edit') {
+      setRoute({ kind: 'edit', itemId: route.itemId });
+      return;
+    }
+    if (route.kind === 'create') {
+      setRoute({ kind: 'create', prefilledBarcode: route.barcode });
+    }
   }, []);
   const handleCloseEntities = useCallback(() => {
     setEntitiesOpen(false);
@@ -413,8 +440,29 @@ export default function InventoryContainer({
     };
   }, [debouncedQuery, filter.categoryIds, retryToken, refreshToken]);
 
+  // The scanner resolves into the same add/edit routes as the list, so
+  // its entry arms under the same readiness gate; otherwise it stays
+  // honestly disabled with a hint, like Add/Open/Manage.
+  const scanReady = mutationsReady;
+
   return (
     <View style={styles.root}>
+      <View style={styles.scanBar}>
+        <Pressable
+          testID="inventory-scan-open"
+          accessibilityRole="button"
+          accessibilityLabel={t('inventoryScan')}
+          accessibilityHint={
+            scanReady ? undefined : t('inventoryScanUnavailableHint')
+          }
+          accessibilityState={{ disabled: !scanReady }}
+          disabled={!scanReady}
+          onPress={handleOpenScan}
+          style={styles.scanButton}
+        >
+          <Text style={styles.scanButtonText}>{t('inventoryScan')}</Text>
+        </Pressable>
+      </View>
       <InventoryList
         state={viewState}
         items={items}
@@ -428,6 +476,13 @@ export default function InventoryContainer({
         onOpenItem={mutationsReady ? handleOpenItem : undefined}
         onManageEntities={mutationsReady ? handleManageEntities : undefined}
       />
+      {scanOpen && dbHandle !== null ? (
+        <ScanScreen
+          db={dbHandle}
+          onResolved={handleScanResolved}
+          onClose={handleCloseScan}
+        />
+      ) : null}
       {route !== null && dbHandle !== null ? (
         <ItemFormScreen
           db={dbHandle}
@@ -486,6 +541,27 @@ export default function InventoryContainer({
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+  },
+  // U3 scanner entry: a compact bar above the list (the list component
+  // itself is outside this unit's edit surfaces, so the entry lives
+  // here). Unstyled chrome on purpose: the translated label carries the
+  // meaning, and the disabled state mirrors Add/Open/Manage.
+  scanBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  scanButton: {
+    minHeight: 48,
+    minWidth: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  scanButtonText: {
+    fontSize: 17,
+    fontWeight: '600',
   },
   // Transient confirmation (DESIGN.md §3.4/§4): small, non-blocking,
   // never focusable, never intercepts touches (`pointerEvents="none"`)

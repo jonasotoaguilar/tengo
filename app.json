@@ -22,6 +22,14 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Tengo to scan barcodes with your camera."
+        }
+      ]
+    ]
   }
 }

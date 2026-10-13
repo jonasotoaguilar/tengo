@@ -30,7 +30,8 @@
           "cameraPermission": "Allow Tengo to scan barcodes with your camera."
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      "@react-native-community/datetimepicker"
     ]
   }
 }

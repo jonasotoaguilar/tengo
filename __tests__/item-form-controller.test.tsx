@@ -2250,3 +2250,238 @@ describe('U3 scanned barcode plumbing (closed loop)', () => {
     expect(lookup).toHaveBeenCalledWith(fakeDb, 'ZZZ-9999');
   });
 });
+
+describe('U4 reminder form plumbing (edit preserves threshold and expiry)', () => {
+  function detailWithReminders() {
+    return makeDetail({
+      name: 'Rice',
+      lowStockThreshold: 5,
+      stock: [
+        {
+          locationId: pantry.id,
+          location: { ...pantry },
+          quantity: 2,
+          expiresOn: '2027-03-15',
+        },
+      ],
+    });
+  }
+
+  test('REGRESSION U4a: editing an item with a threshold and an expiry preserves both through a save', async () => {
+    const repository = makeRepository();
+    repository.getItem.mockResolvedValueOnce(detailWithReminders());
+    const { result } = await renderController(
+      baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+    );
+    await act(async () => {});
+    expect(result.current.loadState).toBe('ready');
+    // Touch only the name: the reminder values ride along untouched.
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice edited',
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(true);
+    expect(repository.updateItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.updateItemFromDraft.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.lowStockThreshold).toBe(5);
+    expect((draft.stock as { expiresOn?: string | null }[])[0]?.expiresOn).toBe(
+      '2027-03-15',
+    );
+  });
+
+  test('setting the threshold from empty stores it', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        lowStockThresholdRaw: '3',
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.lowStockThreshold).toBe(3);
+  });
+
+  test('clearing the threshold back to empty stores no threshold', async () => {
+    const repository = makeRepository();
+    repository.getItem.mockResolvedValueOnce(detailWithReminders());
+    const { result } = await renderController(
+      baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+    );
+    await act(async () => {});
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        lowStockThresholdRaw: '',
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.updateItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.updateItemFromDraft.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.lowStockThreshold ?? null).toBeNull();
+  });
+
+  test('setting the expiry from empty stores it on the row', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        stock: [{ ...existingRow(10, '2'), expiresOnRaw: '2027-03-15' }],
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect((draft.stock as { expiresOn?: string | null }[])[0]?.expiresOn).toBe(
+      '2027-03-15',
+    );
+  });
+
+  test('clearing the expiry back to empty stores no expiry on the row', async () => {
+    const repository = makeRepository();
+    repository.getItem.mockResolvedValueOnce(detailWithReminders());
+    const { result } = await renderController(
+      baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+    );
+    await act(async () => {});
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        stock: [{ ...existingRow(10, '2'), expiresOnRaw: '' }],
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.updateItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.updateItemFromDraft.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(
+      (draft.stock as { expiresOn?: string | null }[])[0]?.expiresOn ?? null,
+    ).toBeNull();
+  });
+
+  test('an out-of-range threshold writes nothing and reports the bound', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        lowStockThresholdRaw: '1000000',
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(false);
+    expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+    expect(result.current.errors.lowStockThreshold).toBe(
+      'Enter a threshold of 999999 or less.',
+    );
+  });
+
+  test('a non-numeric threshold writes nothing and reports invalid', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        lowStockThresholdRaw: 'abc',
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(false);
+    expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+    expect(result.current.errors.lowStockThreshold).toBe(
+      'Enter a whole number of 0 or more.',
+    );
+  });
+
+  test('a misshapen expiry writes nothing and reports the row error', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        stock: [{ ...existingRow(10, '2'), expiresOnRaw: 'tomorrow' }],
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(false);
+    expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+    const stock = result.current.errors.stock as unknown as
+      | { expiresOn?: string }[]
+      | undefined;
+    expect(stock?.[0]?.expiresOn).toBe(
+      'Enter a valid expiry date (YYYY-MM-DD).',
+    );
+  });
+
+  test('an edit without reminders stores no phantom values', async () => {
+    const repository = makeRepository();
+    repository.getItem.mockResolvedValueOnce(makeDetail({ name: 'Rice' }));
+    const { result } = await renderController(
+      baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+    );
+    await act(async () => {});
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice edited',
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.updateItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.updateItemFromDraft.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.lowStockThreshold ?? null).toBeNull();
+    expect(
+      (draft.stock as { expiresOn?: string | null }[])[0]?.expiresOn ?? null,
+    ).toBeNull();
+  });
+});

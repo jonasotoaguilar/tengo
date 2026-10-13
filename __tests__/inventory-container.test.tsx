@@ -102,6 +102,27 @@ jest.mock('react-native-safe-area-context', () => {
   };
 });
 
+// U4 date-picker native boundary (same stub as the item-form suite): the
+// real picker renders nothing under Jest, so this View carries the picker
+// props. Proves the form wiring around the picker; proves nothing about
+// the OS dialog itself.
+jest.mock('@react-native-community/datetimepicker', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  return {
+    __esModule: true,
+    default: ({
+      testID,
+      value,
+      onChange,
+    }: {
+      testID?: string;
+      value?: Date;
+      onChange?: (event: { type: string }, date?: Date) => void;
+    }) => React.createElement(View, { testID, value, onChange }),
+  };
+});
+
 interface PendingCall {
   sql: string;
   params: readonly unknown[] | undefined;
@@ -1930,6 +1951,128 @@ describe('U4 local reminders (S4: entirely on device)', () => {
     ).not.toHaveBeenCalled();
     expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
       'Item deleted.',
+    );
+    await cleanup();
+  });
+});
+
+describe('U4 form side (edit carries threshold and expiry into the draft)', () => {
+  const repository = require('../src/inventory/itemRepository') as {
+    getItem: jest.Mock;
+    createItemFromDraft: jest.Mock;
+    updateItemFromDraft: jest.Mock;
+    deleteItem: jest.Mock;
+  };
+  const Notifications = require('expo-notifications') as {
+    getPermissionsAsync: jest.Mock;
+    requestPermissionsAsync: jest.Mock;
+    scheduleNotificationAsync: jest.Mock;
+    cancelScheduledNotificationAsync: jest.Mock;
+  };
+
+  const pantry = {
+    id: 10,
+    name: 'Pantry',
+    address: null,
+    created_at: 'loc-created-10',
+  };
+
+  function riceDetailWithReminders(quantity: number, expiresOn: string | null) {
+    return {
+      id: 1,
+      name: 'Rice',
+      lowStockThreshold: 2,
+      barcode: null,
+      stock: [
+        {
+          locationId: 10,
+          location: { ...pantry },
+          quantity,
+          expiresOn,
+        },
+      ],
+      totalQuantity: quantity,
+      categoryIds: [],
+      categories: [],
+      created_at: 'created-1',
+    };
+  }
+
+  async function renderMutations() {
+    return render(
+      <I18nextProvider i18n={i18n}>
+        <InventoryContainer enableMutations />
+      </I18nextProvider>,
+    );
+  }
+
+  async function settleWithPermission(): Promise<void> {
+    await settle();
+    await waitFor(() =>
+      expect(Notifications.getPermissionsAsync).toHaveBeenCalled(),
+    );
+    await act(async () => {});
+    await act(async () => {});
+  }
+
+  beforeEach(() => {
+    repository.getItem.mockReset();
+    repository.createItemFromDraft.mockReset();
+    repository.updateItemFromDraft.mockReset();
+    repository.deleteItem.mockReset();
+    repository.deleteItem.mockResolvedValue(undefined);
+    Notifications.getPermissionsAsync.mockReset();
+    Notifications.requestPermissionsAsync.mockReset();
+    Notifications.scheduleNotificationAsync.mockReset();
+    Notifications.cancelScheduledNotificationAsync.mockReset();
+    Notifications.scheduleNotificationAsync.mockResolvedValue('scheduled-id');
+    Notifications.cancelScheduledNotificationAsync.mockResolvedValue(undefined);
+  });
+
+  test('REGRESSION U4b: an untouched edit preserves the threshold and expiry in the update draft', async () => {
+    // The reported data-loss bug at the integrated level: the form used
+    // to write its draft verbatim without either reminder value, so an
+    // edit silently wiped both. The mock stands in for persistence and
+    // answers the saved detail; the assertion is on the draft the real
+    // controller built, which is what the repository would have stored.
+    store.items = [itemRow(1, 'Rice', 2)];
+    store.stock = [stockRow(1, 5, 10, 'Pantry', '2030-04-15')];
+    Notifications.getPermissionsAsync.mockResolvedValue({
+      granted: true,
+      canAskAgain: true,
+    });
+    Notifications.requestPermissionsAsync.mockResolvedValue({
+      granted: true,
+      canAskAgain: true,
+    });
+    repository.getItem.mockResolvedValue(
+      riceDetailWithReminders(5, '2030-04-15'),
+    );
+    repository.updateItemFromDraft.mockResolvedValue(
+      riceDetailWithReminders(5, '2030-04-15'),
+    );
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settleWithPermission();
+
+    await fireEvent.press(screen.getByTestId('inventory-row-1'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+    // The carried values are visible in the form before the save.
+    expect(screen.getByTestId('item-form/threshold').props.value).toBe('2');
+    expect(screen.getByText('2030-04-15')).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+
+    expect(repository.updateItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.updateItemFromDraft.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.lowStockThreshold).toBe(2);
+    expect((draft.stock as { expiresOn?: string | null }[])[0]?.expiresOn).toBe(
+      '2030-04-15',
     );
     await cleanup();
   });

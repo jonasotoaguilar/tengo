@@ -163,15 +163,17 @@ without claiming approval):
    rows and never deletes items; the confirmation states the impact
    (how many existencias); `LocationInUseError` no longer exists.
    Address uniqueness remains unimplemented. The managed-location UI was
-   adopted by the user and implemented on 2026-10-12; its device
-   verification is still pending.
+   adopted by the user and implemented on 2026-10-12 and is now observed on
+   the device through the entity flow, which exercises create, rename and
+   delete with its impact confirmation; TalkBack speech on that screen
+   remains unobserved.
 3. Categories: independent entities, zero or many per item, with
    OR-plus-dedup multi-select filtering, are approved; location and
    category text matching was adopted and implemented on 2026-10-12.
    Deleting a category removes only the association with items (items
    survive); the confirmation states the impact. The category management
-   UI was adopted and implemented on 2026-10-12, with device verification
-   still pending.
+   UI was adopted and implemented on 2026-10-12 and is observed on the device
+   through the same flow.
 4. Backup/recovery: deletion posture is approved (always confirm, no
    trash); anything beyond that is undecided. Accent handling was
    adopted and implemented on 2026-10-12, and the contrast and

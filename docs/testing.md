@@ -38,7 +38,7 @@ in full below and carries one honest miss: the search figure rose from 174.6 ms
 to 292.6 ms against the 200 ms budget, recorded as FAIL rather than waived.
 Host-side evidence for the new model is `scripts/verify-inventory-schema.py`
 passing 36 checks against real host SQLite 3.46.1 (including the rebuild trap
-and the location cascade) plus the Jest suites (31 suites / 461 tests).
+and the location cascade) plus the Jest suites (31 suites / 463 tests).
 
 - M1 migration: verified on Android, 5/5.
 - M2 native persistence: verified on Android. Phase 1 passed 5/5,

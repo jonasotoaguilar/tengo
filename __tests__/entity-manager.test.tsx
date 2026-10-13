@@ -219,8 +219,58 @@ test('location delete confirmation states the stock impact and that items surviv
   expect(screen.getByTestId('entity-delete-title')).toHaveTextContent(/Pantry/);
   const message = screen.getByTestId('entity-delete-message');
   expect(message).toHaveTextContent(/3/);
+  expect(message).toHaveTextContent(/3 stock entries will be removed/);
   expect(message).toHaveTextContent(/will NOT be deleted/i);
-  expect(message).toHaveTextContent(/no stock/i);
+  expect(message).toHaveTextContent(/1 item will be left with no stock/);
+  expect(message).toHaveTextContent(/stay visible as out of stock/i);
+});
+
+test('location delete confirmation uses singular copy for one stock row and one unstocked item', async () => {
+  repository.locationDeleteImpact.mockResolvedValue({
+    stockRows: 1,
+    unstockedItems: 1,
+  });
+  await i18n.changeLanguage('en');
+  await renderManager();
+  await fireEvent.press(screen.getByTestId('entity-location-10-delete'));
+  const message = await screen.findByTestId('entity-delete-message');
+  expect(message).toHaveTextContent(/1 stock entry will be removed/);
+  expect(message).not.toHaveTextContent(/1 stock entries/);
+  expect(message).toHaveTextContent(/will NOT be deleted/);
+  expect(message).toHaveTextContent(/1 item will be left with no stock/);
+  expect(message).not.toHaveTextContent(/1 items will/);
+  expect(message).toHaveTextContent(/stay visible as out of stock/);
+  await cleanup();
+  await i18n.changeLanguage('es');
+  await renderManager();
+  await fireEvent.press(screen.getByTestId('entity-location-10-delete'));
+  const esMessage = await screen.findByTestId('entity-delete-message');
+  expect(esMessage).toHaveTextContent(/Se eliminará 1 existencia/);
+  expect(esMessage).toHaveTextContent(/NO se eliminarán/);
+  expect(esMessage).toHaveTextContent(/1 artículo quedará sin stock/);
+  expect(esMessage).toHaveTextContent(/seguirá visible como sin stock/);
+  await cleanup();
+  await i18n.changeLanguage('en');
+});
+
+test('category delete confirmation uses singular copy for one linked item', async () => {
+  repository.categoryDeleteImpact.mockResolvedValue({ items: 1 });
+  await i18n.changeLanguage('en');
+  await renderManager();
+  await fireEvent.press(screen.getByTestId('entity-category-20-delete'));
+  const message = await screen.findByTestId('entity-delete-message');
+  expect(message).toHaveTextContent(/from 1 item\./);
+  expect(message).not.toHaveTextContent(/from 1 items/);
+  expect(message).toHaveTextContent(/will NOT be deleted/);
+  await cleanup();
+  await i18n.changeLanguage('es');
+  await renderManager();
+  await fireEvent.press(screen.getByTestId('entity-category-20-delete'));
+  const esMessage = await screen.findByTestId('entity-delete-message');
+  expect(esMessage).toHaveTextContent(/de 1 artículo\./);
+  expect(esMessage).toHaveTextContent(/NO se eliminarán/);
+  await cleanup();
+  await i18n.changeLanguage('en');
 });
 
 test('confirming a location delete removes it and notifies the owner', async () => {
@@ -243,7 +293,7 @@ test('category delete confirmation states the association impact and that items 
   expect(dialog).toBeTruthy();
   expect(screen.getByTestId('entity-delete-title')).toHaveTextContent(/Bulk/);
   const message = screen.getByTestId('entity-delete-message');
-  expect(message).toHaveTextContent(/2/);
+  expect(message).toHaveTextContent(/from 2 items\./);
   expect(message).toHaveTextContent(/will NOT be deleted/i);
 });
 

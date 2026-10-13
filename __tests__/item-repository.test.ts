@@ -97,32 +97,50 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
   ): Promise<{ lastInsertRowId: number; changes: number }> => {
     maybeFail(source);
     if (/INSERT INTO locations/i.test(source)) {
-      const [name, address] = params as [string, string | null];
-      for (const row of locations.values()) {
-        if (
-          row.name.trim().toLowerCase() ===
-          (name as string).trim().toLowerCase()
-        ) {
-          throw uniqueError('locations');
+      // T3: the repository may insert many rows per statement; each
+      // `(name, address)` group validates and stores like a single row.
+      let lastId = 0;
+      let groups = 0;
+      for (let i = 0; i < params.length; i += 2) {
+        const [name, address] = params.slice(i, i + 2) as [
+          string,
+          string | null,
+        ];
+        for (const row of locations.values()) {
+          if (
+            row.name.trim().toLowerCase() ===
+            (name as string).trim().toLowerCase()
+          ) {
+            throw uniqueError('locations');
+          }
         }
+        const id = nextId++;
+        locations.set(id, { id, name, address, created_at: `ts-${id}` });
+        lastId = id;
+        groups += 1;
       }
-      const id = nextId++;
-      locations.set(id, { id, name, address, created_at: `ts-${id}` });
-      return { lastInsertRowId: id, changes: 1 };
+      return { lastInsertRowId: lastId, changes: groups };
     }
     if (/INSERT INTO categories/i.test(source)) {
-      const [name] = params as [string];
-      for (const row of categories.values()) {
-        if (
-          row.name.trim().toLowerCase() ===
-          (name as string).trim().toLowerCase()
-        ) {
-          throw uniqueError('categories');
+      // T3: one `(name)` group per new category in a multi-row statement.
+      let lastId = 0;
+      let groups = 0;
+      for (let i = 0; i < params.length; i += 1) {
+        const [name] = params.slice(i, i + 1) as [string];
+        for (const row of categories.values()) {
+          if (
+            row.name.trim().toLowerCase() ===
+            (name as string).trim().toLowerCase()
+          ) {
+            throw uniqueError('categories');
+          }
         }
+        const id = nextId++;
+        categories.set(id, { id, name, created_at: `ts-${id}` });
+        lastId = id;
+        groups += 1;
       }
-      const id = nextId++;
-      categories.set(id, { id, name, created_at: `ts-${id}` });
-      return { lastInsertRowId: id, changes: 1 };
+      return { lastInsertRowId: lastId, changes: groups };
     }
     if (/INSERT INTO items/i.test(source)) {
       const [name] = params as [string];
@@ -131,26 +149,40 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
       return { lastInsertRowId: id, changes: 1 };
     }
     if (/INSERT INTO stock/i.test(source)) {
-      const [itemId, locationId, quantity] = params as [number, number, number];
-      if (!items.has(itemId) || !locations.has(locationId)) throw fkError();
-      if (quantity <= 0) {
-        throw new Error('CHECK constraint failed: quantity > 0');
+      // T3: one `(item_id, location_id, quantity)` group per stock row.
+      let groups = 0;
+      for (let i = 0; i < params.length; i += 3) {
+        const [itemId, locationId, quantity] = params.slice(i, i + 3) as [
+          number,
+          number,
+          number,
+        ];
+        if (!items.has(itemId) || !locations.has(locationId)) throw fkError();
+        if (quantity <= 0) {
+          throw new Error('CHECK constraint failed: quantity > 0');
+        }
+        if (
+          stock.some((s) => s.itemId === itemId && s.locationId === locationId)
+        ) {
+          throw new Error(
+            'UNIQUE constraint failed: stock.item_id, stock.location_id',
+          );
+        }
+        stock.push({ itemId, locationId, quantity });
+        groups += 1;
       }
-      if (
-        stock.some((s) => s.itemId === itemId && s.locationId === locationId)
-      ) {
-        throw new Error(
-          'UNIQUE constraint failed: stock.item_id, stock.location_id',
-        );
-      }
-      stock.push({ itemId, locationId, quantity });
-      return { lastInsertRowId: 0, changes: 1 };
+      return { lastInsertRowId: 0, changes: groups };
     }
     if (/INSERT INTO item_categories/i.test(source)) {
-      const [itemId, categoryId] = params as [number, number];
-      if (!items.has(itemId) || !categories.has(categoryId)) throw fkError();
-      joins.add(`${itemId}:${categoryId}`);
-      return { lastInsertRowId: 0, changes: 1 };
+      // T3: one `(item_id, category_id)` group per link.
+      let groups = 0;
+      for (let i = 0; i < params.length; i += 2) {
+        const [itemId, categoryId] = params.slice(i, i + 2) as [number, number];
+        if (!items.has(itemId) || !categories.has(categoryId)) throw fkError();
+        joins.add(`${itemId}:${categoryId}`);
+        groups += 1;
+      }
+      return { lastInsertRowId: 0, changes: groups };
     }
     if (/UPDATE items/i.test(source)) {
       const [name, id] = params as [string, number];
@@ -234,10 +266,30 @@ function makeFakeDb(options: { exclusive?: boolean } = {}) {
       return [...items.values()].sort((a, b) => a.id - b.id);
     }
     if (/FROM locations/i.test(source)) {
-      return [...locations.values()].sort((a, b) => a.id - b.id);
+      // T3: `IN` selects filter by bound ids (numbers) or names (strings);
+      // the parameterless domain scan still returns every row.
+      const all = [...locations.values()].sort((a, b) => a.id - b.id);
+      if (/IN \(/i.test(source) && params.length > 0) {
+        if (typeof params[0] === 'number') {
+          const ids = new Set(params as number[]);
+          return all.filter((row) => ids.has(row.id));
+        }
+        const names = new Set(params as string[]);
+        return all.filter((row) => names.has(row.name));
+      }
+      return all;
     }
     if (/FROM categories/i.test(source)) {
-      return [...categories.values()].sort((a, b) => a.id - b.id);
+      const all = [...categories.values()].sort((a, b) => a.id - b.id);
+      if (/IN \(/i.test(source) && params.length > 0) {
+        if (typeof params[0] === 'number') {
+          const ids = new Set(params as number[]);
+          return all.filter((row) => ids.has(row.id));
+        }
+        const names = new Set(params as string[]);
+        return all.filter((row) => names.has(row.name));
+      }
+      return all;
     }
     throw new Error(`fake: unhandled scan ${source}`);
   };
@@ -858,8 +910,20 @@ describe('draft entity-name conflicts (S11)', () => {
     const loc = f.seedLocation();
     // Hide the existing rows from the domain pre-check so the driver-level
     // backstop is exercised, then fail the inline write like the v3 index.
+    // T3 batches existence checks through getAllAsync too, so only the
+    // parameterless domain scan is hidden (the IN existence check keeps
+    // its bound ids and still finds the seeded location).
     const txnGetAll = f.txn.getAllAsync as jest.Mock;
-    txnGetAll.mockImplementationOnce(async () => []);
+    const passthrough = txnGetAll.getMockImplementation();
+    txnGetAll.mockImplementation(
+      async (source: string, params: unknown[] = []) => {
+        if (params.length === 0) return [];
+        return (passthrough as (source: string, params: unknown[]) => unknown)(
+          source,
+          params,
+        );
+      },
+    );
     f.failMatchingWith(
       /INSERT INTO categories/i,
       new Error(
@@ -934,5 +998,312 @@ describe('transaction boundary', () => {
         stock: [{ locationId: loc, quantity: 1 }],
       }),
     ).rejects.toBeInstanceOf(ValidationError);
+  });
+});
+
+describe('T3 write-path batching (RED: per-row statements today)', () => {
+  const count = (calls: { source: string }[], pattern: RegExp) =>
+    calls.filter((call) => pattern.test(call.source));
+
+  test('draft with existing relations: one existence select per entity, one insert per table', async () => {
+    const f = makeFakeDb();
+    const locA = f.seedLocation('Pantry');
+    const locB = f.seedLocation('Garage');
+    const locC = f.seedLocation('Cellar');
+    const catA = f.seedCategory('Bulk');
+    const catB = f.seedCategory('Grains');
+    const detail = await createItemFromDraft(f.db, {
+      name: 'Rice',
+      stock: [
+        { location: { kind: 'existing', locationId: locA }, quantity: 1 },
+        { location: { kind: 'existing', locationId: locB }, quantity: 2 },
+        { location: { kind: 'existing', locationId: locC }, quantity: 3 },
+      ],
+      categories: [
+        { kind: 'existing', categoryId: catA },
+        { kind: 'existing', categoryId: catB },
+      ],
+    });
+    expect(detail.totalQuantity).toBe(6);
+    expect(detail.categoryIds).toEqual([catA, catB]);
+    // Batched: exactly one existence SELECT per entity for all rows.
+    expect(count(f.txnCalls, /FROM locations WHERE id/i)).toHaveLength(1);
+    expect(count(f.txnCalls, /FROM categories WHERE id/i)).toHaveLength(1);
+    // Batched: exactly one multi-row INSERT per written table.
+    expect(count(f.txnCalls, /INSERT INTO stock/i)).toHaveLength(1);
+    expect(count(f.txnCalls, /INSERT INTO item_categories/i)).toHaveLength(1);
+    expect(count(f.txnCalls, /INSERT INTO items/i)).toHaveLength(1);
+  });
+
+  test('draft with new relations: one uniqueness scan, one insert, one id resolve per entity', async () => {
+    const f = makeFakeDb();
+    const detail = await createItemFromDraft(f.db, {
+      name: 'Rice',
+      stock: [
+        {
+          location: { kind: 'new', location: { name: 'Pantry' } },
+          quantity: 1,
+        },
+        {
+          location: {
+            kind: 'new',
+            location: { name: 'Garage', address: 'Aisle 2' },
+          },
+          quantity: 2,
+        },
+        {
+          location: { kind: 'new', location: { name: 'Cellar' } },
+          quantity: 3,
+        },
+      ],
+      categories: [
+        { kind: 'new', category: { name: 'Bulk' } },
+        { kind: 'new', category: { name: 'Grains' } },
+      ],
+    });
+    expect(detail.totalQuantity).toBe(6);
+    expect(detail.stock.map((level) => level.location.name).sort()).toEqual([
+      'Cellar',
+      'Garage',
+      'Pantry',
+    ]);
+    expect(detail.categories.map((c) => c.name).sort()).toEqual([
+      'Bulk',
+      'Grains',
+    ]);
+    // One domain uniqueness scan per entity no matter how many new names.
+    expect(
+      count(f.txnCalls, /SELECT id, name FROM locations ORDER BY/i),
+    ).toHaveLength(1);
+    expect(
+      count(f.txnCalls, /SELECT id, name FROM categories ORDER BY/i),
+    ).toHaveLength(1);
+    // One multi-row INSERT per entity table, then one id resolve each.
+    expect(count(f.txnCalls, /INSERT INTO locations/i)).toHaveLength(1);
+    expect(count(f.txnCalls, /INSERT INTO categories/i)).toHaveLength(1);
+    expect(count(f.txnCalls, /INSERT INTO stock/i)).toHaveLength(1);
+    expect(count(f.txnCalls, /INSERT INTO item_categories/i)).toHaveLength(1);
+  });
+
+  test('createItem with existing relations batches existence checks and inserts', async () => {
+    const f = makeFakeDb();
+    const locA = f.seedLocation('Pantry');
+    const locB = f.seedLocation('Garage');
+    const cat = f.seedCategory('Bulk');
+    await createItem(f.db, {
+      name: 'Rice',
+      stock: [
+        { locationId: locA, quantity: 1 },
+        { locationId: locB, quantity: 2 },
+      ],
+      categoryIds: [cat],
+    });
+    expect(count(f.txnCalls, /FROM locations WHERE id/i)).toHaveLength(1);
+    expect(count(f.txnCalls, /FROM categories WHERE id/i)).toHaveLength(1);
+    expect(count(f.txnCalls, /INSERT INTO stock/i)).toHaveLength(1);
+    expect(count(f.txnCalls, /INSERT INTO item_categories/i)).toHaveLength(1);
+  });
+
+  test('updateItemFromDraft batches the replacement stock and link writes', async () => {
+    const f = makeFakeDb();
+    const locA = f.seedLocation('Pantry');
+    const locB = f.seedLocation('Garage');
+    const locC = f.seedLocation('Cellar');
+    const catA = f.seedCategory('Bulk');
+    const catB = f.seedCategory('Grains');
+    const created = await seedItem(f, locA);
+    f.txnCalls.length = 0;
+    await updateItemFromDraft(f.db, created.id, {
+      name: 'Rice',
+      stock: [
+        { location: { kind: 'existing', locationId: locA }, quantity: 1 },
+        { location: { kind: 'existing', locationId: locB }, quantity: 2 },
+        { location: { kind: 'existing', locationId: locC }, quantity: 3 },
+      ],
+      categories: [
+        { kind: 'existing', categoryId: catA },
+        { kind: 'existing', categoryId: catB },
+      ],
+    });
+    expect(count(f.txnCalls, /FROM locations WHERE id/i)).toHaveLength(1);
+    expect(count(f.txnCalls, /FROM categories WHERE id/i)).toHaveLength(1);
+    expect(count(f.txnCalls, /INSERT INTO stock/i)).toHaveLength(1);
+    expect(count(f.txnCalls, /INSERT INTO item_categories/i)).toHaveLength(1);
+  });
+
+  test('batched draft still rolls back everything when the stock write fails', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation('Pantry');
+    f.failMatchingWith(/INSERT INTO stock/i, new Error('fake io failure'));
+    const failure = (await createItemFromDraft(f.db, {
+      name: 'Rice',
+      stock: [
+        { location: { kind: 'existing', locationId: loc }, quantity: 1 },
+        {
+          location: { kind: 'new', location: { name: 'Garage' } },
+          quantity: 2,
+        },
+      ],
+      categories: [{ kind: 'new', category: { name: 'Bulk' } }],
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(StorageError);
+    expect(failure).toMatchObject({ code: 'storage', entity: 'item' });
+    // All-or-nothing: no item, no new location, no new category survived.
+    expect(f.items.size).toBe(0);
+    expect(f.locations.size).toBe(1);
+    expect(f.categories.size).toBe(0);
+    expect(f.stock).toHaveLength(0);
+  });
+
+  test('batched existence check still maps a missing location to not-found', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation('Pantry');
+    const failure = (await createItemFromDraft(f.db, {
+      name: 'Rice',
+      stock: [
+        { location: { kind: 'existing', locationId: loc }, quantity: 1 },
+        { location: { kind: 'existing', locationId: 4242 }, quantity: 2 },
+      ],
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityNotFoundError);
+    expect(failure).toMatchObject({
+      code: 'not-found',
+      entity: 'location',
+      id: 4242,
+    });
+    expect(f.items.size).toBe(0);
+  });
+
+  test('batched existence check still maps a missing category to not-found', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation('Pantry');
+    const failure = (await createItem(f.db, {
+      name: 'Rice',
+      stock: [{ locationId: loc, quantity: 1 }],
+      categoryIds: [4242],
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityNotFoundError);
+    expect(failure).toMatchObject({
+      code: 'not-found',
+      entity: 'category',
+      id: 4242,
+    });
+    expect(f.items.size).toBe(0);
+  });
+
+  test('batched draft still maps a stored name collision to conflict', async () => {
+    const f = makeFakeDb();
+    f.seedLocation('Pantry');
+    f.seedCategory('Bulk');
+    const locFailure = (await createItemFromDraft(f.db, {
+      name: 'Rice',
+      stock: [
+        {
+          location: { kind: 'new', location: { name: '  pantry ' } },
+          quantity: 1,
+        },
+      ],
+    }).catch((e: unknown) => e)) as Error;
+    expect(locFailure).toBeInstanceOf(EntityConflictError);
+    expect(locFailure).toMatchObject({ code: 'conflict', entity: 'location' });
+    const catFailure = (await createItemFromDraft(f.db, {
+      name: 'Rice',
+      stock: [],
+      categories: [{ kind: 'new', category: { name: 'BULK' } }],
+    }).catch((e: unknown) => e)) as Error;
+    expect(catFailure).toBeInstanceOf(EntityConflictError);
+    expect(catFailure).toMatchObject({ code: 'conflict', entity: 'category' });
+    expect(f.items.size).toBe(0);
+    expect(f.locations.size).toBe(1);
+    expect(f.categories.size).toBe(1);
+  });
+
+  test('batched draft still rejects a duplicate new name inside the draft', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation('Pantry');
+    const failure = (await createItemFromDraft(f.db, {
+      name: 'Rice',
+      stock: [
+        {
+          location: { kind: 'new', location: { name: 'Garage' } },
+          quantity: 1,
+        },
+        {
+          location: { kind: 'new', location: { name: '  GARAGE ' } },
+          quantity: 2,
+        },
+        { location: { kind: 'existing', locationId: loc }, quantity: 3 },
+      ],
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'location' });
+    expect(f.items.size).toBe(0);
+    expect(f.locations.size).toBe(1);
+  });
+
+  test('batched draft keeps the UNIQUE backstop mapping when the scan races', async () => {
+    const f = makeFakeDb();
+    f.seedLocation('Pantry');
+    // Simulate the race the domain pre-check cannot see: the batched
+    // scan reports no rows while the driver rejects the write.
+    const scan = f.txn.getAllAsync as jest.Mock;
+    scan.mockImplementationOnce(async () => []);
+    const failure = (await createItemFromDraft(f.db, {
+      name: 'Rice',
+      stock: [
+        {
+          location: { kind: 'new', location: { name: 'Pantry' } },
+          quantity: 1,
+        },
+      ],
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'location' });
+    expect(failure.message).not.toContain('UNIQUE');
+    expect(failure.message).not.toContain('SQLITE_CONSTRAINT');
+    expect(f.items.size).toBe(0);
+  });
+
+  test('a new location referenced only by a zero row is still never created', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation('Pantry');
+    const detail = await createItemFromDraft(f.db, {
+      name: 'Rice',
+      stock: [
+        { location: { kind: 'existing', locationId: loc }, quantity: 2 },
+        {
+          location: { kind: 'new', location: { name: 'Ghost' } },
+          quantity: 0,
+        },
+      ],
+    });
+    expect(detail.stock).toHaveLength(1);
+    expect(f.locations.size).toBe(1);
+    expect(count(f.txnCalls, /INSERT INTO locations/i)).toHaveLength(0);
+  });
+
+  test('mutations prefer the shared exclusive path when it exists, else the classic hook', async () => {
+    const f = makeFakeDb();
+    const loc = f.seedLocation('Pantry');
+    const shared = jest.fn(
+      async (task: (txn: TransactionHandle) => Promise<void>) => {
+        await task(f.txn);
+      },
+    );
+    const withBoth = { ...f.db, withSharedExclusiveTransactionAsync: shared };
+    await createItem(withBoth, {
+      name: 'Rice',
+      stock: [{ locationId: loc, quantity: 1 }],
+    });
+    expect(shared).toHaveBeenCalledTimes(1);
+    expect(f.db.withExclusiveTransactionAsync).not.toHaveBeenCalled();
+    // Without the shared hook the classic path still runs the mutation.
+    const g = makeFakeDb();
+    const gloc = g.seedLocation('Pantry');
+    await createItem(g.db, {
+      name: 'Rice',
+      stock: [{ locationId: gloc, quantity: 1 }],
+    });
+    expect(g.db.withExclusiveTransactionAsync).toHaveBeenCalledTimes(1);
   });
 });

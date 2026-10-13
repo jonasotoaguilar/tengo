@@ -119,6 +119,53 @@ export async function assertUniqueCategoryName(
   }
 }
 
+/**
+ * T3 batched S11 domain uniqueness: one full-table scan validates every
+ * candidate name, throwing `EntityConflictError` for the first candidate
+ * (input order) that collides after `normalizeNameKey`, excluding
+ * `excludeId`. Same mapping as the singular asserts; an empty batch
+ * issues no statement. Within-draft duplicates are the caller's (item
+ * draft resolution) check, never this scan's: it only sees stored rows.
+ */
+export async function assertUniqueLocationNames(
+  db: RepositoryDb,
+  names: string[],
+  excludeId?: number,
+): Promise<void> {
+  await assertUniqueNames(db, 'locations', 'location', names, excludeId);
+}
+
+/** Batched S11 domain uniqueness for category names (same semantics). */
+export async function assertUniqueCategoryNames(
+  db: RepositoryDb,
+  names: string[],
+  excludeId?: number,
+): Promise<void> {
+  await assertUniqueNames(db, 'categories', 'category', names, excludeId);
+}
+
+async function assertUniqueNames(
+  db: RepositoryDb,
+  table: 'locations' | 'categories',
+  entity: 'location' | 'category',
+  names: string[],
+  excludeId?: number,
+): Promise<void> {
+  if (names.length === 0) return;
+  const rows = await db.getAllAsync<NameRow>(
+    `SELECT id, name FROM ${table} ORDER BY id ASC`,
+  );
+  for (const candidate of names) {
+    const key = normalizeNameKey(candidate);
+    for (const row of rows) {
+      if (excludeId !== undefined && row.id === excludeId) continue;
+      if (normalizeNameKey(row.name) === key) {
+        throw new EntityConflictError(entity, candidate);
+      }
+    }
+  }
+}
+
 /** Create a location; rejects `conflict` on an S11 duplicate name. */
 export async function createLocation(
   db: RepositoryDb,

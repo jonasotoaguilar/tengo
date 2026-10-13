@@ -446,6 +446,26 @@ search — which is a product decision carrying its own migration, not a query
 edit. Until that decision is taken the budget stays MISSED and recorded as such:
 it was not waived, rounded, or moved.
 
+That conclusion is now **measured rather than argued**. A later attempt split
+read 3 into a light read of the distinct location ids and names plus a breakdown
+join narrowed to the final matches — a four-read bound — which cut the payload
+from about five hundred rows to about a hundred and moved the figure from a
+233.7 ms mean to 184.5 ms. But the three runs were 186.8 PASS, 204.7 FAIL and
+162.0 PASS, so the budget was not recovered stably and the change was reverted
+rather than kept. The residual cost is the extra bridge round trip, and the
+±20 ms run-to-run noise puts 200 ms out of reach along this route.
+
+The schema-level options are therefore the only remaining route, and neither is
+free. An index over a folded column cannot serve a substring match, so it does
+not help this predicate at all. A full-text index would preserve the
+authenticated semantics — a literal, accent-folded substring over item, location
+and category names — only if the application stores the folded copies itself and
+keeps them in sync with triggers, and it brings the trigram tokenizer's own
+constraints with it: queries shorter than three characters need a fallback, and
+tokenization is not the same predicate as `includes`. Both carry a migration and
+a semantics risk, so the budget stays MISSED and recorded until that decision is
+taken.
+
 The figures above, and the three repeats that follow, are read from the device
 screen during the pass, which is how every measurement figure in this document
 was captured. They are **not** persisted as artifacts: the flow asserts the

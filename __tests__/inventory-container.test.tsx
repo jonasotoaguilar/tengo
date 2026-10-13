@@ -1,0 +1,1020 @@
+/**
+ * P3b2 App-wired inventory container unit (Jest/RNTL only, no device proof).
+ *
+ * Covers bootstrap/read error retry, out-of-order filter completion (B wins,
+ * stale errors ignored), rapid retry races, filtered-zero vs first-run
+ * total semantics, entity-choice forwarding, no post-unmount publish or
+ * handle close, single bootstrap reuse, and genuinely-disabled Add/Open
+ * (P4 owns the real routes). The native boundary stays mocked: reads run
+ * the REAL `queryItems`/`listLocations`/`listCategories` against a fake
+ * `getAllAsync` whose promises the tests resolve by hand.
+ */
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react-native';
+import { I18nextProvider } from 'react-i18next';
+import type { ViewProps } from 'react-native';
+import i18n from '../src/i18n';
+import type { RepositoryDb } from '../src/inventory/database';
+import type InventoryContainerType from '../src/screens/InventoryContainer';
+
+const InventoryContainer = require('../src/screens/InventoryContainer')
+  .default as typeof InventoryContainerType;
+
+const { initializeDatabase } = require('../src/db') as {
+  initializeDatabase: jest.Mock;
+};
+
+jest.mock('../src/db', () => ({
+  initializeDatabase: jest.fn(),
+}));
+
+jest.mock('../src/inventory/itemRepository', () => ({
+  getItem: jest.fn(),
+  createItemFromDraft: jest.fn(),
+  updateItemFromDraft: jest.fn(),
+  deleteItem: jest.fn(),
+}));
+
+jest.mock('react-native-safe-area-context', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  return {
+    SafeAreaProvider: ({ children }: { children: React.ReactNode }) => (
+      <>{children}</>
+    ),
+    SafeAreaView: ({ children, ...props }: ViewProps) => (
+      <View {...props}>{children}</View>
+    ),
+    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  };
+});
+
+interface PendingCall {
+  sql: string;
+  params: readonly unknown[] | undefined;
+  resolve: (value: Record<string, unknown>[]) => void;
+  reject: (error: unknown) => void;
+}
+
+const pending: PendingCall[] = [];
+
+interface FakeStore {
+  items: Record<string, unknown>[];
+  links: Record<string, unknown>[];
+  stock: Record<string, unknown>[];
+  locations: Record<string, unknown>[];
+  categories: Record<string, unknown>[];
+}
+
+const store: FakeStore = {
+  items: [],
+  links: [],
+  stock: [],
+  locations: [],
+  categories: [],
+};
+
+const closeAsync = jest.fn(async () => {});
+
+function itemRow(id: number, name: string): Record<string, unknown> {
+  return {
+    item_id: id,
+    item_name: name,
+    item_created_at: `created-${id}`,
+  };
+}
+
+function stockRow(
+  itemId: number,
+  quantity: number,
+  locationId: number,
+  locationName: string,
+): Record<string, unknown> {
+  return {
+    stock_item_id: itemId,
+    quantity,
+    location_id: locationId,
+    location_name: locationName,
+    location_address: null,
+    location_created_at: `loc-created-${locationId}`,
+  };
+}
+
+function seedPopulated(): void {
+  store.items = [itemRow(1, 'Rice'), itemRow(2, 'Lentils')];
+  store.links = [];
+  // Rice lives in the Pantry; Lentils is catalog-only (sin stock, R6).
+  store.stock = [stockRow(1, 2, 10, 'Pantry')];
+  store.locations = [
+    { id: 10, name: 'Pantry', address: null, created_at: 'loc-created-10' },
+    { id: 11, name: 'Fridge', address: null, created_at: 'loc-created-11' },
+  ];
+  store.categories = [{ id: 20, name: 'Bulk', created_at: 'cat-created-20' }];
+}
+
+function valueFor(call: PendingCall): Record<string, unknown>[] {
+  if (call.sql.includes('item_categories')) return store.links;
+  if (call.sql.includes('FROM stock')) return store.stock;
+  if (call.sql.includes('FROM items')) return store.items;
+  if (call.sql.includes('FROM locations')) return store.locations;
+  if (call.sql.includes('FROM categories')) return store.categories;
+  throw new Error(`unexpected SQL: ${call.sql}`);
+}
+
+function makeFakeDb() {
+  return {
+    getAllAsync: jest.fn(
+      (sql: string, params?: readonly unknown[]) =>
+        new Promise<Record<string, unknown>[]>((resolve, reject) => {
+          pending.push({
+            sql,
+            params,
+            resolve: resolve as (value: Record<string, unknown>[]) => void,
+            reject,
+          });
+        }),
+    ),
+    closeAsync,
+  };
+}
+
+/** Resolve every queued read (plus follow-up link reads) until quiet. */
+async function settle(): Promise<void> {
+  for (let round = 0; round < 10; round += 1) {
+    const batch = pending.splice(0, pending.length);
+    if (batch.length === 0) {
+      await act(async () => {});
+      if (pending.length === 0) return;
+    } else {
+      await act(async () => {
+        for (const call of batch) call.resolve(valueFor(call));
+      });
+    }
+  }
+  throw new Error('settle: reads still pending after 10 rounds');
+}
+
+async function renderContainer() {
+  return render(
+    <I18nextProvider i18n={i18n}>
+      <InventoryContainer />
+    </I18nextProvider>,
+  );
+}
+
+beforeEach(() => {
+  pending.length = 0;
+  closeAsync.mockClear();
+  initializeDatabase.mockReset();
+  seedPopulated();
+});
+
+afterEach(async () => {
+  await cleanup();
+});
+
+test('loads the wired list with entity choices and an honest count', async () => {
+  initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+  await renderContainer();
+  expect(screen.getByTestId('inventory-loading')).toBeTruthy();
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '2 of 2',
+  );
+  expect(screen.getByTestId('inventory-row-1')).toBeTruthy();
+  expect(screen.getByTestId('inventory-row-2')).toBeTruthy();
+  expect(screen.getByTestId('inventory-location-10')).toBeTruthy();
+  expect(screen.getByTestId('inventory-category-20')).toBeTruthy();
+  expect(initializeDatabase).toHaveBeenCalledTimes(1);
+});
+
+test('filter change during pending bootstrap opens only once and reads the current filter', async () => {
+  let resolveBootstrap!: (db: unknown) => void;
+  initializeDatabase.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveBootstrap = resolve as (db: unknown) => void;
+      }),
+  );
+  await renderContainer();
+  await act(async () => {});
+  expect(initializeDatabase).toHaveBeenCalledTimes(1);
+  expect(screen.getByTestId('inventory-loading')).toBeTruthy();
+
+  // Filter while the first open is still in flight: the pending bootstrap
+  // must be shared, never opened again.
+  await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
+  await act(async () => {});
+  expect(initializeDatabase).toHaveBeenCalledTimes(1);
+
+  const fake = makeFakeDb();
+  await act(async () => {
+    resolveBootstrap(fake);
+  });
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '1 of 2',
+  );
+  expect(screen.getByTestId('inventory-row-1')).toBeTruthy();
+  expect(screen.queryByTestId('inventory-row-2')).toBeNull();
+  // Two rounds of three bounded reads (items + links + locations each)
+  // plus the shared entity reads: stale round A publishes nothing.
+  expect(fake.getAllAsync).toHaveBeenCalledTimes(8);
+  expect(initializeDatabase).toHaveBeenCalledTimes(1);
+});
+
+test('pending bootstrap rejection after a filter change errors once, retry recovers fresh', async () => {
+  let rejectBootstrap!: (error: unknown) => void;
+  initializeDatabase.mockImplementationOnce(
+    () =>
+      new Promise((_, reject) => {
+        rejectBootstrap = reject;
+      }),
+  );
+  await renderContainer();
+  await act(async () => {});
+  await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
+  await act(async () => {});
+  expect(initializeDatabase).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    rejectBootstrap(new Error('boot down'));
+  });
+  expect(await screen.findByTestId('inventory-error-message')).toBeTruthy();
+  expect(screen.queryByText('boot down')).toBeNull();
+
+  initializeDatabase.mockImplementationOnce(async () => makeFakeDb());
+  await fireEvent.press(screen.getByTestId('inventory-retry'));
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '1 of 2',
+  );
+  expect(initializeDatabase).toHaveBeenCalledTimes(2);
+});
+
+test('bootstrap resolving after unmount issues no reads and closes nothing', async () => {
+  let resolveBootstrap!: (db: unknown) => void;
+  initializeDatabase.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveBootstrap = resolve as (db: unknown) => void;
+      }),
+  );
+  const fake = makeFakeDb();
+  const view = await renderContainer();
+  await view.unmount();
+  await act(async () => {
+    resolveBootstrap(fake);
+  });
+  await act(async () => {});
+  expect(fake.getAllAsync).not.toHaveBeenCalled();
+  expect(closeAsync).not.toHaveBeenCalled();
+});
+
+test('bootstrap failure recovers through retry into ready', async () => {
+  initializeDatabase.mockRejectedValueOnce(new Error('no native module'));
+  await renderContainer();
+  await act(async () => {});
+  expect(await screen.findByTestId('inventory-error-message')).toBeTruthy();
+  expect(screen.queryByTestId('inventory-count')).toBeNull();
+
+  initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+  await fireEvent.press(screen.getByTestId('inventory-retry'));
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '2 of 2',
+  );
+  expect(initializeDatabase).toHaveBeenCalledTimes(2);
+});
+
+test('read failure recovers through retry reusing the same handle', async () => {
+  initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+  await renderContainer();
+  await act(async () => {
+    for (const call of pending.splice(0, pending.length)) {
+      call.reject(new Error('FOREIGN KEY constraint failed'));
+    }
+  });
+  expect(await screen.findByTestId('inventory-error-message')).toBeTruthy();
+
+  await fireEvent.press(screen.getByTestId('inventory-retry'));
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '2 of 2',
+  );
+  // One bootstrap for the whole lifetime: retry re-reads, never re-opens.
+  expect(initializeDatabase).toHaveBeenCalledTimes(1);
+});
+
+test('out-of-order filter completion lets the latest filter win', async () => {
+  initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+  await renderContainer();
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '2 of 2',
+  );
+
+  // Filter A (Rice) starts but its item read stays slow.
+  await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
+  await act(async () => {});
+  const roundA = pending.splice(0, pending.length);
+  expect(roundA.length).toBeGreaterThan(0);
+
+  // Filter B (Lentils) starts on top of A.
+  await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Lentils');
+  await act(async () => {});
+  const roundB = pending.splice(0, pending.length);
+  expect(roundB.length).toBeGreaterThan(0);
+
+  // B resolves fully while A is still in flight: B must render.
+  await act(async () => {
+    for (const call of roundB) call.resolve(valueFor(call));
+  });
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '1 of 2',
+  );
+  expect(screen.getByTestId('inventory-row-2')).toBeTruthy();
+  expect(screen.queryByTestId('inventory-row-1')).toBeNull();
+
+  // A's stale completion (and a stale error) must not clobber B.
+  await act(async () => {
+    for (const call of roundA) call.resolve(valueFor(call));
+  });
+  await settle();
+  expect(screen.getByTestId('inventory-row-2')).toBeTruthy();
+  expect(screen.queryByTestId('inventory-error-message')).toBeNull();
+  expect(initializeDatabase).toHaveBeenCalledTimes(1);
+});
+
+test('a stale read error never replaces a newer ready list', async () => {
+  initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+  await renderContainer();
+  await settle();
+
+  await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
+  await act(async () => {});
+  const roundA = pending.splice(0, pending.length);
+
+  await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Lentils');
+  await act(async () => {});
+  const roundB = pending.splice(0, pending.length);
+
+  await act(async () => {
+    for (const call of roundB) call.resolve(valueFor(call));
+  });
+  await settle();
+  expect(await screen.findByTestId('inventory-row-2')).toBeTruthy();
+
+  await act(async () => {
+    for (const call of roundA) call.reject(new Error('stale read blew up'));
+  });
+  await settle();
+  expect(screen.getByTestId('inventory-row-2')).toBeTruthy();
+  expect(screen.queryByTestId('inventory-error-message')).toBeNull();
+});
+
+test('rapid rounds race safely: only the newest round renders', async () => {
+  initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+  await renderContainer();
+  await act(async () => {
+    for (const call of pending.splice(0, pending.length)) {
+      call.reject(new Error('first read failed'));
+    }
+  });
+  expect(await screen.findByTestId('inventory-error-message')).toBeTruthy();
+
+  // Retry starts a slow round; a search keystroke supersedes it while the
+  // header controls stay interactive (loading shows skeleton, not a lock).
+  await fireEvent.press(screen.getByTestId('inventory-retry'));
+  await act(async () => {});
+  const retried = pending.splice(0, pending.length);
+  expect(retried.length).toBeGreaterThan(0);
+  await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
+  await act(async () => {});
+  const superseding = pending.splice(0, pending.length);
+  expect(superseding.length).toBeGreaterThan(0);
+
+  await act(async () => {
+    for (const call of retried) call.reject(new Error('superseded round'));
+  });
+  await act(async () => {
+    for (const call of superseding) call.resolve(valueFor(call));
+  });
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '1 of 2',
+  );
+  expect(screen.getByTestId('inventory-row-1')).toBeTruthy();
+  expect(screen.queryByTestId('inventory-error-message')).toBeNull();
+  expect(initializeDatabase).toHaveBeenCalledTimes(1);
+});
+
+test('filtered zero with a nonzero total is no-results, not first-run', async () => {
+  initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+  await renderContainer();
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '2 of 2',
+  );
+
+  await fireEvent.changeText(screen.getByTestId('inventory-search'), 'quinoa');
+  await settle();
+  expect(await screen.findByTestId('inventory-noresults-message')).toBeTruthy();
+  expect(screen.queryByTestId('inventory-empty-title')).toBeNull();
+  expect(screen.getByTestId('inventory-add-noresults')).toBeDisabled();
+});
+
+test('selecting a location shows its quantity with sin-stock breakdowns', async () => {
+  initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+  await renderContainer();
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '2 of 2',
+  );
+
+  // Fridge holds no Rice and no Lentils stock: both rows stay visible
+  // (L9a), marked sin stock with the breakdown where stock exists.
+  await fireEvent.press(screen.getByTestId('inventory-location-11'));
+  await settle();
+  expect(screen.getByTestId('inventory-row-1-quantity')).toHaveTextContent(
+    /Quantity 0/,
+  );
+  expect(screen.getByTestId('inventory-row-1-exhausted')).toBeTruthy();
+  expect(screen.getByTestId('inventory-row-1-breakdown')).toHaveTextContent(
+    'Pantry 2',
+  );
+  expect(screen.getByTestId('inventory-row-2-exhausted')).toBeTruthy();
+  expect(screen.queryByTestId('inventory-noresults-message')).toBeNull();
+});
+
+test('empty inventory stays first-run while choices render', async () => {
+  store.items = [];
+  store.links = [];
+  store.stock = [];
+  store.locations = [];
+  store.categories = [];
+  initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+  await renderContainer();
+  await settle();
+  expect(await screen.findByTestId('inventory-empty-title')).toBeTruthy();
+  expect(screen.queryByTestId('inventory-noresults-message')).toBeNull();
+  expect(screen.getByTestId('inventory-add-empty')).toBeDisabled();
+});
+
+test('unmount publishes nothing and never closes the app-lifetime handle', async () => {
+  initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+  const view = await renderContainer();
+  await view.unmount();
+  await act(async () => {
+    for (const call of pending.splice(0, pending.length)) {
+      call.resolve(valueFor(call));
+    }
+  });
+  await act(async () => {});
+  expect(closeAsync).not.toHaveBeenCalled();
+});
+
+test('add and open stay genuinely disabled until P4', async () => {
+  // NOTE: jest-expo inlines `process.env.EXPO_OS` to the ios platform at
+  // transform time, so Jest always exercises the header Add variant; the
+  // Android FAB shares the same `addDisabled` flag in source and needs the
+  // pending native pass (see outstanding checks). Either branch proves the
+  // container passes `onAdd`/`onOpenItem` as undefined.
+  initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+  await renderContainer();
+  await settle();
+  expect(await screen.findByTestId('inventory-add-header')).toBeDisabled();
+  expect(screen.getByTestId('inventory-row-1')).toBeTruthy();
+});
+
+test('injected isolated bootstrap serves reads without opening production', async () => {
+  const isolated = makeFakeDb();
+  const bootstrap = jest.fn(
+    async (): Promise<RepositoryDb> => isolated as unknown as RepositoryDb,
+  );
+  await render(
+    <I18nextProvider i18n={i18n}>
+      <InventoryContainer bootstrap={bootstrap} />
+    </I18nextProvider>,
+  );
+  await settle();
+  expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+    '2 of 2',
+  );
+  expect(bootstrap).toHaveBeenCalledTimes(1);
+  // The default production open stays untouched when isolated.
+  expect(initializeDatabase).not.toHaveBeenCalled();
+  expect(isolated.getAllAsync).toHaveBeenCalled();
+});
+
+describe('U2b opt-in mutations (enableMutations)', () => {
+  const repository = require('../src/inventory/itemRepository') as {
+    getItem: jest.Mock;
+    createItemFromDraft: jest.Mock;
+    updateItemFromDraft: jest.Mock;
+    deleteItem: jest.Mock;
+  };
+
+  const riceDetail = {
+    id: 1,
+    name: 'Rice',
+    stock: [
+      {
+        locationId: 10,
+        location: {
+          id: 10,
+          name: 'Pantry',
+          address: null,
+          created_at: 'loc-created-10',
+        },
+        quantity: 2,
+      },
+    ],
+    totalQuantity: 2,
+    categoryIds: [],
+    categories: [],
+    created_at: 'created-1',
+  };
+
+  beforeEach(() => {
+    repository.getItem.mockReset();
+    repository.createItemFromDraft.mockReset();
+    repository.updateItemFromDraft.mockReset();
+    repository.deleteItem.mockReset();
+    repository.getItem.mockResolvedValue({ ...riceDetail });
+    repository.createItemFromDraft.mockResolvedValue({
+      ...riceDetail,
+      id: 3,
+      name: 'Quinoa',
+    });
+    repository.updateItemFromDraft.mockResolvedValue({ ...riceDetail });
+    repository.deleteItem.mockResolvedValue(undefined);
+  });
+
+  async function renderMutations() {
+    return render(
+      <I18nextProvider i18n={i18n}>
+        <InventoryContainer enableMutations />
+      </I18nextProvider>,
+    );
+  }
+
+  async function openCreate(): Promise<void> {
+    await fireEvent.press(screen.getByTestId('inventory-add-header'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+  }
+
+  async function fillValidCreateForm(): Promise<void> {
+    await fireEvent.changeText(screen.getByTestId('item-form/name'), 'Quinoa');
+    await fireEvent.press(screen.getByTestId('item-form/location-10'));
+    await fireEvent.changeText(
+      screen.getByTestId('item-form/stock-0/quantity'),
+      '1',
+    );
+  }
+
+  test('Add opens the create route once the handle is ready', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+    expect(screen.getByTestId('inventory-add-header')).not.toBeDisabled();
+
+    await openCreate();
+    expect(screen.getByText('New item')).toBeTruthy();
+    expect(repository.getItem).not.toHaveBeenCalled();
+    await cleanup();
+  });
+
+  test('a row open opens the edit route prefilled', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-row-1'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+    expect(screen.getByTestId('item-form/name').props.value).toBe('Rice');
+    expect(repository.getItem).toHaveBeenCalledWith(expect.anything(), 1);
+    await cleanup();
+  });
+
+  test('after a save the list re-queries and the screen closes', async () => {
+    const fake = makeFakeDb();
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderMutations();
+    await settle();
+
+    await openCreate();
+    await fillValidCreateForm();
+    const readsBefore = fake.getAllAsync.mock.calls.length;
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+    await settle();
+    expect(fake.getAllAsync.mock.calls.length).toBeGreaterThan(readsBefore);
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '2 of 2',
+    );
+    await cleanup();
+  });
+
+  test('after a delete the list re-queries and the screen closes', async () => {
+    const fake = makeFakeDb();
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-row-1'));
+    await screen.findByTestId('item-form/delete');
+    const readsBefore = fake.getAllAsync.mock.calls.length;
+    await fireEvent.press(screen.getByTestId('item-form/delete'));
+    await screen.findByTestId('item-form-screen/delete-dialog');
+    await fireEvent.press(
+      screen.getByTestId('item-form-screen/delete-confirm'),
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    expect(repository.deleteItem).toHaveBeenCalledWith(expect.anything(), 1);
+    await settle();
+    expect(fake.getAllAsync.mock.calls.length).toBeGreaterThan(readsBefore);
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+    await cleanup();
+  });
+
+  test('post-write refresh keeps the ready list visible without loading', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '2 of 2',
+    );
+
+    await openCreate();
+    await fillValidCreateForm();
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    // The refresh re-read is still in flight: no full-screen loading, and
+    // the previous page stays visible until the new one arrives.
+    expect(screen.queryByTestId('inventory-loading')).toBeNull();
+    expect(screen.getByTestId('inventory-count')).toHaveTextContent('2 of 2');
+    expect(screen.getByTestId('inventory-row-1')).toBeTruthy();
+    await settle();
+    expect(screen.queryByTestId('inventory-loading')).toBeNull();
+    expect(screen.getByTestId('inventory-count')).toHaveTextContent('2 of 2');
+    await cleanup();
+  });
+
+  test('a filter change still renders loading as before', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+
+    await fireEvent.changeText(screen.getByTestId('inventory-search'), 'Rice');
+    expect(screen.getByTestId('inventory-loading')).toBeTruthy();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '1 of 2',
+    );
+    await cleanup();
+  });
+});
+
+describe('M4 transient feedback (Gap A)', () => {
+  const repository = require('../src/inventory/itemRepository') as {
+    getItem: jest.Mock;
+    createItemFromDraft: jest.Mock;
+    updateItemFromDraft: jest.Mock;
+    deleteItem: jest.Mock;
+  };
+
+  const riceDetail = {
+    id: 1,
+    name: 'Rice',
+    stock: [
+      {
+        locationId: 10,
+        location: {
+          id: 10,
+          name: 'Pantry',
+          address: null,
+          created_at: 'loc-created-10',
+        },
+        quantity: 2,
+      },
+    ],
+    totalQuantity: 2,
+    categoryIds: [],
+    categories: [],
+    created_at: 'created-1',
+  };
+
+  beforeEach(() => {
+    repository.getItem.mockReset();
+    repository.createItemFromDraft.mockReset();
+    repository.updateItemFromDraft.mockReset();
+    repository.deleteItem.mockReset();
+    repository.getItem.mockResolvedValue({ ...riceDetail });
+    repository.createItemFromDraft.mockResolvedValue({
+      ...riceDetail,
+      id: 3,
+      name: 'Quinoa',
+    });
+    repository.updateItemFromDraft.mockResolvedValue({ ...riceDetail });
+    repository.deleteItem.mockResolvedValue(undefined);
+  });
+
+  // The jest-expo `AccessibilityInfo` mock does not survive `spyOn`
+  // with stable call counts, so the announce tests below swap the
+  // function by direct assignment and restore it here.
+  let realAnnounce: ((message: string) => void) | null = null;
+
+  function stubAnnounce(): jest.Mock {
+    const { AccessibilityInfo } = require('react-native') as {
+      AccessibilityInfo: { announceForAccessibility: (m: string) => void };
+    };
+    if (realAnnounce === null) {
+      realAnnounce =
+        AccessibilityInfo.announceForAccessibility.bind(AccessibilityInfo);
+    }
+    const announce = jest.fn();
+    AccessibilityInfo.announceForAccessibility = announce;
+    return announce;
+  }
+
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+    if (realAnnounce !== null) {
+      const { AccessibilityInfo } = require('react-native') as {
+        AccessibilityInfo: { announceForAccessibility: (m: string) => void };
+      };
+      AccessibilityInfo.announceForAccessibility = realAnnounce;
+      realAnnounce = null;
+    }
+  });
+
+  async function renderMutations() {
+    return render(
+      <I18nextProvider i18n={i18n}>
+        <InventoryContainer enableMutations />
+      </I18nextProvider>,
+    );
+  }
+
+  async function openCreate(): Promise<void> {
+    await fireEvent.press(screen.getByTestId('inventory-add-header'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+  }
+
+  async function fillValidCreateForm(): Promise<void> {
+    await fireEvent.changeText(screen.getByTestId('item-form/name'), 'Quinoa');
+    await fireEvent.press(screen.getByTestId('item-form/location-10'));
+    await fireEvent.changeText(
+      screen.getByTestId('item-form/stock-0/quantity'),
+      '1',
+    );
+  }
+
+  test('no notice surface renders before anything happens', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+    expect(screen.queryByTestId('inventory-notice')).toBeNull();
+    await cleanup();
+  });
+
+  test('a successful save shows the saved message, announces it once, and clears after the timer', async () => {
+    jest.useFakeTimers();
+    const announce = stubAnnounce();
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await openCreate();
+    await fillValidCreateForm();
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    const notice = await screen.findByTestId('inventory-notice');
+    expect(notice).toBeTruthy();
+    expect(notice.props.accessibilityRole).toBe('alert');
+    expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+      'Item saved.',
+    );
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith('Item saved.');
+
+    await act(async () => {
+      jest.advanceTimersByTime(3000);
+    });
+    expect(screen.queryByTestId('inventory-notice')).toBeNull();
+    await cleanup();
+  });
+
+  test('a successful delete shows the deleted message', async () => {
+    jest.useFakeTimers();
+    const announce = stubAnnounce();
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-row-1'));
+    await screen.findByTestId('item-form/delete');
+    await fireEvent.press(screen.getByTestId('item-form/delete'));
+    await screen.findByTestId('item-form-screen/delete-dialog');
+    await fireEvent.press(
+      screen.getByTestId('item-form-screen/delete-confirm'),
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    expect(await screen.findByTestId('inventory-notice')).toBeTruthy();
+    expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+      'Item deleted.',
+    );
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith('Item deleted.');
+    await cleanup();
+  });
+
+  test('a second message replaces the first and restarts the timer', async () => {
+    jest.useFakeTimers();
+    const announce = stubAnnounce();
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await openCreate();
+    await fillValidCreateForm();
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+      'Item saved.',
+    );
+
+    await act(async () => {
+      jest.advanceTimersByTime(2500);
+    });
+    expect(screen.queryByTestId('inventory-notice')).toBeTruthy();
+
+    await openCreate();
+    await fillValidCreateForm();
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-form/name')).toBeNull(),
+    );
+    expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+      'Item saved.',
+    );
+    expect(announce).toHaveBeenCalledTimes(2);
+
+    // The first timer would have fired 500ms from now; the restart keeps
+    // the second message visible.
+    await act(async () => {
+      jest.advanceTimersByTime(2500);
+    });
+    expect(screen.queryByTestId('inventory-notice')).toBeTruthy();
+    await act(async () => {
+      jest.advanceTimersByTime(1000);
+    });
+    expect(screen.queryByTestId('inventory-notice')).toBeNull();
+    await cleanup();
+  });
+
+  test('the notice renders in both color schemes with a scheme-matched palette', async () => {
+    // `useColorScheme` is a plain jest mock returning 'light'; drive it
+    // per iteration instead of going through `Appearance`.
+    const { StyleSheet, useColorScheme } = require('react-native') as {
+      StyleSheet: { flatten: (style: unknown) => { backgroundColor?: string } };
+      useColorScheme: jest.Mock;
+    };
+    const backgrounds: (string | undefined)[] = [];
+    try {
+      for (const colorScheme of ['light', 'dark'] as const) {
+        jest.useFakeTimers();
+        const announce = stubAnnounce();
+        useColorScheme.mockReturnValue(colorScheme);
+        initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+        await renderMutations();
+        await settle();
+
+        await openCreate();
+        await fillValidCreateForm();
+        await fireEvent.press(screen.getByTestId('item-form/save'));
+        await waitFor(() =>
+          expect(screen.queryByTestId('item-form/name')).toBeNull(),
+        );
+        const notice = await screen.findByTestId('inventory-notice');
+        expect(notice.props.accessibilityRole).toBe('alert');
+        expect(notice.props.pointerEvents).toBe('none');
+        backgrounds.push(
+          StyleSheet.flatten(notice.props.style).backgroundColor,
+        );
+        expect(announce).toHaveBeenCalledTimes(1);
+        await cleanup();
+        jest.useRealTimers();
+      }
+    } finally {
+      useColorScheme.mockReturnValue('light');
+    }
+    // Both schemes resolve a concrete inverse-surface background, and
+    // the two differ so the toast stays distinct from the list in each.
+    expect(backgrounds).toHaveLength(2);
+    expect(backgrounds[0]).toBeTruthy();
+    expect(backgrounds[1]).toBeTruthy();
+    expect(backgrounds[0]).not.toBe(backgrounds[1]);
+  });
+});
+
+describe('Entity-management entry point (D6/S12 adopted)', () => {
+  async function renderMutations() {
+    return render(
+      <I18nextProvider i18n={i18n}>
+        <InventoryContainer enableMutations />
+      </I18nextProvider>,
+    );
+  }
+
+  test('the manage entry point opens the entity screen once the handle is ready', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+    expect(await screen.findByTestId('inventory-manage-entities')).toBeTruthy();
+    expect(screen.getByTestId('inventory-manage-entities')).not.toBeDisabled();
+
+    await fireEvent.press(screen.getByTestId('inventory-manage-entities'));
+    expect(await screen.findByTestId('entity-manager')).toBeTruthy();
+    expect(screen.getByTestId('entity-location-10')).toBeTruthy();
+    expect(screen.getByTestId('entity-category-20')).toBeTruthy();
+
+    await fireEvent.press(screen.getByTestId('entity-close'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('entity-manager')).toBeNull(),
+    );
+    await cleanup();
+  });
+
+  test('an entity write refreshes the list without blanking it', async () => {
+    const fake = makeFakeDb();
+    Object.assign(fake, {
+      runAsync: jest.fn(async () => ({ lastInsertRowId: 99, changes: 1 })),
+      getFirstAsync: jest.fn(async () => ({
+        id: 99,
+        name: 'Grains',
+        created_at: 'cat-created-99',
+      })),
+    });
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderMutations();
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toHaveTextContent(
+      '2 of 2',
+    );
+
+    await fireEvent.press(screen.getByTestId('inventory-manage-entities'));
+    await screen.findByTestId('entity-manager');
+    const readsBefore = fake.getAllAsync.mock.calls.length;
+    await fireEvent.changeText(
+      screen.getByTestId('entity-new-category-name'),
+      'Grains',
+    );
+    await fireEvent.press(screen.getByTestId('entity-add-category'));
+    await waitFor(() =>
+      expect(fake.getAllAsync.mock.calls.length).toBeGreaterThan(readsBefore),
+    );
+    // The ready list stays visible through the background refresh.
+    expect(screen.queryByTestId('inventory-loading')).toBeNull();
+    expect(screen.getByTestId('inventory-count')).toBeTruthy();
+    await settle();
+    await cleanup();
+  });
+
+  test('the manage entry point stays disabled without opt-in mutations', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderContainer();
+    await settle();
+    const manage = await screen.findByTestId('inventory-manage-entities');
+    expect(manage).toBeDisabled();
+    expect(String(manage.props.accessibilityHint ?? '')).toMatch(
+      /not available/i,
+    );
+    await cleanup();
+  });
+});

@@ -1,91 +1,104 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
-import { I18nextProvider, useTranslation } from 'react-i18next';
-import { StyleSheet, Text, View } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { initializeDatabase } from './src/db';
+import { I18nextProvider } from 'react-i18next';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import i18n from './src/i18n';
-
-type DbState = 'initializing' | 'ready' | 'error';
-
-function ReadinessScreen() {
-  const {
-    t,
-    i18n: { language },
-  } = useTranslation();
-  const [dbState, setDbState] = useState<DbState>('initializing');
-
-  useEffect(() => {
-    let mounted = true;
-    initializeDatabase()
-      .then(() => {
-        if (mounted) setDbState('ready');
-      })
-      .catch(() => {
-        if (mounted) setDbState('error');
-      });
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  const status =
-    dbState === 'ready'
-      ? t('statusReady')
-      : dbState === 'error'
-        ? t('statusError')
-        : t('statusInitializing');
-
-  return (
-    <SafeAreaView style={styles.container} testID="readiness-screen">
-      <Text testID="readiness-title" style={styles.title}>
-        {t('readinessTitle')}
-      </Text>
-      <Text testID="readiness-subtitle" style={styles.subtitle}>
-        {t('readinessSubtitle')}
-      </Text>
-      <Text testID="readiness-status">{status}</Text>
-      <View style={styles.meta}>
-        <Text testID="readiness-db-state">{dbState}</Text>
-        <Text testID="readiness-language">{language}</Text>
-      </View>
-      <StatusBar style="auto" />
-    </SafeAreaView>
-  );
-}
+import InventoryContainer from './src/screens/InventoryContainer';
 
 export default function App() {
+  // DEV-ONLY CRUD fixture gate (M4 verification infra): enabled only
+  // when `__DEV__` is true AND BOTH `EXPO_PUBLIC_NATIVE_FIXTURE=1` and
+  // `EXPO_PUBLIC_NATIVE_CRUD=1`. Highest precedence: takes priority over
+  // the query, repository, and M1 fixture gates below; bypasses the
+  // default `InventoryContainer` bootstrap entirely, so the normal
+  // `tengo.db` bootstrap never runs here. Release builds ignore both
+  // flags. The harness is required lazily so release bundles never
+  // execute it.
+  const crudLaunch =
+    (globalThis as Record<string, unknown>).__DEV__ === true &&
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE === '1' &&
+    process.env.EXPO_PUBLIC_NATIVE_CRUD === '1';
+  if (crudLaunch) {
+    const CrudScreen = require('./src/dev/NativeCrudFixtureScreen')
+      .default as React.ComponentType;
+    return (
+      <I18nextProvider i18n={i18n}>
+        <SafeAreaProvider>
+          <CrudScreen />
+        </SafeAreaProvider>
+      </I18nextProvider>
+    );
+  }
+  // DEV-ONLY query fixture gate (P3b3 verification infra): enabled only
+  // when `__DEV__` is true AND BOTH `EXPO_PUBLIC_NATIVE_FIXTURE=1` and
+  // `EXPO_PUBLIC_NATIVE_QUERY=1`. Takes precedence over the repository
+  // and M1 fixture gates below; bypasses the default `InventoryContainer`
+  // bootstrap entirely, so the normal `tengo.db` bootstrap never runs here.
+  // Release builds ignore both flags. The harness is required lazily so
+  // release bundles never execute it.
+  const queryLaunch =
+    (globalThis as Record<string, unknown>).__DEV__ === true &&
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE === '1' &&
+    process.env.EXPO_PUBLIC_NATIVE_QUERY === '1';
+  if (queryLaunch) {
+    const QueryScreen = require('./src/dev/NativeQueryFixtureScreen')
+      .default as React.ComponentType;
+    return (
+      <I18nextProvider i18n={i18n}>
+        <SafeAreaProvider>
+          <QueryScreen />
+        </SafeAreaProvider>
+      </I18nextProvider>
+    );
+  }
+  // DEV-ONLY repository fixture gate (P2b verification infra): enabled
+  // only when `__DEV__` is true AND BOTH `EXPO_PUBLIC_NATIVE_FIXTURE=1`
+  // and `EXPO_PUBLIC_NATIVE_REPOSITORY=1`. Takes precedence over the M1
+  // fixture gate below; bypasses `InventoryContainer` entirely, so the normal
+  // `tengo.db` bootstrap never runs here. Release builds ignore both flags.
+  const repositoryLaunch =
+    (globalThis as Record<string, unknown>).__DEV__ === true &&
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE === '1' &&
+    process.env.EXPO_PUBLIC_NATIVE_REPOSITORY === '1';
+  if (repositoryLaunch) {
+    const RepositoryScreen = require('./src/dev/NativeRepositoryFixtureScreen')
+      .default as React.ComponentType;
+    return (
+      <I18nextProvider i18n={i18n}>
+        <SafeAreaProvider>
+          <RepositoryScreen />
+        </SafeAreaProvider>
+      </I18nextProvider>
+    );
+  }
+  // DEV-ONLY fixture gate (T3 verification infra): enabled only when BOTH
+  // `__DEV__` is true and `EXPO_PUBLIC_NATIVE_FIXTURE=1`. This branch
+  // bypasses `InventoryContainer` entirely, so the normal `tengo.db`
+  // bootstrap never runs here. Release builds (`__DEV__ === false`) ignore
+  // the public flag and always take the normal path below. The harness is
+  // required lazily so release bundles never execute it.
+  const fixtureLaunch =
+    (globalThis as Record<string, unknown>).__DEV__ === true &&
+    process.env.EXPO_PUBLIC_NATIVE_FIXTURE === '1';
+  if (fixtureLaunch) {
+    const FixtureScreen = require('./src/dev/NativeSqliteFixtureScreen')
+      .default as React.ComponentType;
+    return (
+      <I18nextProvider i18n={i18n}>
+        <SafeAreaProvider>
+          <FixtureScreen />
+        </SafeAreaProvider>
+      </I18nextProvider>
+    );
+  }
+  // Default (U2b): the App-wired inventory list with opt-in mutations.
+  // The container owns the single `tengo.db` bootstrap; nothing else here
+  // initializes.
   return (
     <I18nextProvider i18n={i18n}>
       <SafeAreaProvider>
-        <ReadinessScreen />
+        <InventoryContainer enableMutations />
+        <StatusBar style="auto" />
       </SafeAreaProvider>
     </I18nextProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    opacity: 0.7,
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  meta: {
-    marginTop: 12,
-    alignItems: 'center',
-    gap: 4,
-  },
-});

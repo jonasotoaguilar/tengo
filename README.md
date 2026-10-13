@@ -1,133 +1,81 @@
 # Tengo
 
-Local-first household inventory app (Expo React Native + TypeScript).
-No backend, no accounts, no sync: one household, one on-device SQLite database.
+Local-first household inventory for Android: one household, one on-device SQLite database, no backend, no accounts, no sync.
 
-> Current scope is the foundation only: app shell, SQLite initialization
-> with a versioned initial migration, English/Spanish i18n, and Jest
-> unit-test scaffolding. Inventory screens and CRUD do not exist yet.
+## What It Does
 
-## Run it
+Tengo helps one household record what it owns, how much, and where
+it is — organized by location, in English or Spanish. The app works
+fully offline against on-device SQLite (`tengo.db`).
 
-Prerequisites: Node `26.8.1` pinned via `.nvmrc` (`engines` requires
-`node 26.x`); `engines` requires npm `>=11` (observed `11.19.0`). Native runs
-also need Java + Android SDK (`adb`) or Xcode.
+Current state is honest: the default app screen is the wired inventory
+list (search over item, location and category names, location/category
+filters, loading/empty/no-results with retry) backed by the on-device
+database, with add, edit and delete wired through the same container
+(`enableMutations`). M1–M5 are implemented; their native gates were
+observed on Android on the previous model, and the four Maestro flows were
+re-observed on the v4 model, where all of them pass and the search budget is
+missed. The recorded boundaries live in
+[docs/testing.md](docs/testing.md) — screen-reader speech is not claimed
+and the device figures are single-sample.
+
+## Quick Start
+
+Prerequisites: Node `26.8.1` pinned via `.nvmrc` (`engines`
+requires `node 26.x`, npm `>=11`). Native runs also need Java +
+Android SDK (`adb`).
 
 ```sh
 npm ci
 npm start
 ```
 
-`npm start` opens the Expo dev server, which works in Expo Go: the
-default `expo-sqlite` used here is Included in Expo Go per the official
-SDK 57 docs (only opt-in SQLCipher-encrypted stores need a development
-build, and this app does not use encryption). `npm run android` /
-`npm run ios` open the same server target on an emulator or device.
-The Maestro native smoke below is different: it drives an installed
-debug build (`com.tengo.app`), not Expo Go. `npm run web` fails fast:
-native only.
+`npm start` opens the Expo dev server. `npm run android` opens the
+same server target on an emulator or device. `npm run web` fails
+fast: native only. `npm run check` runs `typecheck` + `lint` +
+`format:check`. Run scripts are declared in `package.json`
+(`npm ci` is npm's own clean-install command); see
+[docs/development.md](docs/development.md) for the full table.
 
-> Blocked lifecycle scripts: if `npm ci` fails with `EALLOWSCRIPTS`,
-> respect the policy and run `npm ci --ignore-scripts`, then
-> `npx lefthook install` to wire the pre-commit hook.
+## Core Workflow
 
-## Commands
+1. Install and start the dev server (`npm ci`, `npm start`).
+2. Open the app on Android and confirm the inventory list loads
+   (count, rows, or the first-run empty state).
+3. Browse, search (by name, location or category) and filter by
+   location and category; add, edit and delete items from the list.
 
-| Command | Purpose |
-| ------- | ------- |
-| `npm test` / `npm run test:ci` | Jest unit tests / CI mode (`--ci --runInBand`) |
-| `npm run typecheck` | Strict TypeScript (`tsc --noEmit`) |
-| `npm run lint` / `lint:fix` | Biome check / autofix |
-| `npm run format:check` / `format` | Biome format check / write |
-| `npm run check` | `typecheck` + `lint` + `format:check` |
-| `npm run compat` | `expo install --check` (SDK compatibility) |
-| `npm run export:smoke` | Unsigned Android `expo export` smoke test |
-| `npx lefthook install` | Install the pre-commit hook (also via `prepare`) |
+## Key Features You Should Know About
 
-Add Expo SDK modules with `npx expo install <pkg>` so versions resolve
-against the pinned SDK. Pinned versions live in `package-lock.json`.
+- Wired inventory list (the App default) with versioned SQLite bootstrap
+  (schema v4: items catalog plus stock(item_id, location_id, quantity)
+  with a composite primary key, quantity > 0, both foreign keys
+  ON DELETE CASCADE and idx_stock_location_id; an item-category join,
+  and unique indexes on the folded entity name).
+- English/Spanish from day one with device-locale detection.
+- Domain validation and parameterized location/category/item
+  repositories with typed errors that never surface raw SQLite
+  text.
+- Bounded `queryItems` read-model filter (three batched reads) and a
+  container with stale-safe filter/retry, verified on Android.
+- DEV-only native fixtures plus guarded Maestro flows (smoke,
+  list/search, forms at 1.0x and 2.0x) run through
+  `scripts/run-maestro.sh`, which keeps artifacts in `.maestro/runs/`;
+  details and limits in [docs/testing.md](docs/testing.md).
 
-## Source map
+## Documentation
 
-| Path | Contents |
-| ---- | -------- |
-| `App.tsx` | Translated readiness screen + DB bootstrap (`readiness-*` testIDs) |
-| `src/db/` | `expo-sqlite` init + versioned migrations, no ORM |
-| `src/i18n/` | i18next resources (`en`/`es`; `es` is typed as `typeof en`) |
-| `__tests__/` | Jest/RNTL suites (`jest-expo` preset, see `jest.config.js`) |
-| `.maestro/smoke.yaml` | Native smoke flow (needs a debug build on device/emulator) |
-| `lefthook.yml` | Pre-commit config; local overrides go in `lefthook-local.yml` |
+| Your task | Start here |
+| --- | --- |
+| Product scope and constraints | [PRODUCT.md](PRODUCT.md) |
+| Build order and milestones | [ROADMAP.md](ROADMAP.md) |
+| Planned UX and states | [DESIGN.md](DESIGN.md) |
+| Setup and quality commands | [docs/development.md](docs/development.md) |
+| Test boundaries and native protocol | [docs/testing.md](docs/testing.md) |
+| Wireframe boards and transitions | [design/wireframes/README.md](design/wireframes/README.md) |
 
-## Tests and their limits
+## Next Steps
 
-`npm test` covers migration logic, i18n behavior (en/es),
-DB-initialization logic, and the readiness screen. Native modules
-(`expo-sqlite`, `expo-localization`, safe-area insets) are mocked — see
-`jest.setup.ts` for the boundary. Unit tests never touch a real database.
-
-Real persistence across restarts and device-locale detection need a
-native runtime and are unverified: the Maestro smoke flow proves only a
-single-session launch — readiness screen visible and DB bootstrap
-reporting `ready` in that session. It does not relaunch the app, so it
-does not prove stored data survives a restart, and it asserts the raw
-`initializing | ready | error` state text, so it does not prove locale
-detection. Run `maestro test .maestro/smoke.yaml` against an installed
-debug build of `com.tengo.app` for that single-session signal only.
-
-## Maestro
-
-- CLI: `~/.maestro/bin/maestro` is already on PATH in new shells (see
-  `~/.bashrc`/`~/.zshrc`); in the current shell run
-  `export PATH="$HOME/.maestro/bin:$PATH"` if `command -v maestro`
-  finds nothing. Run the native smoke with
-  `maestro test .maestro/smoke.yaml` against an installed debug build
-  (`com.tengo.app`).
-- Pi MCP: `.pi/mcp.json` defines project server `maestro`
-  (`maestro mcp --no-viewer` over STDIO, `codemode` exposure); after
-  changing it run `/mcp` then `/reload` and verify with `pi mcp list`.
-- Studio: run `maestro-studio`, then New workspace on this checkout's
-  `.maestro/` directory.
-
-## Quality and automation
-
-- Biome (see `biome.json`) owns lint and format. The pre-commit hook
-  runs `biome check` on staged files only and never rewrites them, so
-  partially staged files are always preserved; fix violations with
-  `npm run lint:fix` and re-stage. CI remains authoritative.
-- `actionlint` must pass on every workflow change.
-- Push/PR runs `ci.yml`: install, `check`, `test:ci`, `compat`, and an
-  unsigned Android export smoke (artifact kept 7 days).
-- `pr-check.yml` validates PR metadata only (800-line authored review
-  budget, excluding `package-lock.json` and vendored
-  `.agents/skills/**` which are reported separately, with a
-  `size:exception` escape; issue linkage and `type:*` labels are
-  advisory). It never rebuilds or retests.
-- `android-e2e.yml` (manual dispatch) prebuilds and `assembleDebug`s an
-  unsigned APK on a fixed API 34 emulator, then runs the Maestro flow
-  with a pinned, checksum-verified CLI. No signing, no EAS.
-- `release.yml` (tag push `v*` or manual dispatch of an existing tag)
-  creates a GitHub **source-only** release: a `git archive` tarball of
-  the exact tag revision plus the unsigned export bundle. The tag must
-  equal `v<package.json version>` or the job fails. Not store
-  distribution: no signing, no EAS, no store upload.
-
-## Agent skills
-
-Four official [Expo skills](https://github.com/expo/skills) are vendored
-read-only under `.agents/skills/`; each `SKILL.md` is the source of
-truth and `skills-lock.json` pins the content hashes.
-
-| Skill | Use for this stack |
-| ----- | ------------------ |
-| `expo-dev-client` | Dev builds for native runs |
-| `expo-upgrade` | SDK upgrade discipline (pins Expo 57.0.26) |
-| `eas-app-stores` | Future store releases only; releases stay source-only |
-| `expo-native-ui` | Native-feeling screens (includes a SQLite reference) |
-
-Reinstall exactly (project scope, no globals):
-
-```sh
-npx skills add expo/skills \
-  --skill expo-dev-client expo-upgrade eas-app-stores expo-native-ui \
-  --agent universal -y
-```
+- Set up your environment in [docs/development.md](docs/development.md).
+- Read the test limits and native protocol in [docs/testing.md](docs/testing.md) before claiming device evidence.
+- Follow [ROADMAP.md](ROADMAP.md) for the M3 integration path.

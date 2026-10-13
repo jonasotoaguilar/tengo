@@ -2087,3 +2087,166 @@ test('U1 PRESERVE: edit loads only the detail rows and never gains a prefilled r
   expect(result.current.loadState).toBe('ready');
   expect(result.current.values.stock).toEqual([existingRow(10, '2')]);
 });
+
+describe('U3 scanned barcode plumbing (closed loop)', () => {
+  const { decideScanRoute } =
+    require('../src/screens/useBarcodeScanController') as typeof import('../src/screens/useBarcodeScanController');
+
+  test('RED: a scanned create carries the code into the draft', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(
+      baseOptions({
+        repository,
+        route: { kind: 'create', prefilledBarcode: 'ZZZ-9999' },
+      }),
+    );
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Beans',
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.barcode).toBe('ZZZ-9999');
+  });
+
+  test('a manual (unscanned) create stores no barcode', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.barcode ?? null).toBeNull();
+  });
+
+  test('an existing item edited from a scan keeps its own code untouched', async () => {
+    const repository = makeRepository();
+    repository.getItem.mockResolvedValueOnce(
+      makeDetail({ name: 'Rice', barcode: 'AAA-1111' }),
+    );
+    const { result } = await renderController(
+      baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+    );
+    await act(async () => {});
+    expect(result.current.loadState).toBe('ready');
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice edited',
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.updateItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.updateItemFromDraft.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.barcode).toBe('AAA-1111');
+  });
+
+  test('an invalid code never reaches the draft', async () => {
+    for (const bad of ['ab', '   ', '!!!nope!!!']) {
+      const repository = makeRepository();
+      const { result } = await renderController(
+        baseOptions({
+          repository,
+          route: { kind: 'create', prefilledBarcode: bad },
+        }),
+      );
+      await act(async () => {
+        result.current.onChange({
+          ...(result.current.values as object),
+          name: 'Rice',
+        });
+      });
+      await act(async () => {
+        await result.current.onSave();
+      });
+      expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+      const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+        string,
+        unknown
+      >;
+      expect(draft.barcode ?? null).toBeNull();
+    }
+  });
+
+  test('closed loop: unknown scan creates with the code and the same code finds it', async () => {
+    // In-memory fake database: barcode -> stored detail.
+    const store = new Map<string, ItemDetail>();
+    const fakeDb = {} as RepositoryDb;
+    const lookup = jest.fn(async (_db: RepositoryDb, code: string) => {
+      const found = store.get(code);
+      return found !== undefined ? { ...found } : null;
+    });
+    const repository = makeRepository();
+    let nextId = 100;
+    repository.createItemFromDraft.mockImplementation(
+      async (_db: RepositoryDb, draft: unknown) => {
+        const input = draft as { name: string; barcode?: string | null };
+        const detail = makeDetail({
+          id: nextId++,
+          name: input.name,
+          barcode: input.barcode ?? null,
+        });
+        if (typeof input.barcode === 'string' && input.barcode !== '') {
+          store.set(input.barcode, detail);
+        }
+        return detail;
+      },
+    );
+    // Scan an unknown code: create carrying the normalized code.
+    const first = await decideScanRoute(fakeDb, 'ZZZ-9999', lookup);
+    expect(first).toEqual({ kind: 'create', barcode: 'ZZZ-9999' });
+    if (first.kind !== 'create') throw new Error('expected create route');
+    // The create form opens prefilled with that code and saves.
+    const { result } = await renderController(
+      baseOptions({
+        repository,
+        route: { kind: 'create', prefilledBarcode: first.barcode },
+      }),
+    );
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Scanned beans',
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(true);
+    // The stored item carries that code.
+    const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.barcode).toBe('ZZZ-9999');
+    expect(outcome.detail?.barcode).toBe('ZZZ-9999');
+    // A re-scan of the same code reaches that item.
+    const second = await decideScanRoute(fakeDb, 'ZZZ-9999', lookup);
+    expect(second).toEqual({ kind: 'edit', itemId: outcome.detail?.id });
+    expect(lookup).toHaveBeenCalledWith(fakeDb, 'ZZZ-9999');
+  });
+});

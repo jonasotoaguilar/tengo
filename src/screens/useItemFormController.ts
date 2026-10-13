@@ -58,6 +58,7 @@ import {
   CATEGORY_NAME_MAX_LENGTH,
   ITEM_NAME_MAX_LENGTH,
   LOCATION_NAME_MAX_LENGTH,
+  normalizeBarcode,
 } from '../inventory/validation';
 
 export type ItemFormRoute =
@@ -72,6 +73,14 @@ export type ItemFormRoute =
        * never carry it and never change.
        */
       prefilledLocationId?: number;
+      /**
+       * U3 scanned identity: the normalized barcode from an unknown
+       * scan. The create session carries it invisibly (no input
+       * renders it) into the draft, so a re-scan reaches the created
+       * item. Absent, blank, or misshapen means no code; edit routes
+       * never carry it and never change.
+       */
+      prefilledBarcode?: string;
     }
   | { kind: 'edit'; itemId: number };
 
@@ -166,9 +175,27 @@ export interface ItemFormController {
  * positive safe-integer location id prefills; anything else (absent,
  * stale, malformed) falls back to the blank form rather than a stale row.
  */
+/**
+ * Sanitize a carried barcode: normalized code or `undefined` (no code).
+ * Blank, absent, non-string, and misshapen input all mean no code — an
+ * invalid code never reaches the draft, it is dropped, never an error.
+ */
+function sanitizeCarriedBarcode(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') return undefined;
+  if (value.trim() === '') return undefined;
+  try {
+    const normalized = normalizeBarcode(value);
+    return normalized ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function blankItemFormValues(
   prefilledName = '',
   prefilledLocationId?: number,
+  prefilledBarcode?: string,
 ): ItemFormValues {
   const prefilled =
     prefilledLocationId !== undefined &&
@@ -184,15 +211,21 @@ export function blankItemFormValues(
           },
         ]
       : [];
+  const barcode = sanitizeCarriedBarcode(prefilledBarcode);
   return {
     name: prefilledName,
     stock: prefilled,
     categories: [],
     pendingNewCategoryName: '',
+    // Omitted when absent so blank sessions stay byte-identical to
+    // before (`toEqual` ignores `undefined`, but the key is absent
+    // anyway); present only as the invisible scanned identity.
+    ...(barcode !== undefined ? { barcode } : {}),
   };
 }
 
 function detailToValues(detail: ItemDetail): ItemFormValues {
+  const barcode = sanitizeCarriedBarcode(detail.barcode);
   return {
     name: detail.name,
     stock: detail.stock.map((level) => ({
@@ -204,6 +237,7 @@ function detailToValues(detail: ItemDetail): ItemFormValues {
       categoryId,
     })),
     pendingNewCategoryName: '',
+    ...(barcode !== undefined ? { barcode } : {}),
   };
 }
 
@@ -271,6 +305,11 @@ function sameValues(a: ItemFormValues, b: ItemFormValues): boolean {
       return false;
     }
   }
+  // Invisible scanned identity: sanitized so blank/invalid/null all
+  // mean no code and compare equal; a prefill is clean, not dirty.
+  if (sanitizeCarriedBarcode(a.barcode) !== sanitizeCarriedBarcode(b.barcode)) {
+    return false;
+  }
   return true;
 }
 
@@ -280,11 +319,12 @@ function sameValues(a: ItemFormValues, b: ItemFormValues): boolean {
  */
 function routeIdentityOf(route: ItemFormRoute): string {
   // The create identity carries the prefill: two creates at different
-  // last-used locations are different epochs, so a stale session can
-  // never publish one route's prefill onto another. Edit identity is
-  // byte-identical to before (U1 leaves edit mode untouched).
+  // last-used locations or scanned codes are different epochs, so a
+  // stale session can never publish one route's prefill onto another.
+  // Edit identity is byte-identical to before (U1 leaves edit mode
+  // untouched; edits carry the stored code in values, not the route).
   return route.kind === 'create'
-    ? `create:${route.prefilledName ?? ''}:${route.prefilledLocationId ?? ''}`
+    ? `create:${route.prefilledName ?? ''}:${route.prefilledLocationId ?? ''}:${sanitizeCarriedBarcode(route.prefilledBarcode) ?? ''}`
     : `edit:${route.itemId}`;
 }
 
@@ -299,12 +339,15 @@ export default function useItemFormController(
     route.kind === 'create' ? (route.prefilledName ?? '') : '';
   const routePrefilledLocationId =
     route.kind === 'create' ? route.prefilledLocationId : undefined;
+  const routePrefilledBarcode =
+    route.kind === 'create' ? route.prefilledBarcode : undefined;
 
   const [values, setValues] = useState<ItemFormValues>(() =>
     route.kind === 'create'
       ? blankItemFormValues(
           route.prefilledName ?? '',
           route.prefilledLocationId,
+          route.prefilledBarcode,
         )
       : blankItemFormValues(),
   );
@@ -313,6 +356,7 @@ export default function useItemFormController(
       ? blankItemFormValues(
           route.prefilledName ?? '',
           route.prefilledLocationId,
+          route.prefilledBarcode,
         )
       : blankItemFormValues(),
   );
@@ -520,7 +564,11 @@ export default function useItemFormController(
     sessionEpoch.current = routeIdentityOf(savedCallbacks.current.route);
     if (routeKind === 'create') {
       loadTicket.current += 1;
-      const blank = blankItemFormValues(routePrefill, routePrefilledLocationId);
+      const blank = blankItemFormValues(
+        routePrefill,
+        routePrefilledLocationId,
+        routePrefilledBarcode,
+      );
       valuesRef.current = blank;
       setValues(blank);
       setBaseline(blank);
@@ -549,7 +597,13 @@ export default function useItemFormController(
     confirmDeleteArmed.current = false;
     setLoadState('loading');
     if (routeItemId !== null) loadEditRef.current(routeItemId);
-  }, [routeKind, routeItemId, routePrefill, routePrefilledLocationId]);
+  }, [
+    routeKind,
+    routeItemId,
+    routePrefill,
+    routePrefilledLocationId,
+    routePrefilledBarcode,
+  ]);
 
   const validateForSave = useCallback(
     (
@@ -689,11 +743,17 @@ export default function useItemFormController(
         if (quantity === null || quantity === 0) continue;
         stock.push({ location: row.location, quantity });
       }
+      // U3 scanned identity: the invisible carried code. Sanitized so
+      // blank/misshapen input means no code and never reaches the
+      // draft; omitted when absent so manual creates stay barcode-free
+      // and the explicit-draft key assertion still holds.
+      const barcode = sanitizeCarriedBarcode(current.barcode);
       return {
         draft: {
           name: current.name,
           stock,
           categories,
+          ...(barcode !== undefined ? { barcode } : {}),
         },
       };
     },

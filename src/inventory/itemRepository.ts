@@ -26,10 +26,10 @@
  * `./entityRepository`); deleting an item cascades its stock and join
  * rows while locations and categories survive.
  */
-import type { RepositoryDb, RunResult, TransactionHandle } from './database';
+import type { RepositoryDb, TransactionHandle } from './database';
 import {
-  assertUniqueCategoryName,
-  assertUniqueLocationName,
+  assertUniqueCategoryNames,
+  assertUniqueLocationNames,
 } from './entityRepository';
 import {
   EntityConflictError,
@@ -112,6 +112,19 @@ function toStockLevel(row: StockJoinRow): StockLevel {
 }
 
 /**
+ * Optional shared-connection hook (see `src/db/exclusive.ts`): when the
+ * database reuses one FK-enforced isolated connection across mutations,
+ * item writes take it; otherwise they use the classic per-mutation hook.
+ * Both paths give one exclusive transaction per mutation with identical
+ * atomicity and error mapping.
+ */
+interface SharedExclusiveDb extends RepositoryDb {
+  withSharedExclusiveTransactionAsync?: (
+    task: (txn: TransactionHandle) => Promise<void>,
+  ) => Promise<void>;
+}
+
+/**
  * Run a multi-statement mutation inside the driver's exclusive
  * transaction, issuing every query on the scoped `txn` handle. Typed
  * domain errors (including S11 `conflict`) pass through; driver failures
@@ -123,8 +136,10 @@ async function runExclusive(
   operation: string,
   task: (txn: TransactionHandle) => Promise<void>,
 ): Promise<void> {
-  const exclusive = db.withExclusiveTransactionAsync;
-  if (typeof exclusive !== 'function') {
+  const shared = (db as SharedExclusiveDb).withSharedExclusiveTransactionAsync;
+  const hook =
+    typeof shared === 'function' ? shared : db.withExclusiveTransactionAsync;
+  if (typeof hook !== 'function') {
     throw new StorageError(
       'item',
       operation,
@@ -132,7 +147,7 @@ async function runExclusive(
     );
   }
   try {
-    await exclusive.call(db, task);
+    await hook.call(db, task);
   } catch (error) {
     if (
       error instanceof EntityConflictError ||
@@ -146,40 +161,81 @@ async function runExclusive(
   }
 }
 
-/** Fetch a location row inside a mutation; missing rows reject `not-found`. */
-async function requireLocation(
-  txn: RepositoryDb,
-  locationId: number,
-): Promise<LocationRow> {
-  try {
-    const row = await txn.getFirstAsync<LocationRow>(
-      `SELECT ${LOCATION_COLUMNS} FROM locations WHERE id = ?`,
-      [locationId],
-    );
-    if (row === null) throw new EntityNotFoundError('location', locationId);
-    return row;
-  } catch (error) {
-    if (error instanceof EntityNotFoundError) throw error;
-    throw new StorageError('item', 'fetch', error);
+/**
+ * T3 write-path batching: SQLite historically caps bound variables per
+ * statement (999), so multi-row statements and `IN` lists are chunked
+ * well below it. Draft payloads are small; the chunks only matter for
+ * unbounded programmatic writes, which must not break on old drivers.
+ */
+const INSERT_ROWS_PER_STATEMENT = 200;
+const EXISTENCE_IDS_PER_SELECT = 500;
+
+/** Split rows into statement-sized groups; an empty input yields no groups. */
+function chunk<T>(values: T[], size: number): T[][] {
+  const groups: T[][] = [];
+  for (let i = 0; i < values.length; i += size) {
+    groups.push(values.slice(i, i + size));
   }
+  return groups;
 }
 
-/** Fetch a category row inside a mutation; missing rows reject `not-found`. */
-async function requireCategory(
-  txn: RepositoryDb,
-  categoryId: number,
-): Promise<CategoryRow> {
-  try {
-    const row = await txn.getFirstAsync<CategoryRow>(
-      `SELECT ${CATEGORY_COLUMNS} FROM categories WHERE id = ?`,
-      [categoryId],
-    );
-    if (row === null) throw new EntityNotFoundError('category', categoryId);
-    return row;
-  } catch (error) {
-    if (error instanceof EntityNotFoundError) throw error;
-    throw new StorageError('item', 'fetch', error);
+/**
+ * Fetch every location id with ONE `IN` select per chunk (T3 batching).
+ * Missing ids reject `not-found` in input order, exactly like the
+ * sequential per-row checks did. An empty input issues no statement.
+ */
+async function requireLocations(
+  txn: TransactionHandle,
+  locationIds: number[],
+): Promise<Map<number, LocationRow>> {
+  const unique = [...new Set(locationIds)];
+  const found = new Map<number, LocationRow>();
+  for (const group of chunk(unique, EXISTENCE_IDS_PER_SELECT)) {
+    const placeholders = group.map(() => '?').join(', ');
+    let rows: LocationRow[];
+    try {
+      rows = await txn.getAllAsync<LocationRow>(
+        `SELECT ${LOCATION_COLUMNS} FROM locations WHERE id IN (${placeholders})`,
+        [...group],
+      );
+    } catch (error) {
+      throw new StorageError('item', 'fetch', error);
+    }
+    for (const row of rows) found.set(row.id, row);
   }
+  for (const id of unique) {
+    if (!found.has(id)) throw new EntityNotFoundError('location', id);
+  }
+  return found;
+}
+
+/**
+ * Fetch every category id with ONE `IN` select per chunk (T3 batching).
+ * Missing ids reject `not-found` in input order. Empty input: no statement.
+ */
+async function requireCategories(
+  txn: TransactionHandle,
+  categoryIds: number[],
+): Promise<Map<number, CategoryRow>> {
+  const unique = [...new Set(categoryIds)];
+  const found = new Map<number, CategoryRow>();
+  for (const group of chunk(unique, EXISTENCE_IDS_PER_SELECT)) {
+    const placeholders = group.map(() => '?').join(', ');
+    let rows: CategoryRow[];
+    try {
+      rows = await txn.getAllAsync<CategoryRow>(
+        `SELECT ${CATEGORY_COLUMNS} FROM categories WHERE id IN (${placeholders})`,
+        [...group],
+      );
+    } catch (error) {
+      throw new StorageError('item', 'fetch', error);
+    }
+    for (const row of rows) found.set(row.id, row);
+  }
+  for (const id of unique) {
+    if (!found.has(id)) throw new EntityNotFoundError('category', id);
+  }
+  return found;
 }
 
 /** Assemble the read model for a known item row (stock + categories). */
@@ -229,32 +285,49 @@ async function requireItemRow(db: RepositoryDb, id: number): Promise<ItemRow> {
   }
 }
 
-/** Replace an item's stock set: delete-then-insert, zero rows allowed. */
+/**
+ * Replace an item's stock set: one DELETE plus one multi-row INSERT per
+ * chunk (T3 batching); zero rows allowed. The single INSERT keeps the
+ * UNIQUE backstop on `(item_id, location_id)` exactly as before.
+ */
 async function replaceStockRows(
   txn: TransactionHandle,
   itemId: number,
   stock: NormalizedItemStockInput[],
 ): Promise<void> {
   await txn.runAsync('DELETE FROM stock WHERE item_id = ?', [itemId]);
-  for (const row of stock) {
+  for (const group of chunk(stock, INSERT_ROWS_PER_STATEMENT)) {
+    const placeholders = group.map(() => '(?, ?, ?)').join(', ');
+    const params: (string | number | null)[] = [];
+    for (const row of group) {
+      params.push(itemId, row.locationId, row.quantity);
+    }
     await txn.runAsync(
-      'INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, ?)',
-      [itemId, row.locationId, row.quantity],
+      `INSERT INTO stock (item_id, location_id, quantity) VALUES ${placeholders}`,
+      params,
     );
   }
 }
 
-/** Replace an item's category set: delete-then-insert, zero allowed. */
+/**
+ * Replace an item's category set: one DELETE plus one multi-row INSERT
+ * per chunk (T3 batching); zero links allowed.
+ */
 async function replaceCategoryLinks(
   txn: TransactionHandle,
   itemId: number,
   categoryIds: number[],
 ): Promise<void> {
   await txn.runAsync('DELETE FROM item_categories WHERE item_id = ?', [itemId]);
-  for (const categoryId of categoryIds) {
+  for (const group of chunk(categoryIds, INSERT_ROWS_PER_STATEMENT)) {
+    const placeholders = group.map(() => '(?, ?)').join(', ');
+    const params: (string | number | null)[] = [];
+    for (const categoryId of group) {
+      params.push(itemId, categoryId);
+    }
     await txn.runAsync(
-      'INSERT INTO item_categories (item_id, category_id) VALUES (?, ?)',
-      [itemId, categoryId],
+      `INSERT INTO item_categories (item_id, category_id) VALUES ${placeholders}`,
+      params,
     );
   }
 }
@@ -393,12 +466,132 @@ function validateDraftInput(draft: ItemDraftInput): NormalizedDraft {
 }
 
 /**
+ * Create every new draft location with ONE domain uniqueness scan, ONE
+ * multi-row INSERT per chunk, and ONE id resolve per chunk (T3). Stored
+ * collisions and within-draft duplicates map to the same typed
+ * `conflict` as the sequential path; the v3 `UNIQUE` index stays the
+ * race authority with identical mapping (first candidate name carried).
+ * Returns the fresh ids in input order.
+ */
+async function createLocations(
+  txn: TransactionHandle,
+  locations: { name: string; address: string | null }[],
+): Promise<number[]> {
+  if (locations.length === 0) return [];
+  const seenKeys = new Set<string>();
+  for (const location of locations) {
+    const key = normalizeNameKey(location.name);
+    if (seenKeys.has(key)) {
+      throw new EntityConflictError('location', location.name);
+    }
+    seenKeys.add(key);
+  }
+  await assertUniqueLocationNames(
+    txn,
+    locations.map((location) => location.name),
+  );
+  for (const group of chunk(locations, INSERT_ROWS_PER_STATEMENT)) {
+    const placeholders = group.map(() => '(?, ?)').join(', ');
+    const params: (string | number | null)[] = [];
+    for (const location of group) {
+      params.push(location.name, location.address);
+    }
+    try {
+      await txn.runAsync(
+        `INSERT INTO locations (name, address) VALUES ${placeholders}`,
+        params,
+      );
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) {
+        throw new EntityConflictError('location', group[0].name);
+      }
+      throw error;
+    }
+  }
+  return resolveEntityIds(
+    txn,
+    'locations',
+    locations.map((location) => location.name),
+  );
+}
+
+/**
+ * Create every new draft category with ONE domain uniqueness scan, ONE
+ * multi-row INSERT per chunk, and ONE id resolve per chunk (T3). Same
+ * conflict mapping as the sequential path. Returns ids in input order.
+ */
+async function createCategories(
+  txn: TransactionHandle,
+  names: string[],
+): Promise<number[]> {
+  if (names.length === 0) return [];
+  const seenKeys = new Set<string>();
+  for (const name of names) {
+    const key = normalizeNameKey(name);
+    if (seenKeys.has(key)) {
+      throw new EntityConflictError('category', name);
+    }
+    seenKeys.add(key);
+  }
+  await assertUniqueCategoryNames(txn, [...names]);
+  for (const group of chunk(names, INSERT_ROWS_PER_STATEMENT)) {
+    const placeholders = group.map(() => '(?)').join(', ');
+    try {
+      await txn.runAsync(
+        `INSERT INTO categories (name) VALUES ${placeholders}`,
+        [...group],
+      );
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) {
+        throw new EntityConflictError('category', group[0]);
+      }
+      throw error;
+    }
+  }
+  return resolveEntityIds(txn, 'categories', [...names]);
+}
+
+/**
+ * Resolve fresh ids by exact name after a batched create: the
+ * uniqueness checks above guarantee each candidate matches exactly one
+ * stored row. One `IN` select per chunk; results return in input order.
+ */
+async function resolveEntityIds(
+  txn: TransactionHandle,
+  table: 'locations' | 'categories',
+  names: string[],
+): Promise<number[]> {
+  const idsByKey = new Map<string, number>();
+  for (const group of chunk(names, EXISTENCE_IDS_PER_SELECT)) {
+    const placeholders = group.map(() => '?').join(', ');
+    let rows: { id: number; name: string }[];
+    try {
+      rows = await txn.getAllAsync<{ id: number; name: string }>(
+        `SELECT id, name FROM ${table} WHERE name IN (${placeholders})`,
+        [...group],
+      );
+    } catch (error) {
+      throw new StorageError('item', 'fetch', error);
+    }
+    for (const row of rows) idsByKey.set(normalizeNameKey(row.name), row.id);
+  }
+  return names.map((name) => {
+    const id = idsByKey.get(normalizeNameKey(name));
+    // Unreachable: the rows were just inserted in this transaction.
+    if (id === undefined) throw new StorageError('item', 'create');
+    return id;
+  });
+}
+
+/**
  * Resolve every stock row's location (existing or newly created) plus
  * the category set inside the same exclusive transaction, so an item
- * with three new locations either commits all three or none. New names
- * pass the S11 domain uniqueness check first (against stored rows and,
- * for categories, against each other); the v3 `UNIQUE` index stays the
- * authority for races and its violations map to the same typed
+ * with three new locations either commits all three or none. Existence
+ * checks run as ONE `IN` select per entity, new names pass ONE batched
+ * S11 domain uniqueness check per entity (against stored rows; the
+ * within-draft duplicate check stays here), and every table takes ONE
+ * multi-row INSERT per chunk; the v3 `UNIQUE` indexes stay the
+ * authority for races and their violations map to the same typed
  * `conflict`. Every statement runs on `txn`, so any failure rolls back
  * with no orphan item, location, category, or stock rows.
  */
@@ -409,37 +602,13 @@ async function resolveDraftRelations(
   stock: NormalizedItemStockInput[];
   categoryIds: number[];
 }> {
-  const stock: NormalizedItemStockInput[] = [];
-  const seenNewLocationKeys = new Set<string>();
+  const existingLocationIds: number[] = [];
+  const newLocations: { name: string; address: string | null }[] = [];
   for (const row of draft.stock) {
     if (row.locationId !== null) {
-      await requireLocation(txn, row.locationId);
-      stock.push({ locationId: row.locationId, quantity: row.quantity });
+      existingLocationIds.push(row.locationId);
     } else if (row.newLocation !== null) {
-      const newLocationName = row.newLocation.name;
-      await assertUniqueLocationName(txn, newLocationName);
-      const key = normalizeNameKey(newLocationName);
-      if (seenNewLocationKeys.has(key)) {
-        throw new EntityConflictError('location', newLocationName);
-      }
-      seenNewLocationKeys.add(key);
-      let created: RunResult;
-      try {
-        created = await txn.runAsync(
-          'INSERT INTO locations (name, address) VALUES (?, ?)',
-          [row.newLocation.name, row.newLocation.address],
-        );
-      } catch (error) {
-        if (isUniqueConstraintViolation(error)) {
-          throw new EntityConflictError('location', newLocationName);
-        }
-        throw error;
-      }
-      await requireLocation(txn, created.lastInsertRowId);
-      stock.push({
-        locationId: created.lastInsertRowId,
-        quantity: row.quantity,
-      });
+      newLocations.push(row.newLocation);
     } else {
       throw new ValidationError(
         'location',
@@ -448,34 +617,30 @@ async function resolveDraftRelations(
       );
     }
   }
-  const categoryIds: number[] = [];
-  for (const categoryId of draft.categoryIds) {
-    await requireCategory(txn, categoryId);
-    categoryIds.push(categoryId);
-  }
-  const seenNewCategoryKeys = new Set<string>();
-  for (const category of draft.newCategories) {
-    await assertUniqueCategoryName(txn, category.name);
-    const key = normalizeNameKey(category.name);
-    if (seenNewCategoryKeys.has(key)) {
-      throw new EntityConflictError('category', category.name);
+  await requireLocations(txn, existingLocationIds);
+  const createdLocationIds = await createLocations(txn, newLocations);
+  const stock: NormalizedItemStockInput[] = [];
+  let newLocationIndex = 0;
+  for (const row of draft.stock) {
+    if (row.locationId !== null) {
+      stock.push({ locationId: row.locationId, quantity: row.quantity });
+    } else {
+      stock.push({
+        locationId: createdLocationIds[newLocationIndex],
+        quantity: row.quantity,
+      });
+      newLocationIndex += 1;
     }
-    seenNewCategoryKeys.add(key);
-    let created: RunResult;
-    try {
-      created = await txn.runAsync('INSERT INTO categories (name) VALUES (?)', [
-        category.name,
-      ]);
-    } catch (error) {
-      if (isUniqueConstraintViolation(error)) {
-        throw new EntityConflictError('category', category.name);
-      }
-      throw error;
-    }
-    await requireCategory(txn, created.lastInsertRowId);
-    categoryIds.push(created.lastInsertRowId);
   }
-  return { stock, categoryIds };
+  await requireCategories(txn, draft.categoryIds);
+  const createdCategoryIds = await createCategories(
+    txn,
+    draft.newCategories.map((category) => category.name),
+  );
+  return {
+    stock,
+    categoryIds: [...draft.categoryIds, ...createdCategoryIds],
+  };
 }
 
 /**
@@ -491,12 +656,11 @@ export async function createItem(
   const normalized = validateItemInput(input);
   let detail: ItemDetail | null = null;
   await runExclusive(db, 'create', async (txn) => {
-    for (const row of normalized.stock) {
-      await requireLocation(txn, row.locationId);
-    }
-    for (const categoryId of normalized.categoryIds) {
-      await requireCategory(txn, categoryId);
-    }
+    await requireLocations(
+      txn,
+      normalized.stock.map((row) => row.locationId),
+    );
+    await requireCategories(txn, normalized.categoryIds);
     const created = await txn.runAsync('INSERT INTO items (name) VALUES (?)', [
       normalized.name,
     ]);
@@ -559,12 +723,11 @@ export async function updateItem(
   let detail: ItemDetail | null = null;
   await runExclusive(db, 'update', async (txn) => {
     await requireItemRow(txn, validId);
-    for (const row of normalized.stock) {
-      await requireLocation(txn, row.locationId);
-    }
-    for (const categoryId of normalized.categoryIds) {
-      await requireCategory(txn, categoryId);
-    }
+    await requireLocations(
+      txn,
+      normalized.stock.map((row) => row.locationId),
+    );
+    await requireCategories(txn, normalized.categoryIds);
     await txn.runAsync('UPDATE items SET name = ? WHERE id = ?', [
       normalized.name,
       validId,

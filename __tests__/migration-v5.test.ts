@@ -21,6 +21,7 @@ import {
   MIGRATIONS,
   SCHEMA_VERSION,
 } from '../src/db/migrations';
+import { bringToCurrentSchema } from '../test-utils/schema';
 
 const { DatabaseSync } = require('node:sqlite') as {
   DatabaseSync: new (
@@ -69,7 +70,13 @@ function applyMigrationV4Real(db: RealDb): void {
   db.exec('PRAGMA foreign_keys = ON;');
 }
 
-/** Apply v5 the way the generic runner path does: one txn, FK untouched. */
+/**
+ * Apply ONLY the v5 step onto a v4-state database, the way the generic
+ * runner path does: one txn, FK untouched. This stays hand-written on
+ * purpose: the v4->v5 preservation test below needs a v4-state database
+ * to migrate FROM, so the single-step application is its subject, not a
+ * fixture shortcut. Every other real-SQLite test uses bringToCurrentSchema.
+ */
 function applyMigrationV5Real(db: RealDb): void {
   db.exec(`BEGIN;\n${MIGRATIONS[5]}\nPRAGMA user_version = 5;\nCOMMIT;`);
 }
@@ -197,11 +204,10 @@ describe('migration 5 preserves v2/v3/v4 (existing behavior still holds)', () =>
 });
 
 describe('migration 5 on real SQLite (empty and populated v4)', () => {
-  test('empty v4 migrates to v5 with nullable columns defaulting to NULL', () => {
+  test('empty v4 migrates to v5 with nullable columns defaulting to NULL', async () => {
     const db = new DatabaseSync(':memory:');
     try {
-      seedV4(db);
-      applyMigrationV5Real(db);
+      await bringToCurrentSchema(db);
       expect(userVersionReal(db)).toBe(5);
       const itemCols = tableInfo(db, 'items');
       const byName = new Map(itemCols.map((c) => [c.name, c]));
@@ -301,11 +307,10 @@ describe('migration 5 on real SQLite (empty and populated v4)', () => {
     }
   });
 
-  test('many items without a barcode stay legal: NULLs do not collide', () => {
+  test('many items without a barcode stay legal: NULLs do not collide', async () => {
     const db = new DatabaseSync(':memory:');
     try {
-      seedV4(db);
-      applyMigrationV5Real(db);
+      await bringToCurrentSchema(db);
       db.prepare("INSERT INTO items (name) VALUES ('Rice')").run();
       db.prepare("INSERT INTO items (name) VALUES ('Beans')").run();
       db.prepare("INSERT INTO items (name) VALUES ('Salt')").run();
@@ -320,11 +325,10 @@ describe('migration 5 on real SQLite (empty and populated v4)', () => {
     }
   });
 
-  test('a duplicate barcode is rejected by the unique index', () => {
+  test('a duplicate barcode is rejected by the unique index', async () => {
     const db = new DatabaseSync(':memory:');
     try {
-      seedV4(db);
-      applyMigrationV5Real(db);
+      await bringToCurrentSchema(db);
       db.prepare(
         "INSERT INTO items (name, barcode) VALUES ('Rice', '12345678')",
       ).run();
@@ -351,11 +355,10 @@ describe('migration 5 on real SQLite (empty and populated v4)', () => {
     }
   });
 
-  test('threshold CHECK bounds: 0-999999 integers and NULL pass, the rest fail', () => {
+  test('threshold CHECK bounds: 0-999999 integers and NULL pass, the rest fail', async () => {
     const db = new DatabaseSync(':memory:');
     try {
-      seedV4(db);
-      applyMigrationV5Real(db);
+      await bringToCurrentSchema(db);
       const id = (
         db.prepare("INSERT INTO items (name) VALUES ('Rice')").run() as {
           lastInsertRowid: number;
@@ -382,12 +385,10 @@ describe('migration 5 on real SQLite (empty and populated v4)', () => {
     }
   });
 
-  test('expires_on shape CHECK: ISO shape or NULL pass, other text fails', () => {
+  test('expires_on shape CHECK: ISO shape or NULL pass, other text fails', async () => {
     const db = new DatabaseSync(':memory:');
     try {
-      db.exec('PRAGMA foreign_keys = ON;');
-      seedV4(db);
-      applyMigrationV5Real(db);
+      await bringToCurrentSchema(db);
       const loc = (
         db.prepare("INSERT INTO locations (name) VALUES ('Casa')").run() as {
           lastInsertRowid: number;

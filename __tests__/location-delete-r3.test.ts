@@ -3,17 +3,19 @@
  *
  * R3: deleting a location deletes stock, never items. R6: an item left
  * with no stock anywhere stays visible as "sin stock" (total 0), never
- * hidden. This test builds a real v4 database on `node:sqlite`, seeds one
+ * hidden. This test builds a real database at the current schema (shared
+ * real-ladder helper) on `node:sqlite`, seeds one
  * item stocked at two locations plus one item with no stock anywhere,
  * deletes one location through the REAL `deleteLocation`, and proves via
  * the REAL `queryItems` that the deleted location's stock rows are gone,
  * every catalog item survives, and the item left with no stock is still
  * returned with `totalQuantity` 0.
  */
-import { MIGRATIONS } from '../src/db/migrations';
+
 import type { RepositoryDb } from '../src/inventory/database';
 import { deleteLocation } from '../src/inventory/entityRepository';
 import { queryItems } from '../src/inventory/itemQuery';
+import { bringToCurrentSchema } from '../test-utils/schema';
 
 const { DatabaseSync } = require('node:sqlite') as {
   DatabaseSync: new (
@@ -73,16 +75,9 @@ function countReal(db: RealDb, table: string, where = ''): number {
 test('deleting a location removes its stock, keeps every item, and leaves sin-stock visible', async () => {
   const db = new DatabaseSync(':memory:');
   try {
-    db.exec(MIGRATIONS[1]);
-    db.exec(MIGRATIONS[2]);
-    db.exec(MIGRATIONS[3]);
-    // v4 under the runner's FK-off envelope (see migrations.test.ts).
-    db.exec('PRAGMA foreign_keys = OFF;');
-    db.exec(`BEGIN;\n${MIGRATIONS[4]}\nPRAGMA user_version = 4;\nCOMMIT;`);
-    // v5 is additive, so it runs on the generic single-transaction path.
-    db.exec(`BEGIN;\n${MIGRATIONS[5]}\nPRAGMA user_version = 5;\nCOMMIT;`);
-    // Production opens with foreign keys ON: the R3 cascade is enforced.
-    db.exec('PRAGMA foreign_keys = ON;');
+    // Current schema via the shared real-ladder helper (no hand copy).
+    // It leaves foreign keys ON, so the R3 cascade below is enforced.
+    await bringToCurrentSchema(db);
     const repo = wrapReal(db);
 
     const locA = Number(

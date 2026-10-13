@@ -38,6 +38,9 @@ yarn-error.*
 
 # generated native folders
 /ios
+
+# Maestro run artifacts: evidence, regenerable, never source
+.maestro/runs/
 /android
 
 # Keep project skill provenance even when a global ignore excludes it.

@@ -1,0 +1,355 @@
+# Tengo M3 query-fixture flow: DEV-only real-Android read-model verification.
+# Scope: proves the seeded `m1-fixture-query-m3.db` pass summary plus the
+# real embedded inventory list on the v4 catalog+stock model (one row per
+# product with its total plus per-location breakdown, a trailing "sin stock"
+# group, Unicode/accent-folding/literal search, location-view AND
+# category-OR, dedup, group counts, exhausted labels, no-results + clear,
+# seeded FAB, first-run empty CTA, error + retry) in one guarded launch.
+# It does NOT prove production `tengo.db` behavior: the first assertion
+# fail-closes on `query-fixture-screen`, so this flow can never accidentally
+# pass against production.
+# Run locally against an installed debug build on a separate Metro port:
+#   EXPO_PUBLIC_NATIVE_FIXTURE=1 EXPO_PUBLIC_NATIVE_QUERY=1 npx expo start --port 8082
+#   maestro test .maestro/m3-query.yaml
+# Stable numeric IDs below assume the fixture-verified fresh-seed order
+# (`src/dev/nativeQueryFixture.ts`: seedExactDataset): locations Küche=1,
+# Garage=2; categories Tools=1, Kitchen=2, 100%_stock=3; items 1=Café Grinder
+# (Küche 2, Kitchen), 2=CAFÉ filter (sin stock, Tools), 3=100%_literal\blend
+# (Garage 1, 100%_stock), 4=Hammer (Küche 1 + Garage 5 = total 6,
+# Tools+Kitchen), 5=Cafe Napkin (sin stock, no categories).
+# General-view grouping (`src/components/InventoryList.tsx`: group by first
+# stock row, stock ordered by location id per `src/inventory/itemQuery.ts`
+# `ORDER BY s.item_id ASC, l.id ASC`): Küche group = rows 1+4 (Hammer's first
+# stock row is Küche id 1), Garage group = row 3, trailing sin-stock group =
+# rows 2+5. The location chips only switch the viewed quantity
+# (`src/screens/InventoryContainer.tsx`: locationId is never sent to the
+# query, L9a), so a location view keeps every category-filtered row.
+# Selectors use stable testIDs; count regexes accept the existing en/es copy.
+# Disabled states (FAB, empty CTA) are visible-only here; disabled itself
+# is unit-proven. This flow is not native proof until a separate verifier
+# runs it on a device/emulator build; Maestro is never executed in CI here.
+appId: com.tengo.app
+---
+- launchApp
+# Fail-closed gate: never test production by accident.
+- assertVisible:
+    id: 'query-fixture-screen'
+- extendedWaitUntil:
+    visible:
+      id: 'query-fixture-summary'
+    timeout: 30000
+- assertVisible:
+    id: 'query-fixture-summary'
+# Structured report lives in the details modal: open it, view the schema
+# check, then close it BEFORE asserting loaded rows so the list keeps a
+# normal viewport and its rows mount.
+- tapOn:
+    id: 'query-fixture-details-open'
+- assertVisible:
+    id: 'query-check-0'
+- tapOn:
+    id: 'query-fixture-details-close'
+# Embedded real list loaded: one row per product, 5 of 5.
+- assertVisible:
+    id: 'inventory-list'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-count'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-count'
+- assertVisible:
+    id: 'inventory-count'
+    text: '^5 (of|de) 5$'
+# General view groups: Küche holds rows 1+4, Garage holds row 3, and the
+# trailing sin-stock group holds rows 2+5.
+- assertVisible:
+    id: 'inventory-row-1'
+- assertVisible:
+    id: 'inventory-group-1'
+- assertVisible:
+    id: 'inventory-group-1-count'
+    text: '^2 (items|artículos)$'
+# Total plus breakdown: row 1 totals 2 with its Küche breakdown.
+- assertVisible:
+    id: 'inventory-row-1-quantity'
+    text: '^(Quantity|Cantidad)\s+2$'
+- assertVisible:
+    id: 'inventory-row-1-location'
+    text: '.*Küche 2.*'
+# Sin-stock rows render the explicit exhausted label with total 0. Row 2 lives
+# in the trailing sin-stock group below the fold (general view groups by
+# first stock row: Küche rows 1+4, Garage row 3, sin-stock rows 2+5), so
+# scroll it into view first, then restore the header before continuing.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-2-exhausted'
+    direction: DOWN
+- assertVisible:
+    id: 'inventory-row-2-exhausted'
+- scrollUntilVisible:
+    element:
+      id: 'inventory-search'
+    direction: UP
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-4'
+    direction: DOWN
+- assertVisible:
+    id: 'inventory-row-4'
+# Hammer is one row with total 6 and the two-site breakdown (stock ordered
+# by location id: Küche 1, then Garage 5).
+- assertVisible:
+    id: 'inventory-row-4-quantity'
+    text: '^(Quantity|Cantidad)\s+6$'
+- assertVisible:
+    id: 'inventory-row-4-location'
+    text: '.*Küche 1.*Garage 5.*'
+# Group headers below the fold are virtualized: scroll each into view
+# before asserting it (observed: the Garage header unmounted at the fold
+# edge fails a bare assert nondeterministically).
+- scrollUntilVisible:
+    element:
+      id: 'inventory-group-2'
+    direction: DOWN
+- assertVisible:
+    id: 'inventory-group-2'
+# The Garage header sits below the fold under the Küche rows; scroll its
+# count into view before asserting it (same virtualization as row 2).
+- scrollUntilVisible:
+    element:
+      id: 'inventory-group-2-count'
+    direction: DOWN
+- assertVisible:
+    id: 'inventory-group-2-count'
+    text: '^1 (item|artículo)$'
+# Trailing sin-stock group: rows 2+5 under the translated group name.
+- assertVisible:
+    id: 'inventory-group-nostock'
+- assertVisible:
+    id: 'inventory-group-nostock-name'
+    text: '^(No stock|Sin stock)$'
+- assertVisible:
+    id: 'inventory-group-nostock-count'
+    text: '^2 (items|artículos)$'
+# Zero quantities render the explicit exhausted label, not color alone.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-5-exhausted'
+    direction: DOWN
+- assertVisible:
+    id: 'inventory-row-5-exhausted'
+# Seeded Android FAB is present (disabled itself is unit-proven).
+- assertVisible:
+    id: 'inventory-add-fab'
+# Restore the header after inspecting the virtualized rows below the fold.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-search'
+    direction: UP
+# Unicode search: cafe with accent hits 3 items with accent folding (2 accented + Cafe Napkin).
+- tapOn:
+    id: 'inventory-search'
+- inputText: 'café'
+- hideKeyboard
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-count'
+      text: '^3 (of|de) 5$'
+    timeout: 15000
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-1'
+    direction: UP
+- assertVisible:
+    id: 'inventory-row-1'
+# The café filter leaves rows 1+2+5: row 1 in Küche, rows 2+5 in the
+# trailing sin-stock group below the fold, so scroll down to each.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-2'
+    direction: DOWN
+- assertVisible:
+    id: 'inventory-row-2'
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-5'
+    direction: DOWN
+- assertVisible:
+    id: 'inventory-row-5'
+- scrollUntilVisible:
+    element:
+      id: 'inventory-search'
+    direction: UP
+# Folded variants hit the same 3 rows (fixture: CAFÉ and cafe each match 3).
+- tapOn:
+    id: 'inventory-search-clear'
+- tapOn:
+    id: 'inventory-search'
+- inputText: 'CAFÉ'
+- hideKeyboard
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-count'
+      text: '^3 (of|de) 5$'
+    timeout: 15000
+- tapOn:
+    id: 'inventory-search-clear'
+- tapOn:
+    id: 'inventory-search'
+- inputText: 'cafe'
+- hideKeyboard
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-count'
+      text: '^3 (of|de) 5$'
+    timeout: 15000
+- tapOn:
+    id: 'inventory-search-clear'
+# Literal search: 100% is verbatim, never a LIKE wildcard.
+- tapOn:
+    id: 'inventory-search'
+- inputText: '100%'
+- hideKeyboard
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-count'
+      text: '^1 (of|de) 5$'
+    timeout: 15000
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-3'
+    direction: UP
+- assertVisible:
+    id: 'inventory-row-3'
+- tapOn:
+    id: 'inventory-search-clear'
+# Location view AND category-OR: the location chip switches the viewed
+# quantity without dropping rows (L9a), while the category OR filters
+# server-side. Garage view x Tools = rows 2+4 (CAFÉ filter is stockless but
+# stays visible, exhausted at Garage); adding 100%_stock adds row 3.
+# Hammer carries both Tools and Kitchen yet still appears once.
+- tapOn:
+    id: 'inventory-location-2'
+- assertVisible:
+    id: 'inventory-count'
+    text: '^5 (of|de) 5$'
+- assertVisible:
+    id: 'inventory-group-2-count'
+    text: '^5 (items|artículos)$'
+- tapOn:
+    id: 'inventory-category-1'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-count'
+      text: '^2 (of|de) 5$'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-row-2'
+- assertVisible:
+    id: 'inventory-row-4'
+- assertVisible:
+    id: 'inventory-group-2-count'
+    text: '^2 (items|artículos)$'
+- tapOn:
+    id: 'inventory-category-3'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-count'
+      text: '^3 (of|de) 5$'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-row-2'
+- assertVisible:
+    id: 'inventory-row-3'
+# Rows run 2,3,4 ascending in the single Garage group; row 4 sits below
+# the fold once rows 2+3 fill the viewport, so scroll it into view.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-4'
+    direction: DOWN
+- assertVisible:
+    id: 'inventory-row-4'
+- assertVisible:
+    id: 'inventory-group-2-count'
+    text: '^3 (items|artículos)$'
+- tapOn:
+    id: 'inventory-filters-clear'
+# No-results names the miss and clears back to the full list.
+- tapOn:
+    id: 'inventory-search'
+- inputText: 'quinoa blend xyz'
+- hideKeyboard
+- assertVisible:
+    id: 'inventory-noresults-message'
+- tapOn:
+    id: 'inventory-noresults-clear'
+- assertVisible:
+    id: 'inventory-row-1'
+# First-run empty variant exposes the single disabled CTA.
+- tapOn:
+    id: 'query-fixture-variant-empty'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-empty-title'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-add-empty'
+- tapOn:
+    id: 'query-fixture-variant-seeded'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-count'
+    timeout: 30000
+# A single-character search triggers one request, so later keystrokes
+# cannot consume the one-shot fault and then recover before the assertion.
+# Search is a folded literal-substring OR over item name, category names,
+# and stocked location names: H matches Café Grinder through its Kitchen
+# category and its stocked Küche location, plus Hammer through its name and
+# its Tools + Kitchen categories, so the retried list is rows 1+4 (2 of 5),
+# each once. The stockless CAFÉ filter matches nothing under H on the v4
+# model (no stock, Tools has no H). Row 4 sits below the fold, so the retry
+# scrolls to it after proving the count and the above-fold row.
+- tapOn:
+    id: 'query-fixture-fail-next'
+- tapOn:
+    id: 'inventory-search'
+- inputText: 'H'
+- hideKeyboard
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-error-message'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-error-message'
+- tapOn:
+    id: 'inventory-retry'
+- extendedWaitUntil:
+    visible:
+      id: 'inventory-count'
+      text: '^2 (of|de) 5$'
+    timeout: 15000
+- assertVisible:
+    id: 'inventory-count'
+    text: '^2 (of|de) 5$'
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-1'
+    direction: UP
+- assertVisible:
+    id: 'inventory-row-1'
+- scrollUntilVisible:
+    element:
+      id: 'inventory-row-4'
+    direction: DOWN
+- assertVisible:
+    id: 'inventory-row-4'
+# Row 4 sits below the fold, so restore the header before clearing.
+- scrollUntilVisible:
+    element:
+      id: 'inventory-search'
+    direction: UP
+- tapOn:
+    id: 'inventory-search-clear'
+- assertVisible:
+    id: 'inventory-row-1'

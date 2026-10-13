@@ -1,9 +1,18 @@
 # Design — Tengo inventory by location
 
-Proposed planning design, not implemented. The working tree contains only
-the readiness foundation (`App.tsx`, `src/db/`, `src/i18n/`); no
-inventory screen exists. This document plans the MVP UX so
-implementation can follow it later. Product truth lives in
+Design contract. The inventory UI is implemented on the v4 model:
+the list with search, location and category filters, the add/edit form with
+per-location stock editing and inline location/category creation, and the discard and delete
+confirmations. The Android verification cited below now includes a pass on the
+catalog-and-stock model: the four Maestro flows were re-run on it and all pass,
+with the search figure missing its budget as recorded in `docs/testing.md`.
+Section 3 therefore describes built behavior, and section 5
+carries the approved token values through `src/theme/tokens.ts`. The
+defaults that were deferred — trimmed bounds, name uniqueness, accent
+folding, and location/category text matching — were adopted and implemented
+on 2026-10-12, and the managed-entity screen was adopted by the user and
+implemented on the same date (its device verification is no longer pending: the entity flow passes on the device at 89 and then 124 commands with zero failures; TalkBack speech on that screen remains unobserved);
+address uniqueness was never adopted. Product truth lives in
 [PRODUCT.md](PRODUCT.md); build order and acceptance live in
 [ROADMAP.md](ROADMAP.md) (M1–M5, gates, checklist).
 
@@ -21,14 +30,14 @@ explicitly — do not silently change product scope or behavior.
 - Static map: [design/wireframes/overview.png](design/wireframes/overview.png)
   (all boards at a glance).
 - Board notes: [design/wireframes/README.md](design/wireframes/README.md)
-  (per-board OS idiom, numbered transitions ①–⑧, pending-approval rules).
+  (board notes, numbered transitions ①–⑧, pending-approval rules; B2 idiom is historical).
 - Per-board static exports: `design/wireframes/previews/01–09-*.png`
   (one PNG per board, exported after visual inspection).
 
 | Board | Content | Maps to |
 | ----- | ------- | ------- |
-| B1 | Populated list, chips filter, search, FAB | Android variant of §3.1 |
-| B2 | Same list content, large title, compose-style Add | iOS variant of §3.1 |
+| B1 | Populated list, chips filter, search, FAB | Active Android target for §3.1 |
+| B2 | Same list content, large title, compose-style Add | Historical alternative to §3.1, not the active Android target (artifact name unchanged) |
 | B3 | Search filter + no-results (`quinoa`) | §3.2 |
 | B4 | First-run empty, single CTA | §4 empty first-run |
 | B5 | Add item form | §3.3 |
@@ -39,8 +48,8 @@ explicitly — do not silently change product scope or behavior.
 
 Main transitions (full numbered list ①–⑧ in the board notes):
 
-- List B1/B2 → Add B5 via FAB (Android) / + Add (iOS); row tap → Edit B6.
-- List search → B3 states; Clear returns to B1/B2; Add "quinoa" → B5 prefilled.
+- Active path: list B1 → Add B5 via FAB; row tap → Edit B6. B2 is a historical alternative, not the active Android target.
+- List search → B3 states; Clear returns to B1 (B2 is historical only); Add "quinoa" → B5 prefilled.
 - First launch → B4; CTA → B5.
 - B5/B6 Save → list with transient confirm; dirty Back → B9 discard dialog.
 - B6 Delete → B9 confirm dialog; no separate read-only detail screen.
@@ -48,7 +57,7 @@ Main transitions (full numbered list ①–⑧ in the board notes):
 
 Reading notes:
 
-- B1/B2 are OS variants of the same list, not a sequence; B3–B9 are
+- B1/B2 are historical OS variants of the same list, not a sequence; only B1 is the active Android target. B3–B9 are
   states of that list and its form, not a linear flow.
 - Arrows on the static map show reachability between boards; they are
   not a clickable prototype.
@@ -56,9 +65,19 @@ Reading notes:
   not prove `es` parity, theme tokens, contrast, screen-reader behavior,
   or runtime behavior — §§5/7/9 specify requirements that still need
   implementation checks and a device pass.
-- All recommended defaults shown on the boards (quantity range, free-text
-  locations, optional category, irreversible delete) are proposed and
-  unapproved; each needs its ROADMAP.md §9 gate before build (§10).
+- All recommended defaults shown on the boards (quantity range,
+  free-text locations, single optional category, irreversible delete)
+  were proposed when drawn and the boards are unchanged in this
+  slice. Approved contract now governs over those sketches: per-location
+  stock rows (one quantity per location, the total is the sum), items with
+  no stock shown as "sin stock", stock in zero, one, or several
+  locations per item, categories
+  as zero-or-many entities, location deletion cascading stock but never
+  items (category deletion removing only the association, each
+  confirmation stating the impact), and deletion
+  always confirming with no trash.
+  The remaining defaults were adopted at the ROADMAP.md §9 gate on
+  2026-10-12; §10 lists what is still open.
 
 
 Mode: Operate. The visitor completes a task (find it, record it,
@@ -88,19 +107,22 @@ filter. No forced tab bar: the MVP is shallow enough for a single
 stack.
 
 ```text
-Inventory (list, grouped/filterable by location)
+Inventory (list, general view plus per-location views)
 ├── Search (filter on the list, not a separate destination)
-├── Add item (name, quantity, location, optional category)
+├── Add item (name, per-location stock, zero or more categories)
 └── Item (edit fields; delete behind explicit confirm)
 ```
 
 Location is the organizing principle: the list groups or filters by
-place (e.g. Kitchen, Pantry, Garage), and every item shows its
-location at a glance. Detail is justified only as the edit surface:
+place (e.g. Kitchen, Pantry, Garage). The general view shows each item
+once with its total and per-location breakdown; a location view shows
+that location's quantity (the filter is a membership test: "has stock
+there"); a trailing group holds items with no stock anywhere
+("sin stock"). Detail is justified only as the edit surface:
 no separate read-only detail screen is proposed; tapping an item
 opens it for editing.
 
-## 3. Screens and flows (proposed)
+## 3. Screens and flows (implemented; the four Maestro flows re-observed on the new model, with the search budget miss recorded in `docs/testing.md`)
 
 Conventions below: `[ ]` input, `( )` button, `>` row/tap target,
 `---` divider. All copy exists in `en` and `es` before build.
@@ -112,35 +134,47 @@ Conventions below: `[ ]` input, `( )` button, `>` row/tap target,
 [Search field: Search name, place…    ]
 [Location filter chips: All | Kitchen | Pantry | Garage | …]
 ------------------------------------------
-KITCHEN                          12 items
-> Rice · x2 · Kitchen                44pt
-> Olive oil · x1 · Kitchen           44pt
+General view: one row per item, total plus breakdown
+> Rice · x6 total (Kitchen x2 · Pantry x4)   48dp
+> Olive oil · x1 · Kitchen                   48dp
 ------------------------------------------
-PANTRY                            8 items
-> Lentils · x4 · Pantry              44pt
+Location view (e.g. Pantry): that location's quantity
+> Rice · x4 · Pantry                         48dp
 ------------------------------------------
-( + Add item )  one primary action (FAB on Android, system
-                compose button on iOS — never stacked)
+NO STOCK
+> Quinoa · sin stock                         48dp
+------------------------------------------
+( + Add item )  one primary action: the FAB on Android.
 ```
 
 - Behavior: list opens focused on browse; search filters in place;
-  chips filter by location; counts are honest (they reflect the
+  the location filter is a membership test (the item has stock there);
+  the general view shows each item once with its total and per-location
+  breakdown, a location view shows that location's quantity, and a
+  trailing group holds items with no stock anywhere ("sin stock");
+  counts are honest (they reflect the
   current filter).
 - Search has exactly one affordance: the inline search field. No
   separate search icon or second entry point.
-- Group headers show item counts. Locations derive from item rows,
-  so there are no persisted empty groups: a location filter with
+- Group headers show item counts. Location filters come from location
+  entities (see §3.5); a location filter with
   zero matches shows the contextual zero-match state in section 4,
   not an empty header.
 - Primary action only: one Add action opening the form (FAB on
-  Android, system compose-style button on iOS). Never stacked.
+  Android, never stacked; B2 sketches a historical compose-style
+  button, not the active target).
 
 ### 3.2 Search
 
-- Typing filters the visible list; scope is name plus location and
-  category once the gate decision adopts the recommended default
-  (ROADMAP.md section 9).
-- Matching is case- and accent-insensitive (`cafe` finds `café`).
+- Typing filters the visible list; an item matches when the folded
+  query is a substring of its name, any location name where it has
+  stock, or any of its
+  category names (adopted and implemented 2026-10-12, ROADMAP.md
+  section 9), and multi-category selection filters with OR semantics
+  and deduplicated results; an item matching several ways appears once.
+- Matching is case- and accent-insensitive in both directions (`cafe`
+  finds `café`, `CAFÉ` finds stored `cafe`); stored text is returned
+  verbatim.
 - No-match state: names the query ("No results for 'quinoa'"),
   offers clearing the search or adding it as a new item.
 - Search state survives rotation; clearing restores the full list.
@@ -149,11 +183,12 @@ PANTRY                            8 items
 
 ```text
 [Top bar: < Back | New item | (Save)]
-(OS idiom: Save sits in the top bar on iOS per B2/B6;
-Android uses a bottom/sticky Save per B5 — position follows §6.)
+(Position follows §6; B2/B6 top-bar placement is a historical alternative, not the active Android target.)
 Name        [ Rice             ]
-Quantity    [ (–)  2  (+)      ]
-Location    [ Pantry         v ]
+Stock by location (optional)
+  Kitchen   [ (–)  2  (+)      ]  (Remove)
+  Pantry    [ (–)  4  (+)      ]  (Remove)
+  (Add location — may create a location inline while saving)
 Category    [ Grains (optional)]
 [Inline error under the field when invalid]
 ```
@@ -161,9 +196,22 @@ Category    [ Grains (optional)]
 - Save stays enabled except while submitting; validation runs on
   submit and on blur, with inline errors in the current language.
   On a submit with invalid fields, focus moves to the first error.
-- Quantity defaults to 1; stepper plus direct numeric entry.
-- Location is free text with recency suggestions (recommended
-  default); category is optional free text with suggested values.
+- Stock is edited per location: one row per location with its quantity
+  (typed or stepped, starting blank via
+  `blankItemFormValues` in `src/screens/useItemFormController.ts`),
+  a remove action per row, and an add-location action; a blank or
+  zero quantity means "no stock there" and drops the row rather than
+  storing it. A new location can still be created inline while saving
+  the item.
+- An item may hold stock in zero, one, or several locations: locations
+  are entities (name required, address optional,
+  free-entry names such as Casa/Bodega). Categories are zero or many
+  per item via multi-select (selecting several filters with OR and
+  dedup). Bounds (name 1–120, quantity 1–999999 per stock row with 0
+  dropped, location 1–80,
+  category 80) and name uniqueness are adopted and implemented, and so is
+  the category-management UI (adopted and implemented on 2026-10-12,
+  device verification observed on the device through the entity flow).
 - Cancel/Back with unsaved changes asks to discard (no silent loss).
 
 ### 3.4 Edit item (the "detail" surface)
@@ -171,22 +219,30 @@ Category    [ Grains (optional)]
 Same layout as Add with title "Edit item". Adds a destructive zone
 at the bottom: `( Delete item )` in the error role, requiring the
 confirm in section 4. Save confirms with transient feedback
-(Snackbar on Android, equivalent transient confirmation on iOS).
+(Snackbar on Android).
 
-### 3.5 Location handling
+### 3.5 Location and category handling (approved entities)
 
-- Recommended default: free-text places with recency/frequency
-  suggestions drawn from existing rows. No managed-list admin UI in
-  the MVP (avoids overengineering); suggestions keep entry fast and
-  mostly consistent.
-- Normalization is limited to trim; matching for suggestions is
-  case- and accent-insensitive so "pantry" and "Pantry" converge in
-  search even if stored as typed.
-- Because locations derive from items, a place with no items has no
-  persisted group; selecting its filter yields the contextual
-  zero-match state in section 4, never an empty header.
-- If the user later approves managed locations, the suggestion row
-  becomes the seed of that list without layout changes.
+- Locations are entities, not free-text columns: an item may hold stock
+  in zero, one, or several locations (name required,
+  address optional, free entry). The form therefore edits one row per
+  location instead of a single quantity field; the
+  boards sketch single-quantity free-text entry and are unchanged, so the approved
+  entity contract governs.
+- Categories are independent entities joined to items: zero or many
+  per item, no duplicate associations. Multi-select filters with OR
+  semantics and deduplicated results.
+- Name uniqueness is adopted and implemented: an accent-aware domain
+  check produces the typed conflict error and the v3 unique index is
+  the backstop. Normalization beyond trim, address uniqueness, recency
+  or suggestion behavior, and any managed-list/category admin UI remain
+  unimplemented. Deleting a location cascades its stock rows and never
+  deletes items; deleting a category removes only the association with
+  items. Each confirmation states the impact; `LocationInUseError` no
+  longer exists. A
+  location filter with zero matches shows the contextual zero-match
+  state in section 4, and items with no stock anywhere appear in the
+  trailing "sin stock" group rather than disappearing.
 
 ## 4. Interaction, loading, empty, error, destructive states
 
@@ -203,57 +259,62 @@ confirm in section 4. Save confirms with transient feedback
   SQLite text never reaches the screen.
 - Destructive: delete opens a confirm dialog naming the item
   ("Delete 'Rice'? This cannot be undone.") with `( Cancel )` /
-  `( Delete )`; success is announced transiently; there is no
-  trash/undo in the MVP by recommended default.
+  `( Delete )`; success is announced transiently. Deleting a location
+  or category likewise confirms and states the impact (how many
+  existencias go; the items themselves are never deleted that way).
+  Approved: every
+  delete confirms and there is no trash/undo in the MVP.
 - Feedback motion: 150–250 ms state transitions only; no
   orchestrated load sequences; reduced-motion settings replace
   slides/parallax with crossfade or instant.
 
-## 5. Tokens, typography, spacing, touch (proposed)
+## 5. Tokens, typography, spacing, touch (approved)
 
 Semantic role tokens only — raw hex never drives UI, so light/dark
-resolve per OS:
+resolve per theme:
 
-- Roles mapped per platform (proposed values, subject to approval):
+- Roles mapped per platform (approved values; `src/theme/tokens.ts` is
+  the single source, and raw hex never drives UI outside it):
 
-  | App role | Android M3 role | iOS semantic | Light (proposed) | Dark (proposed) |
-  | -------- | --------------- | ------------ | ---------------- | --------------- |
-  | background | background | systemBackground | #FFFFFF | #121212 |
-  | surface | surface | secondarySystemBackground | #F4F2EC | #1C1C1E |
-  | primary action | primary / onPrimary | tint | #2F6B3A / #FFFFFF | #7BC79A / #0B2E18 |
-  | secondary container | secondaryContainer | systemFill | #E5E1D5 | #2C2C2E |
-  | outline / separator | outline / outlineVariant | separator | #C9C5B8 | #38383A |
-  | error | error / onError | systemRed | #B3261E / #FFFFFF | #FFB4AB / #410002 |
-  | label | onBackground | label | #1A1C19 | #F2F1ED |
-  | secondary label | onSurfaceVariant | secondaryLabel | #5C5F58 | #AEB0AD |
-- Contrast floor (proposed, unmeasured until a device pass): text
-  at least 4.5:1 against its background; interactive controls and
-  focus indicators at least 3:1 against adjacent colors.
+  | App role | Android M3 role | Light | Dark |
+  | -------- | --------------- | ----- | ---- |
+  | background | background | #FFFFFF | #121212 |
+  | surface | surface | #F4F2EC | #1C1C1E |
+  | primary action | primary / onPrimary | #2F6B3A / #FFFFFF | #7BC79A / #0B2E18 |
+  | secondary container | secondaryContainer | #E5E1D5 | #2C2C2E |
+  | control outline | outline | #8A8578 | #6E6E73 |
+  | separator (decorative) | outlineVariant | #C9C5B8 | #38383A |
+  | error | error / onError | #B3261E / #FFFFFF | #FFB4AB / #410002 |
+  | label | onBackground | #1A1C19 | #F2F1ED |
+  | secondary label | onSurfaceVariant | #5C5F58 | #AEB0AD |
+- Contrast floor (approved): text at least 4.5:1 against its background;
+  interactive control boundaries at least 3:1 against both the background
+  and the surface. The `control outline` role carries the 3:1 floor —
+  light 3.68:1 on the background and 3.38:1 on the surface, dark 3.69:1
+  and 3.37:1 — while `separator` stays light because WCAG 1.4.11 does not
+  apply to decoration. `__tests__/contrast-floor.test.tsx` renders the
+  production surfaces in both schemes and fails if any control boundary
+  drops below the floor. Focus indicators are drawn by the platform and
+  are not measured.
 - Light: paper-neutral background, one tonal step for grouped
   headers/filter chips; dark: true dark scheme (not an invert),
-  tonal elevation per Material, translucency/materials per HIG.
+  tonal elevation per Material 3.
 - One accent carries primary actions, selection, and focus; never
   decoration or inactive states.
-- Type: system faces only in the MVP (SF Pro/Compact on iOS via
-  Dynamic Type styles; Material type scale Body/Title/Label on
+- Type: system faces only in the MVP (Material type scale Body/Title/Label on
   Android in `sp`). One family across the app; tighter scale
   (1.125–1.2). Prose measure 65–75ch where prose appears.
-- Spacing: 8dp/pt base grid; 16 screen margins; 8 between related
+- Spacing: 8dp base grid; 16 screen margins; 8 between related
   rows, 16+ between groups; more space above a header than below it.
-- Touch: 44x44 pt minimum on iOS, 48x48 dp on Android, 8dp/pt
+- Touch: 48x48 dp minimum on Android, 8dp
   gaps between adjacent targets.
 
-## 6. Native adaptive navigation and system behavior
+## 6. Native navigation and system behavior (Android)
 
 - Android: top app bar for screen context plus single FAB for Add;
   system Back and predictive Back always work; bottom sheets and
   Material dialogs/snackbars per Material 3.
-- iOS: large titles on the top-level list collapsing to inline;
-  navigation-stack push for Add/Edit; sheet presentation only for
-  self-contained quick add if adopted; edge-swipe back stays alive;
-  action sheets/alerts, SF Symbols iconography, no ported Material
-  widgets.
-- Shared guarantees on both OSes: edge-to-edge layout inside safe
+- Guarantees: edge-to-edge layout inside safe
   area and window insets (notch, home indicator, status/navigation
   bars); keyboard (IME) insets keep Save and focused fields
   visible; no control hides behind system bars or the keyboard.
@@ -261,11 +322,11 @@ resolve per OS:
 ## 7. Accessibility, reduced motion, i18n
 
 - Every interactive element has a localized screen-reader name;
-  quantity steppers expose value and increment/decrement actions;
+  per-location quantity steppers expose value and increment/decrement actions;
   errors are announced, not color-only.
-- Type follows system size settings (Dynamic Type / font scale);
+- Type follows system font-scale settings;
   layout is verified at a large size without truncation.
-- Reduced motion (iOS Reduce Motion, Android Remove animations):
+- Reduced motion (Android Remove animations):
   crossfade or instant cuts; content visible by default.
 - All strings live in `src/i18n/resources.ts` with `es` parity
   enforced by the existing `typeof en` lock; Spanish is verified on
@@ -279,10 +340,12 @@ resolve per OS:
 - `SearchField`: controlled query, clear action, accessible label;
   stateless filtering owned by the list.
 - `LocationChips`: `locations`, `selected`, `onSelect`; horizontal
-  scroll, 44/48 minimum targets.
-- `ItemForm`: fields name/quantity/location/category,
-  `errors`, `onSubmit`, `submitting`; validation messages inline.
-- `QuantityStepper`: integer value, min 0, plus/minus plus direct
+  scroll, 48dp minimum targets.
+- `ItemForm`: fields name/per-location stock/categories
+  (multi-select), `errors`, `onSubmit`, `submitting`; validation
+  messages inline.
+- `QuantityStepper`: integer value per stock row (blank or zero means
+  "no stock there" and drops the row) plus/minus plus direct
   entry; exposes a11y value.
 - `DeleteConfirm`: item name, `( Cancel )`, `( Delete )`; returns
   an explicit choice, never deletes on dismiss.
@@ -294,25 +357,44 @@ resolve per OS:
 - List, search, add, edit, and delete all work offline with both
   languages; no screen shows untranslated or hardcoded text.
 - Empty, loading, error, no-match, and delete-confirm states match
-  sections 3–4 on both platforms.
+  sections 3–4 on Android.
 - Touch targets, type scaling, screen reader, dark scheme, keyboard
   behavior, and safe-area handling meet sections 5–7.
-- Search is accent-insensitive (folded NFD comparison, stored text
-  verbatim); delete always confirms; dismissing a dirty form never
-  silently loses input.
-- Text contrast meets the 4.5:1 floor and controls the 3:1 floor
-  (proposed); ROADMAP.md section 7 performance budgets observed on
-  a device pass.
+- Search matches the item name, any location name where it has stock, or any category name
+  with accent folding (adopted and implemented; stored text verbatim)
+  plus multi-category OR filtering with dedup. Delete always confirms
+  and dismissing a dirty form never silently loses input; a 0-quantity
+  row is dropped rather than stored and items with no stock appear in
+  the trailing "sin stock" group.
+- Text contrast meets the 4.5:1 floor and control boundaries the 3:1
+  floor, implemented in `src/theme/tokens.ts` and guarded by
+  `__tests__/contrast-floor.test.tsx`; ROADMAP.md section 7 performance
+  budgets were measured on a device pass, where search measured 292.6ms
+  against the 200ms per-keystroke budget on the catalog-and-stock model
+  and is recorded as a FAIL (it was 174.6ms before the model change).
 
 ## 10. Roadmap cross-links and unknowns
 
-- Milestones: list/search states → ROADMAP.md M3; add/edit/delete
-  → M4; strings/a11y/performance/matrix → M5; schema/validation
-  gates → M1–M2.
-- Unknowns use recommended defaults (approval still required):
-  quantity as non-negative integer 0–999999 without units, zero
-  allowed, v1 backfill 1; free-text locations with suggestions and
-  an `Unassigned` backfill for v1 rows; optional free-text
-  categories searched as a filter; confirmed irreversible delete
-  with no trash in the MVP. Each maps to a ROADMAP.md section 9
-  gate that must be recorded before build.
+- Milestones: list/search states → ROADMAP.md M3 (done; App
+  integration verified on Android); add/edit/delete → M4 (done);
+  strings/a11y/performance/matrix → M5 (done, with TalkBack speech a
+  stated boundary); schema/validation gates → M1–M2 (done; see
+  [verified native evidence](docs/testing.md#verified-native-evidence-android-only)).
+- Approved contract (overrides the single-text sketches above):
+  location entities (name required, address optional,
+  free entry) with stock in zero, one, or several locations per item,
+  independent category entities with zero or many per
+  item and OR-plus-dedup multi-select filtering, a stock row always
+  meaning something stored there (0-quantity rows dropped; no-stock
+  items shown as "sin stock"), location deletion cascading stock but
+  never items (category deletion removing only the association, each
+  confirmation stating the impact), and confirmed deletion with no
+  trash. Closed by adoption on 2026-10-12: numeric/string bounds, name
+  uniqueness, accent-folding semantics, and location/category text
+  matching. Still needing a gate: address
+  uniqueness, suggestion behavior, and the v4
+  rebuild rule — the managed-entity screen was adopted and implemented on
+  2026-10-12. Never fabricate a location; the v4 migration carries
+  one stock row per old item with `quantity > 0` under a
+  preserve-and-stop guard per ROADMAP.md (the v1 backfill rule stands
+  as the record of that earlier migration).

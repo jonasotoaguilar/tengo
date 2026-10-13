@@ -49,8 +49,6 @@ body:
       options:
         - Android emulator
         - Android device
-        - iOS simulator
-        - iOS device
         - Tooling / CI (no device)
     validations:
       required: true

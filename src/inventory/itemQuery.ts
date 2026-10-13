@@ -74,7 +74,11 @@
  * `StorageError('item', 'query')` with `cause`.
  */
 import type { RepositoryDb } from './database';
-import { StorageError } from './errors';
+import {
+  EntityConflictError,
+  EntityNotFoundError,
+  StorageError,
+} from './errors';
 import type {
   Category,
   ItemDetail,
@@ -85,6 +89,25 @@ import type {
 import { ValidationError, validateId } from './validation';
 
 export type { ItemFilter } from './types';
+
+/**
+ * T5: only driver/storage failures map to `StorageError`. Programming
+ * errors (`TypeError` and siblings) and non-`Error` throws are unexpected,
+ * so they propagate unchanged instead of surfacing as "storage unavailable".
+ */
+function isUnexpectedError(error: unknown): boolean {
+  if (
+    error instanceof TypeError ||
+    error instanceof RangeError ||
+    error instanceof ReferenceError ||
+    error instanceof SyntaxError ||
+    error instanceof URIError ||
+    error instanceof EvalError
+  ) {
+    return true;
+  }
+  return !(error instanceof Error);
+}
 
 /** Validated filter: trimmed query or null, resolved location, deduped cats. */
 export interface NormalizedItemFilter {
@@ -296,9 +319,15 @@ export async function queryItems(
       );
     }
   } catch (error) {
-    if (error instanceof ValidationError || error instanceof StorageError) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof EntityConflictError ||
+      error instanceof StorageError
+    ) {
       throw error;
     }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('item', 'query', error);
   }
   if (itemRows.length === 0) return [];
@@ -332,9 +361,15 @@ export async function queryItems(
       pageIds,
     );
   } catch (error) {
-    if (error instanceof ValidationError || error instanceof StorageError) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof EntityConflictError ||
+      error instanceof StorageError
+    ) {
       throw error;
     }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('item', 'query', error);
   }
 
@@ -414,9 +449,15 @@ export async function queryItems(
       survivorPageIds,
     );
   } catch (error) {
-    if (error instanceof ValidationError || error instanceof StorageError) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof EntityConflictError ||
+      error instanceof StorageError
+    ) {
       throw error;
     }
+    if (isUnexpectedError(error)) throw error;
     throw new StorageError('item', 'query', error);
   }
   // Fail loudly on a malformed stock row (dropped column/broken alias):

@@ -124,6 +124,12 @@ appId: com.tengo.app
     id: 'inventory-group-2-count'
     text: '^1 (item|artículo)$'
 # Trailing sin-stock group: rows 2+5 under the translated group name.
+# The nostock header sits below the fold under the Garage row; scroll it
+# into view before asserting it (same virtualization as the Garage header).
+- scrollUntilVisible:
+    element:
+      id: 'inventory-group-nostock'
+    direction: DOWN
 - assertVisible:
     id: 'inventory-group-nostock'
 - assertVisible:
@@ -275,6 +281,13 @@ appId: com.tengo.app
     text: '^3 (items|artículos)$'
 - tapOn:
     id: 'inventory-filters-clear'
+# Clearing the filters leaves the viewport scrolled down while the search
+# header sits at the top; restore it before tapping search (same
+# virtualization as the group headers above).
+- scrollUntilVisible:
+    element:
+      id: 'inventory-search'
+    direction: UP
 # No-results names the miss and clears back to the full list.
 - tapOn:
     id: 'inventory-search'

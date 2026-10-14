@@ -28,6 +28,10 @@ export interface Category {
 export interface Item {
   id: number;
   name: string;
+  /** Reminder level, or null when the item has no reminder (U2). */
+  lowStockThreshold?: number | null;
+  /** Scanned identity, or null when the item has no code (U2). */
+  barcode?: string | null;
   created_at: string;
 }
 
@@ -36,6 +40,8 @@ export interface StockLevel {
   locationId: number;
   location: Location;
   quantity: number;
+  /** ISO expiry of this stock row, or null when it has none (U2). */
+  expiresOn?: string | null;
 }
 
 /** Input for creating a location: name required, address optional. */
@@ -53,16 +59,23 @@ export interface NewCategoryInput {
 export interface NewItemStockInput {
   locationId: number;
   quantity: number;
+  /** Optional ISO expiry for this stock row (U2). */
+  expiresOn?: string | null;
 }
 
 /**
  * Input for creating an item: name plus zero or more stock rows plus
  * optional categories. Zero rows means catalog-only ("sin stock").
  * A 0-quantity row is dropped rather than stored; duplicate location ids
- * in one payload are rejected (see `./validation`).
+ * in one payload are rejected (see `./validation`). The U2 reminder and
+ * identity fields are optional, so existing callers keep compiling.
  */
 export interface NewItemInput {
   name: string;
+  /** Optional reminder level; null/absent means no reminder (U2). */
+  lowStockThreshold?: number | null;
+  /** Optional scanned identity; null/absent means no code (U2). */
+  barcode?: string | null;
   stock?: NewItemStockInput[];
   categoryIds?: number[];
 }
@@ -76,6 +89,10 @@ export interface NewItemInput {
 export interface ItemDetail {
   id: number;
   name: string;
+  /** Reminder level, or null when the item has no reminder (U2). */
+  lowStockThreshold?: number | null;
+  /** Scanned identity, or null when the item has no code (U2). */
+  barcode?: string | null;
   stock: StockLevel[];
   /** Sum of the stock quantities; 0 when the item has no rows (sin stock). */
   totalQuantity: number;
@@ -116,6 +133,8 @@ export type ItemLocationDraft =
 export interface ItemStockDraft {
   location: ItemLocationDraft;
   quantity: number;
+  /** Optional ISO expiry for this stock row (U2). */
+  expiresOn?: string | null;
 }
 
 /**
@@ -135,6 +154,10 @@ export type ItemCategoryDraft =
  */
 export interface ItemDraftInput {
   name: string;
+  /** Optional reminder level; null/absent means no reminder (U2). */
+  lowStockThreshold?: number | null;
+  /** Optional scanned identity; null/absent means no code (U2). */
+  barcode?: string | null;
   stock?: ItemStockDraft[];
   categories?: ItemCategoryDraft[];
 }

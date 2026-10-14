@@ -31,9 +31,20 @@ function makeQueryFake() {
   >();
   const items = new Map<
     number,
-    { id: number; name: string; created_at: string }
+    {
+      id: number;
+      name: string;
+      lowStockThreshold: number | null;
+      barcode: string | null;
+      created_at: string;
+    }
   >();
-  const stock: { itemId: number; locationId: number; quantity: number }[] = [];
+  const stock: {
+    itemId: number;
+    locationId: number;
+    quantity: number;
+    expiresOn: string | null;
+  }[] = [];
   const joins = new Set<string>();
   let nextId = 1;
   const db: RepositoryDb = {
@@ -60,6 +71,8 @@ function makeQueryFake() {
           .map((it) => ({
             item_id: it.id,
             item_name: it.name,
+            low_stock_threshold: it.lowStockThreshold,
+            barcode: it.barcode,
             item_created_at: it.created_at,
           }));
       }
@@ -87,6 +100,7 @@ function makeQueryFake() {
               location_name: loc.name,
               location_address: loc.address,
               location_created_at: loc.created_at,
+              expires_on: s.expiresOn,
             };
           });
       }
@@ -126,16 +140,28 @@ function makeQueryFake() {
   };
   const item = (
     name: string,
-    stockRows: { locationId: number; quantity: number }[] = [],
+    stockRows: {
+      locationId: number;
+      quantity: number;
+      expiresOn?: string | null;
+    }[] = [],
     catIds: number[] = [],
+    v5: { lowStockThreshold?: number | null; barcode?: string | null } = {},
   ) => {
     const id = nextId++;
-    items.set(id, { id, name, created_at: `ts-${id}` });
+    items.set(id, {
+      id,
+      name,
+      lowStockThreshold: v5.lowStockThreshold ?? null,
+      barcode: v5.barcode ?? null,
+      created_at: `ts-${id}`,
+    });
     for (const s of stockRows) {
       stock.push({
         itemId: id,
         locationId: s.locationId,
         quantity: s.quantity,
+        expiresOn: s.expiresOn ?? null,
       });
     }
     for (const c of catIds) joins.add(`${id}:${c}`);
@@ -683,4 +709,92 @@ test('cross-entity text ANDs with the location filter and category-OR without ch
     milk,
     hammers,
   ]);
+});
+
+test('v5 fields ride the bounded read model with no extra reads', async () => {
+  const f = makeQueryFake();
+  const pantry = f.loc('Pantry');
+  const garage = f.loc('Garage');
+  const rice = f.item(
+    'Rice',
+    [
+      { locationId: pantry, quantity: 2, expiresOn: '2027-03-15' },
+      { locationId: garage, quantity: 5 },
+    ],
+    [],
+    { lowStockThreshold: 3, barcode: '12345678' },
+  );
+  const [detail] = await queryItems(f.db);
+  expect(detail.id).toBe(rice);
+  expect(detail.lowStockThreshold).toBe(3);
+  expect(detail.barcode).toBe('12345678');
+  expect(detail.totalQuantity).toBe(7);
+  expect(detail.stock.map((s) => s.expiresOn)).toEqual(['2027-03-15', null]);
+  // Same bounded shape: items, links, stock join — no fourth read.
+  expect(f.calls).toHaveLength(3);
+  // The new columns travel inside the existing three reads.
+  expect(f.calls[0].source).toContain('low_stock_threshold');
+  expect(f.calls[0].source).toContain('barcode');
+  expect(f.calls[2].source).toContain('expires_on');
+});
+
+test('v5 PRESERVE: pre-v5 rows without the new columns read as null', async () => {
+  // A legacy-shaped fake (no v5 aliases at all) still yields a full
+  // detail with nulls: the additive columns tolerate missing keys.
+  const calls: { source: string; params: unknown[] }[] = [];
+  const db = {
+    runAsync: jest.fn(),
+    getFirstAsync: jest.fn(),
+    getAllAsync: jest.fn(async (source: string, params: unknown[] = []) => {
+      calls.push({ source, params });
+      if (/FROM items i/i.test(source)) {
+        return [{ item_id: 1, item_name: 'Rice', item_created_at: 'ts-1' }];
+      }
+      if (/FROM item_categories/i.test(source)) return [];
+      if (/FROM stock s/i.test(source)) {
+        return [
+          {
+            stock_item_id: 1,
+            quantity: 2,
+            location_id: 7,
+            location_name: 'Pantry',
+            location_address: null,
+            location_created_at: 'ts-7',
+          },
+        ];
+      }
+      throw new Error(`fake: unhandled ${source}`);
+    }),
+  } as unknown as RepositoryDb;
+  const [detail] = await queryItems(db);
+  expect(detail).toMatchObject({
+    id: 1,
+    name: 'Rice',
+    lowStockThreshold: null,
+    barcode: null,
+    totalQuantity: 2,
+  });
+  expect(detail.stock[0].expiresOn).toBeNull();
+  expect(calls).toHaveLength(3);
+});
+
+test('v5 PRESERVE: one answer per product with total and stable order', async () => {
+  const f = makeQueryFake();
+  const pantry = f.loc('Pantry');
+  const garage = f.loc('Garage');
+  const many = f.item(
+    'Many',
+    [
+      { locationId: garage, quantity: 5, expiresOn: '2028-06-01' },
+      { locationId: pantry, quantity: 2 },
+    ],
+    [],
+    { lowStockThreshold: 6, barcode: 'BEANS-001' },
+  );
+  const got = await queryItems(f.db);
+  expect(got).toHaveLength(1);
+  expect(got[0].id).toBe(many);
+  expect(got[0].totalQuantity).toBe(7);
+  expect(got[0].stock.map((s) => s.locationId)).toEqual([pantry, garage]);
+  expect(f.calls).toHaveLength(3);
 });

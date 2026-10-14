@@ -79,6 +79,8 @@ test('deleting a location removes its stock, keeps every item, and leaves sin-st
     // v4 under the runner's FK-off envelope (see migrations.test.ts).
     db.exec('PRAGMA foreign_keys = OFF;');
     db.exec(`BEGIN;\n${MIGRATIONS[4]}\nPRAGMA user_version = 4;\nCOMMIT;`);
+    // v5 is additive, so it runs on the generic single-transaction path.
+    db.exec(`BEGIN;\n${MIGRATIONS[5]}\nPRAGMA user_version = 5;\nCOMMIT;`);
     // Production opens with foreign keys ON: the R3 cascade is enforced.
     db.exec('PRAGMA foreign_keys = ON;');
     const repo = wrapReal(db);

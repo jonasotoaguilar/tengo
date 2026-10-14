@@ -170,6 +170,8 @@ export function normalizeItemFilter(
 interface ItemRow {
   item_id: number;
   item_name: string;
+  low_stock_threshold: number | null;
+  barcode: string | null;
   item_created_at: string;
 }
 
@@ -180,6 +182,7 @@ interface StockRow {
   location_name: string;
   location_address: string | null;
   location_created_at: string;
+  expires_on: string | null;
 }
 
 /**
@@ -189,9 +192,12 @@ interface StockRow {
  * instead of silently dropping items. Note: `location_address` must be
  * present as `string | null`; a missing (`undefined`) address is
  * malformed, never coalesced to null. `quantity` must be a number (the
- * v4 CHECK guarantees positive integers in a real database).
+ * v4 CHECK guarantees positive integers in a real database). `expires_on`
+ * tolerates `undefined` (pre-v5 rows carry no alias) and reads as null;
+ * any other non-string, non-null value is malformed.
  */
 function requireStockRow(row: StockRow): StockRow {
+  const expiresOn = row.expires_on ?? null;
   if (
     typeof row.stock_item_id !== 'number' ||
     typeof row.quantity !== 'number' ||
@@ -199,7 +205,8 @@ function requireStockRow(row: StockRow): StockRow {
     typeof row.location_name !== 'string' ||
     (row.location_address !== null &&
       typeof row.location_address !== 'string') ||
-    typeof row.location_created_at !== 'string'
+    typeof row.location_created_at !== 'string' ||
+    (expiresOn !== null && typeof expiresOn !== 'string')
   ) {
     throw new StorageError(
       'item',
@@ -207,7 +214,7 @@ function requireStockRow(row: StockRow): StockRow {
       new Error(`malformed stock row: ${JSON.stringify(row)}`),
     );
   }
-  return row;
+  return { ...row, expires_on: expiresOn };
 }
 
 interface CategoryLinkRow {
@@ -218,13 +225,15 @@ interface CategoryLinkRow {
 }
 
 const ITEMS_SELECT =
-  'SELECT i.id AS item_id, i.name AS item_name, i.created_at AS item_created_at ' +
+  'SELECT i.id AS item_id, i.name AS item_name, ' +
+  'i.low_stock_threshold AS low_stock_threshold, i.barcode AS barcode, ' +
+  'i.created_at AS item_created_at ' +
   'FROM items i';
 
 const STOCK_JOIN_SELECT_BASE =
   'SELECT s.item_id AS stock_item_id, s.quantity AS quantity, ' +
   'l.id AS location_id, l.name AS location_name, l.address AS location_address, ' +
-  'l.created_at AS location_created_at ' +
+  'l.created_at AS location_created_at, s.expires_on AS expires_on ' +
   'FROM stock s JOIN locations l ON l.id = s.location_id';
 
 const CATEGORY_LINKS_SELECT_BASE =
@@ -508,11 +517,15 @@ export async function queryItems(
         locationId: level.location_id,
         location,
         quantity: level.quantity,
+        expiresOn: level.expires_on ?? null,
       };
     });
     details.push({
       id: row.item_id,
       name: row.item_name,
+      // Additive v5 columns read as null when absent.
+      lowStockThreshold: row.low_stock_threshold ?? null,
+      barcode: row.barcode ?? null,
       stock,
       totalQuantity: stock.reduce((sum, level) => sum + level.quantity, 0),
       categoryIds,

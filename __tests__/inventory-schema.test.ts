@@ -71,7 +71,7 @@ describe('inventory schema contract (v4 SQL encodes the approved rules)', () => 
           { locationId: 2, quantity: 3 },
         ],
       }).stock,
-    ).toEqual([{ locationId: 2, quantity: 3 }]);
+    ).toEqual([{ locationId: 2, quantity: 3, expiresOn: null }]);
   });
 
   test('no item shape validates with a bad location reference', () => {

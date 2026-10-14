@@ -88,6 +88,12 @@ export const en = {
   itemFormErrorNameTooLong: 'Enter a name of 120 characters or fewer.',
   itemFormErrorQuantityInvalid: 'Enter a whole number of 0 or more.',
   itemFormErrorQuantityTooLarge: 'Enter a quantity of 999999 or less.',
+  itemFormErrorLowStockThresholdInvalid: 'Enter a whole number of 0 or more.',
+  itemFormErrorLowStockThresholdTooLarge:
+    'Enter a threshold of 999999 or less.',
+  itemFormErrorBarcodeInvalid:
+    'Enter a valid barcode (4-64 letters, numbers, ".", "-" or "_").',
+  itemFormErrorExpiresOnInvalid: 'Enter a valid expiry date (YYYY-MM-DD).',
   itemFormErrorLocationRequired: 'Choose or create a location.',
   itemFormErrorLocationNameTooLong:
     'Enter a location name of 80 characters or fewer.',
@@ -223,6 +229,13 @@ export const es: typeof en = {
   itemFormErrorNameTooLong: 'Escribe un nombre de 120 caracteres o menos.',
   itemFormErrorQuantityInvalid: 'Escribe un número entero de 0 o más.',
   itemFormErrorQuantityTooLarge: 'Escribe una cantidad de 999999 o menos.',
+  itemFormErrorLowStockThresholdInvalid: 'Escribe un número entero de 0 o más.',
+  itemFormErrorLowStockThresholdTooLarge:
+    'Escribe un umbral de 999999 o menos.',
+  itemFormErrorBarcodeInvalid:
+    'Escribe un código válido (4-64 letras, números, ".", "-" u "_").',
+  itemFormErrorExpiresOnInvalid:
+    'Escribe una fecha de caducidad válida (AAAA-MM-DD).',
   itemFormErrorLocationRequired: 'Elige o crea una ubicación.',
   itemFormErrorLocationNameTooLong:
     'Escribe un nombre de ubicación de 80 caracteres o menos.',

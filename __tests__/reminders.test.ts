@@ -383,3 +383,87 @@ describe('useReminders with a denied permission', () => {
     expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
   });
 });
+
+describe('useReminders after an inventory import', () => {
+  // Import replaces every id, so the pre-import inventory's scheduled
+  // expiry keys are orphans: they must cancel, and the imported
+  // inventory's own low-stock pings and expiry schedules must fire.
+  const prevDetail = () =>
+    detailWith({
+      id: 1,
+      name: 'Rice',
+      lowStockThreshold: 2,
+      totalQuantity: 5,
+      stock: [stockRow(10, 5, '2030-04-15')],
+    });
+  const nextDetail = () =>
+    detailWith({
+      id: 7,
+      name: 'Rice',
+      lowStockThreshold: 2,
+      totalQuantity: 1,
+      stock: [stockRow(20, 1, '2031-06-01')],
+    });
+
+  test('stale keys cancel and imported keys schedule', async () => {
+    const { result } = await renderReminders();
+    await waitFor(() => expect(result.current.permission).toBe('granted'));
+    Notifications.scheduleNotificationAsync.mockClear();
+    Notifications.cancelScheduledNotificationAsync.mockClear();
+
+    await expect(
+      result.current.afterImport([prevDetail()], [nextDetail()]),
+    ).resolves.toBe('handled');
+    // The pre-import row key cancels: it belongs to an id that no
+    // longer exists after the wipe.
+    expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith(
+      'tengo-expiry-1-10',
+    );
+    // The imported low item pings once (first sighting at the threshold).
+    const immediates =
+      Notifications.scheduleNotificationAsync.mock.calls.filter(
+        ([request]) => (request as { trigger: unknown }).trigger === null,
+      );
+    expect(immediates).toHaveLength(1);
+    expect(
+      (immediates[0][0] as { content: { body: string } }).content.body,
+    ).toMatch(/Rice/);
+    // The imported expiry row schedules under its own new key.
+    const dated = Notifications.scheduleNotificationAsync.mock.calls.find(
+      ([request]) =>
+        (request as { identifier?: string }).identifier === 'tengo-expiry-7-20',
+    );
+    expect(dated).toBeTruthy();
+  });
+
+  test('an empty import cancels stale keys and schedules nothing', async () => {
+    const { result } = await renderReminders();
+    await waitFor(() => expect(result.current.permission).toBe('granted'));
+    Notifications.scheduleNotificationAsync.mockClear();
+    Notifications.cancelScheduledNotificationAsync.mockClear();
+
+    await expect(result.current.afterImport([prevDetail()], [])).resolves.toBe(
+      'handled',
+    );
+    expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith(
+      'tengo-expiry-1-10',
+    );
+    expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+  });
+
+  test('denied permission touches nothing and resolves skipped', async () => {
+    denyPermission();
+    const { result } = await renderReminders();
+    await waitFor(() => expect(result.current.permission).toBe('denied'));
+    Notifications.scheduleNotificationAsync.mockClear();
+    Notifications.cancelScheduledNotificationAsync.mockClear();
+
+    await expect(
+      result.current.afterImport([prevDetail()], [nextDetail()]),
+    ).resolves.toBe('skipped');
+    expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+    expect(
+      Notifications.cancelScheduledNotificationAsync,
+    ).not.toHaveBeenCalled();
+  });
+});

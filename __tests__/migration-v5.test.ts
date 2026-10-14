@@ -138,21 +138,32 @@ function makeRunnerFake(version: number, failOn?: RegExp) {
 }
 
 describe('migration 5 ladder', () => {
-  test('schema version is 5 with migrations 1-5', () => {
-    expect(SCHEMA_VERSION).toBe(5);
-    expect(Object.keys(MIGRATIONS).sort()).toEqual(['1', '2', '3', '4', '5']);
+  test('schema version is 6 with migrations 1-6', () => {
+    expect(SCHEMA_VERSION).toBe(6);
+    expect(Object.keys(MIGRATIONS).sort()).toEqual([
+      '1',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+    ]);
   });
 
-  test('v4 database has only migration 5 pending', () => {
-    expect(getPendingMigrations(4)).toEqual([5]);
+  test('v5 database has only migration 6 pending', () => {
+    expect(getPendingMigrations(5)).toEqual([6]);
   });
 
-  test('fresh database has migrations 1-5 pending in order', () => {
-    expect(getPendingMigrations(0)).toEqual([1, 2, 3, 4, 5]);
+  test('v4 database has migrations 5 and 6 pending in order', () => {
+    expect(getPendingMigrations(4)).toEqual([5, 6]);
   });
 
-  test('migrated database (version 5) has nothing pending', () => {
-    expect(getPendingMigrations(5)).toEqual([]);
+  test('fresh database has migrations 1-6 pending in order', () => {
+    expect(getPendingMigrations(0)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  test('migrated database (version 6) has nothing pending', () => {
+    expect(getPendingMigrations(6)).toEqual([]);
   });
 });
 
@@ -204,11 +215,13 @@ describe('migration 5 preserves v2/v3/v4 (existing behavior still holds)', () =>
 });
 
 describe('migration 5 on real SQLite (empty and populated v4)', () => {
-  test('empty v4 migrates to v5 with nullable columns defaulting to NULL', async () => {
+  test('empty v4 migrates past v5 with nullable columns defaulting to NULL', async () => {
     const db = new DatabaseSync(':memory:');
     try {
       await bringToCurrentSchema(db);
-      expect(userVersionReal(db)).toBe(5);
+      // The shared ladder now ends at v6 (U11 address index adds no
+      // columns, so the v5 column shape below still holds exactly).
+      expect(userVersionReal(db)).toBe(6);
       const itemCols = tableInfo(db, 'items');
       const byName = new Map(itemCols.map((c) => [c.name, c]));
       expect([...byName.keys()]).toEqual([
@@ -427,13 +440,14 @@ describe('migration 5 runner path (mocked native boundary)', () => {
     const { db, execCalls, events, getVersion } = makeRunnerFake(4);
     await initializeDatabase(db);
     expect(execCalls).toContain(MIGRATIONS[5]);
-    expect(getVersion()).toBe(5);
-    // The additive path is what runs: the initial enable plus exactly one
-    // transaction, and no FK-off envelope (only v4 toggles).
-    expect(events).toEqual(['fk-on', 'begin', 'commit']);
+    // The ladder now continues to v6 (also additive): v5 still applies
+    // on its own single-transaction path with no FK toggling of its own.
+    expect(getVersion()).toBe(6);
+    expect(events).toEqual(['fk-on', 'begin', 'commit', 'begin', 'commit']);
     expect(execCalls).toContainEqual(
       expect.stringMatching(/PRAGMA\s+user_version\s*=\s*5/i),
     );
+    expect(execCalls).toContain(MIGRATIONS[6]);
   });
 
   test('a failing v5 rolls back without recording version 5', async () => {

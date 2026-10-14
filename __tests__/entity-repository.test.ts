@@ -527,6 +527,106 @@ describe('entity name uniqueness (S11)', () => {
   });
 });
 
+describe('location address uniqueness (U11)', () => {
+  test('U11 RED: duplicate address on create is rejected with a typed conflict', async () => {
+    const f = makeFakeDb();
+    await createLocation(f.db, { name: 'Casa', address: 'Main Street 12' });
+    const failure = (await createLocation(f.db, {
+      name: 'Other',
+      address: 'Main Street 12',
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'location' });
+    expect(failure.message).not.toContain('UNIQUE');
+    expect(failure.message).not.toContain('SQLITE_CONSTRAINT');
+    expect(await listLocations(f.db)).toHaveLength(1);
+  });
+
+  test('U11 RED: address uniqueness folds trim, case, and accents', async () => {
+    const f = makeFakeDb();
+    await createLocation(f.db, {
+      name: 'Casa',
+      address: 'Cállé Mayor 12',
+    });
+    await expect(
+      createLocation(f.db, { name: 'Other', address: 'calle mayor 12' }),
+    ).rejects.toBeInstanceOf(EntityConflictError);
+    await expect(
+      createLocation(f.db, {
+        name: 'Third',
+        address: '  CALLE MAYOR 12  ',
+      }),
+    ).rejects.toBeInstanceOf(EntityConflictError);
+    expect(await listLocations(f.db)).toHaveLength(1);
+  });
+
+  test('U11 RED: conflicting address on update is rejected and the row survives', async () => {
+    const f = makeFakeDb();
+    const a = await createLocation(f.db, {
+      name: 'Casa',
+      address: 'Main Street 12',
+    });
+    const b = await createLocation(f.db, { name: 'Garage' });
+    await expect(
+      updateLocation(f.db, b.id, {
+        name: 'Garage',
+        address: ' main STREET 12 ',
+      }),
+    ).rejects.toMatchObject({ code: 'conflict', entity: 'location' });
+    expect((await getLocation(f.db, b.id)).address).toBeNull();
+    expect(a.id).toBeGreaterThan(0);
+  });
+
+  test('U11 RED: two locations with no address both succeed', async () => {
+    const f = makeFakeDb();
+    const a = await createLocation(f.db, { name: 'Casa' });
+    const b = await createLocation(f.db, { name: 'Garage', address: null });
+    const c = await createLocation(f.db, { name: 'Shed', address: '   ' });
+    expect(await listLocations(f.db)).toHaveLength(3);
+    expect(a.address).toBeNull();
+    expect(b.address).toBeNull();
+    expect(c.address).toBeNull();
+  });
+
+  test('U11 RED: an update keeping its own address succeeds', async () => {
+    const f = makeFakeDb();
+    const loc = await createLocation(f.db, {
+      name: 'Casa',
+      address: 'Main Street 12',
+    });
+    const updated = await updateLocation(f.db, loc.id, {
+      name: 'Casa Nueva',
+      address: '  main street 12 ',
+    });
+    expect(updated).toMatchObject({
+      id: loc.id,
+      name: 'Casa Nueva',
+      address: 'main street 12',
+    });
+  });
+
+  test('U11 RED: a raw UNIQUE driver failure on the address index maps to conflict', async () => {
+    const f = makeFakeDb();
+    await createLocation(f.db, { name: 'Casa', address: 'Main Street 12' });
+    // Simulate the race the domain pre-check cannot see: the pre-check
+    // scan reports no rows while the driver rejects the write.
+    f.db.getAllAsync = jest.fn(async () => []);
+    f.failNextWith(
+      new Error(
+        "SQLite error: UNIQUE constraint failed: index 'idx_locations_address_norm' (code 2067 SQLITE_CONSTRAINT_UNIQUE)",
+      ),
+    );
+    const failure = (await createLocation(f.db, {
+      name: 'Other',
+      address: 'Main Street 12',
+    }).catch((e: unknown) => e)) as Error;
+    expect(failure).toBeInstanceOf(EntityConflictError);
+    expect(failure).toMatchObject({ code: 'conflict', entity: 'location' });
+    expect(failure.message).not.toContain('UNIQUE');
+    expect(failure.message).not.toContain('SQLITE_CONSTRAINT');
+  });
+});
+
 describe('T3 batched S11 uniqueness checks (RED: singular scan per name today)', () => {
   test('batch location check throws on the first stored collision after one scan', async () => {
     const f = makeFakeDb();

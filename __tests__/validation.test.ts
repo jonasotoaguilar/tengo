@@ -16,6 +16,7 @@
  * i18n resources carry the matching bilingual keys.
  */
 import {
+  normalizeAddressKey,
   normalizeBarcode,
   normalizeExpiresOn,
   normalizeLowStockThreshold,
@@ -216,6 +217,22 @@ describe('item and stock inputs carry the U2 fields', () => {
         stock: [{ locationId: 1, quantity: 1, expiresOn: 'soon' }],
       }),
     ).toThrow(ValidationError);
+  });
+});
+
+describe('address uniqueness key (U11)', () => {
+  test('the key folds trim, case, and accents like the name key', () => {
+    expect(normalizeAddressKey('Main Street 12')).toBe('main street 12');
+    expect(normalizeAddressKey('  Main Street 12  ')).toBe('main street 12');
+    expect(normalizeAddressKey('MAIN STREET 12')).toBe('main street 12');
+    expect(normalizeAddressKey('Calle Mayor 12')).toBe('calle mayor 12');
+    expect(normalizeAddressKey('Cállé Màyor 12')).toBe('calle mayor 12');
+  });
+
+  test('distinct addresses keep distinct keys', () => {
+    expect(normalizeAddressKey('Main Street 12')).not.toBe(
+      normalizeAddressKey('Main Street 13'),
+    );
   });
 });
 

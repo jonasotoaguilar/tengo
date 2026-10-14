@@ -13,6 +13,7 @@ import { MIGRATIONS } from '../src/db/migrations';
 import { validateItemInput } from '../src/inventory/validation';
 
 const V4_SQL = MIGRATIONS[4];
+const V6_SQL = MIGRATIONS[6];
 
 describe('inventory schema contract (v4 SQL encodes the approved rules)', () => {
   test('items are the identity-only catalog: id, name, created_at', () => {
@@ -87,6 +88,28 @@ describe('inventory schema contract (v4 SQL encodes the approved rules)', () => 
         stock: [{ locationId: null as unknown as number, quantity: 1 }],
       }),
     ).toThrow();
+  });
+
+  describe('address uniqueness contract (U11: v6 SQL encodes the adopted rule)', () => {
+    test('v6 carries a partial unique index over the normalized address', () => {
+      expect(V6_SQL).toMatch(/CREATE UNIQUE INDEX/i);
+      expect(V6_SQL).toMatch(/idx_locations_address_norm/i);
+      expect(V6_SQL).toMatch(
+        /locations\s*\(\s*lower\s*\(\s*trim\s*\(\s*address\s*\)\s*\)\s*\)/i,
+      );
+      // Partial: NULL addresses are excluded, so many address-less
+      // locations stay legal.
+      expect(V6_SQL).toMatch(/WHERE\s+address\s+IS\s+NOT\s+NULL/i);
+    });
+
+    test('v6 blocks on duplicates instead of rewriting them', () => {
+      expect(V6_SQL).toMatch(/RAISE\s*\(\s*ABORT/i);
+      expect(V6_SQL).toMatch(/Migration to schema version 6 blocked/);
+      expect(V6_SQL).not.toMatch(/DROP TABLE/i);
+      expect(V6_SQL).not.toMatch(/DELETE FROM/i);
+      expect(V6_SQL).not.toMatch(/UPDATE\s+locations\s+SET/i);
+      expect(V6_SQL).not.toMatch(/INSERT INTO\s+locations/i);
+    });
   });
 
   test('duplicate locations in one payload are rejected', () => {

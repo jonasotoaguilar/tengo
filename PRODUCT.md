@@ -76,7 +76,9 @@ Confirmed foundation (implemented foundation, see Evidence and ROADMAP.md baseli
 
 - App shell with translated readiness screen and DB bootstrap
   (`App.tsx`).
-- Versioned SQLite migrations, currently schema version 4 (v4 splits
+- Versioned SQLite migrations, currently schema version 6 (v6 adds
+  the partial unique index on the normalized location address; v5 added
+  the barcode/expiry/reminder columns; v4 splits
   the catalog from per-location stock; v3 added
   the unique indexes on the folded entity name):
   the `items` catalog (`id`, `name`, `created_at`) plus
@@ -86,7 +88,7 @@ Confirmed foundation (implemented foundation, see Evidence and ROADMAP.md baseli
   and the `item_categories` join.
   See `src/db/migrations.ts`. The M1/M2 native gates passed on
   Android on the previous model (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
-  on v4 the schema is verified by 36 checks against real host SQLite, and
+  on v6 the schema is verified by 66 checks against real host SQLite, and
   the M1/M2 gate scripts themselves have not been re-run on a device.
 - English/Spanish i18n with device-locale detection and English
   fallback. See `src/i18n/`.
@@ -96,8 +98,11 @@ Confirmed foundation (implemented foundation, see Evidence and ROADMAP.md baseli
   proves one launch reaches readiness; it does not prove restart
   persistence or locale detection (see
   [Maestro boundary](docs/testing.md#maestro-boundary)).
-- Source-only GitHub releases; no signing, no EAS, no store upload
-  (see [quality commands](docs/development.md#quality-commands)).
+- Source-only GitHub releases (see [quality commands](docs/development.md#quality-commands)).
+  Distribution preparation exists (`eas.json`, release fields in
+  `app.json`, `docs/distribution.md`); no EAS project is linked,
+  nothing has been built by EAS, nothing has been uploaded, and
+  signing is undecided.
 
 Approved MVP scope (confirmed by the user; repository APIs implemented, product UI pending M3/M4):
 
@@ -162,7 +167,13 @@ without claiming approval):
    implemented on 2026-10-12. Deleting a location cascades its stock
    rows and never deletes items; the confirmation states the impact
    (how many existencias); `LocationInUseError` no longer exists.
-   Address uniqueness remains unimplemented. The managed-location UI was
+   Address uniqueness was adopted and is implemented: the domain layer
+   rejects a duplicate address after trim/accent/case normalization with a
+   typed conflict, and the database enforces the case/whitespace part with
+   the v6 partial unique index (NULL addresses never collide, so many
+   address-less locations stay legal). A database that already holds
+   duplicate addresses refuses to migrate instead of being rewritten.
+   The managed-location UI was
    adopted by the user and implemented on 2026-10-12 and is now observed on
    the device through the entity flow, which exercises create, rename and
    delete with its impact confirmation; TalkBack speech on that screen
@@ -179,18 +190,27 @@ without claiming approval):
    adopted and implemented on 2026-10-12, and the contrast and
    placeholder semantics in DESIGN.md are implemented and guarded by
    `__tests__/contrast-floor.test.tsx`. The managed-entity screen was
-   adopted by the user and implemented on 2026-10-12; address uniqueness
-   was never adopted and is the one item in this area still awaiting a
-   user decision.
+   adopted by the user and implemented on 2026-10-12, and address
+   uniqueness was adopted and is implemented (domain check plus the v6
+   partial unique index, with a loud migration block instead of a silent
+   rewrite when duplicates already exist), so no adopted proposal remains
+   unimplemented in this area.
 
 ## Brand Commitments
 
-The product name is Tengo. No visual identity, palette, typeface,
-icon set, voice-and-tone guide, or marketing claim has been confirmed.
-DESIGN.md proposes a direction; the token values and contrast floors it
+The product name is Tengo. The token values and contrast floors DESIGN.md
 records are approved and implemented (its section 5, guarded by
-`__tests__/contrast-floor.test.tsx`), while no other element of it is a
-brand commitment until the user approves it.
+`__tests__/contrast-floor.test.tsx`). Under the user's blanket order, this
+phase additionally chooses and ships a first identity: an app icon, an
+Android adaptive icon (foreground, background and monochrome), a splash
+screen and a favicon, all rendered deterministically in-repo by
+`scripts/generate-assets.mjs` (`npm run generate:assets`) from the approved
+token palette in `src/theme/tokens.ts` — a light-accent (`#2F6B3A`) tile
+carrying an `accentOn` bin-and-shelves mark, with the splash mark drawn in
+accent over the light `surface` (`#F4F2EC`). Still unconfirmed: no designer
+has approved the mark, and there is no voice-and-tone guide, no marketing
+claim and no typography decision. DESIGN.md records the reasoning and the
+palette derivation.
 
 ## Evidence on Hand
 
@@ -202,8 +222,9 @@ brand commitment until the user approves it.
   testIDs); the default screen is still readiness and the fixture
   branches are DEV-only.
 - `src/db/index.ts`, `src/db/migrations.ts`: init logic,
-  `DATABASE_NAME`, `SCHEMA_VERSION = 4`, v4
-  catalog-plus-stock schema (earlier shapes retained in the migration ladder).
+  `DATABASE_NAME`, `SCHEMA_VERSION = 6`, v6
+  catalog-plus-stock schema with the partial unique address index
+  (earlier shapes retained in the migration ladder).
 - `src/i18n/index.ts`, `src/i18n/resources.ts`: `en`/`es` resources,
   `resolveLanguage`, `detectDeviceLanguage`.
 - `jest.setup.ts`, `__tests__/`: mocked SQL/native boundary and
@@ -215,9 +236,11 @@ brand commitment until the user approves it.
 - `odd/tasks/product-roadmap-design.md`: the planning task that
   authorizes these documents; documentation only, no implementation.
 - Absences future work must not fabricate: no Add/Edit inventory
-  UI, no App-wired list/search, no store listing, no user
+  UI, no App-wired list/search, no store submission, no user
   research or testimonials. (Repository and bounded-query logic
-  exist in `src/inventory/`; they are not product UI.)
+  exist in `src/inventory/`; they are not product UI. A store
+  listing *draft* exists in `docs/distribution.md`; it is not a
+  submitted listing.)
 
 ## Product Principles
 

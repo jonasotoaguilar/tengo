@@ -10,7 +10,21 @@ mocked (`jest.setup.ts`: `expo-sqlite`, `expo-localization`).
 Suites cover migrations, DB init, M1 domain validation, M2
 location/category/item repositories, the P3a `queryItems` filter,
 the v2 schema contract, i18n (`en`/`es`), the App-wired P3b2
-container, and the P3b1 controlled `InventoryList`.
+container, the P3b1 controlled `InventoryList`, and the U6
+versioned export/import round trip (`__tests__/transfer.test.ts`
+plus the container entry-point suite: file bytes, typed refusals,
+single-transaction atomicity, and the share/pick wiring, all against
+in-memory fakes with the `expo-sharing`/`expo-document-picker`/
+`expo-file-system` boundary injected). A staged import applies only after an
+explicit confirmation dialog naming the replacement impact and its
+irreversibility (same destructive-confirmation pattern as the delete
+dialogs); cancelling the dialog applies nothing and stays silent.
+Known limitations, stated not waived: the file carries names,
+quantities, barcodes, thresholds and expiries but not `created_at` or
+row ids — ids are database-local by design, so an imported database
+assigns new ones and pre-import scheduled reminder keys are cancelled
+and re-homed on confirm. A hand-edited blank or space-padded expiry is
+normalized (blank to none, padding trimmed) rather than rejected.
 
 Unit tests prove SQL structure, error mapping, and transaction
 scoping only. They never touch a real database and are never cited
@@ -761,3 +775,41 @@ against the installed debug build; responsive Android checks
 device pass with actual observations and remain pending. The P5b
 performance pass above has now been measured on device; its search
 check missed its proposed budget and is recorded there as FAIL.
+
+## Phase 2 device verification (attempted, blocked on 2026-10-14)
+
+Phase 2 (schema v6, export/import, identity, distribution preparation) has **no
+device observation**. The attempt was made from
+`feat/product-readiness-05-device-verification` at the tracker tip `9918c02`, and
+it stopped at the host, before any flow ran.
+
+- **The emulator cannot start on this host.** `sv-home` is not in the `kvm`
+  group: `/etc/group` reads `kvm:x:993:` with no members, and `/dev/kvm` is
+  `crw-rw---- root kvm`. `sudo` requires a password, so the group cannot be
+  granted from here. The AVD fails with `ProbeKVM: This user doesn't have
+  permissions to use KVM (/dev/kvm)` followed by `x86_64 emulation currently
+  requires hardware acceleration!` — an x86_64 AVD cannot boot without it.
+  Measured, not assumed.
+- **A workaround exists, measured to the point where it costs the host.** `/dev/kvm`
+  is usable inside a root container (`docker run --device /dev/kvm alpine … ` opened
+  it successfully), the emulator binary needs only `libX11.so.6` beyond its bundled
+  libraries (`ldd /sdk/emulator/emulator`), and the AVD can be cloned outside the
+  home directory so the original stays untouched. That path is a real native
+  rebuild: `expo prebuild` plus `assembleDebug` compiles the React Native C++
+  toolchain and saturated this host's CPU, so the run was stopped on the
+  maintainer's instruction and produced no APK. Nothing was claimed from it.
+- **Unblocking it** takes either `sudo usermod -aG kvm "$USER"` followed by a
+  re-login (or `sudo setfacl -m u:"$USER":rw /dev/kvm` for the current session),
+  and then the CI path from `.github/workflows/android-e2e.yml`:
+  `npx expo prebuild --platform android --non-interactive`,
+  `./android/gradlew -p android assembleDebug`, `adb install -r` the APK, boot the
+  AVD for the run, and drive the flows with `scripts/run-maestro.sh`. With kvm
+  group membership the boot is 1–2 minutes, so the emulator is booted only for
+  the run and killed right after it.
+
+**Still unverified because of this (stated, not passed):** the v5 → v6 migration
+and the duplicate-address guard on a real device; the real share sheet and
+document picker; a cancelled document pick; TalkBack speech and the accessibility
+tree of the transfer controls, the import confirmation dialog and the new address
+field; local reminder delivery after an import; how the launcher renders the new
+icon; and the M1/M2 gate scripts re-run on a device.

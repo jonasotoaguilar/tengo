@@ -138,6 +138,25 @@ export function normalizeNameKey(value: string): string {
     .toLowerCase();
 }
 
+/**
+ * Comparison key for U11 address uniqueness: trim, Unicode NFD, strip
+ * combining marks, then lowercase. `Cállé Mayor 12` and
+ * `calle mayor 12` share a key, and ` Main St ` shares one with
+ * `Main St`. Comparison-only: stored addresses keep their verbatim
+ * text. The database v6 index enforces the case/whitespace part
+ * (`lower(trim(address))`); SQLite cannot fold accents, so the accent
+ * part is enforced here in the domain layer, which is the only writer
+ * path that can see both spellings. Same discipline as
+ * `normalizeNameKey`; takes an already-normalized (non-null) address.
+ */
+export function normalizeAddressKey(value: string): string {
+  return value
+    .trim()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase();
+}
+
 /** Normalize the optional address: any blank form becomes `null`. */
 export function normalizeAddress(value: unknown): string | null {
   if (value === undefined || value === null) {

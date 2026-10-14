@@ -2077,3 +2077,525 @@ describe('U4 form side (edit carries threshold and expiry into the draft)', () =
     await cleanup();
   });
 });
+
+describe('U6 export/import entry points (transfer)', () => {
+  const transferDoc = JSON.stringify({
+    format: 'tengo-inventory',
+    version: 1,
+    exportedAt: '2026-10-14T00:00:00.000Z',
+    locations: [{ name: 'Pantry', address: null }],
+    categories: [{ name: 'Bulk' }],
+    items: [
+      {
+        name: 'Rice',
+        barcode: null,
+        lowStockThreshold: null,
+        categories: ['Bulk'],
+        stock: [{ location: 'Pantry', quantity: 2, expiresOn: null }],
+      },
+    ],
+  });
+
+  interface TransferTestDeps {
+    writeExportFile: jest.Mock;
+    shareExportFile: jest.Mock;
+    pickImportFile: jest.Mock;
+    buildDocument: jest.Mock;
+    applyDocument: jest.Mock;
+    listDetails: jest.Mock;
+  }
+
+  const TransferNotifications = require('expo-notifications') as {
+    getPermissionsAsync: jest.Mock;
+    requestPermissionsAsync: jest.Mock;
+    scheduleNotificationAsync: jest.Mock;
+    cancelScheduledNotificationAsync: jest.Mock;
+  };
+
+  function transferDeps(
+    overrides: Partial<TransferTestDeps> = {},
+  ): TransferTestDeps {
+    return {
+      writeExportFile: jest.fn(async () => 'file:///export.json'),
+      shareExportFile: jest.fn(async () => {}),
+      pickImportFile: jest.fn(async () => transferDoc),
+      buildDocument: jest.fn(async () => JSON.parse(transferDoc)),
+      applyDocument: jest.fn(async () => ({
+        locations: 1,
+        categories: 1,
+        items: 1,
+        stockRows: 1,
+      })),
+      listDetails: jest.fn(async () => []),
+      ...overrides,
+    };
+  }
+
+  // Reminder-native stubs are hermetic per test: the wiring test arms a
+  // grant, and this reset returns every transfer test to the bare
+  // (permission-undetermined, silent) boundary afterwards.
+  beforeEach(() => {
+    TransferNotifications.getPermissionsAsync.mockReset();
+    TransferNotifications.requestPermissionsAsync.mockReset();
+    TransferNotifications.scheduleNotificationAsync.mockReset();
+    TransferNotifications.cancelScheduledNotificationAsync.mockReset();
+    TransferNotifications.scheduleNotificationAsync.mockResolvedValue(
+      'scheduled-id',
+    );
+    TransferNotifications.cancelScheduledNotificationAsync.mockResolvedValue(
+      undefined,
+    );
+  });
+
+  async function renderTransfer(deps: TransferTestDeps) {
+    return render(
+      <I18nextProvider i18n={i18n}>
+        <InventoryContainer enableMutations transferDeps={deps} />
+      </I18nextProvider>,
+    );
+  }
+
+  test('export and import entries render enabled once the handle is ready', async () => {
+    const deps = transferDeps();
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderTransfer(deps);
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+    const exportButton = screen.getByTestId('inventory-export');
+    const importButton = screen.getByTestId('inventory-import');
+    expect(exportButton).not.toBeDisabled();
+    expect(importButton).not.toBeDisabled();
+    expect(exportButton.props.accessibilityRole).toBe('button');
+    expect(importButton.props.accessibilityRole).toBe('button');
+    expect(String(exportButton.props.accessibilityLabel ?? '')).toMatch(
+      /export/i,
+    );
+    expect(String(importButton.props.accessibilityLabel ?? '')).toMatch(
+      /import/i,
+    );
+    await cleanup();
+  });
+
+  test('export writes the versioned file, shares it, and shows the exported notice', async () => {
+    const deps = transferDeps();
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderTransfer(deps);
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+
+    await fireEvent.press(screen.getByTestId('inventory-export'));
+    await waitFor(() => expect(deps.buildDocument).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(deps.shareExportFile).toHaveBeenCalledTimes(1));
+    // The shared file is the versioned JSON document.
+    const written = String(deps.writeExportFile.mock.calls[0][1] ?? '');
+    expect(JSON.parse(written)).toMatchObject({
+      format: 'tengo-inventory',
+      version: 1,
+    });
+    expect(deps.shareExportFile.mock.calls[0][0]).toBe('file:///export.json');
+    expect(await screen.findByTestId('inventory-notice')).toBeTruthy();
+    expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+      'Inventory exported.',
+    );
+    await cleanup();
+  });
+
+  test('import applies the picked file, refreshes the list, and shows the imported notice', async () => {
+    const deps = transferDeps();
+    const fake = makeFakeDb();
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderTransfer(deps);
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+    const readsBefore = fake.getAllAsync.mock.calls.length;
+
+    await fireEvent.press(screen.getByTestId('inventory-import'));
+    await waitFor(() => expect(deps.pickImportFile).toHaveBeenCalledTimes(1));
+    // U6 destructive-action gate: the staged file applies only on confirm.
+    await screen.findByTestId('inventory-import-confirm-dialog');
+    await fireEvent.press(
+      screen.getByTestId('inventory-import-confirm-confirm'),
+    );
+    await waitFor(() => expect(deps.applyDocument).toHaveBeenCalledTimes(1));
+    expect(deps.applyDocument.mock.calls[0][1]).toMatchObject({
+      format: 'tengo-inventory',
+      version: 1,
+    });
+    // The post-import refresh re-reads through the same handle.
+    await waitFor(() =>
+      expect(fake.getAllAsync.mock.calls.length).toBeGreaterThan(readsBefore),
+    );
+    expect(await screen.findByTestId('inventory-notice')).toBeTruthy();
+    expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+      'Inventory imported.',
+    );
+    await cleanup();
+  });
+
+  test('a refused import shows the typed reason and leaves the list alone', async () => {
+    const deps = transferDeps({
+      pickImportFile: jest.fn(async () => '{"format":"tengo-inventory"}'),
+    });
+    const fake = makeFakeDb();
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderTransfer(deps);
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+
+    await fireEvent.press(screen.getByTestId('inventory-import'));
+    await waitFor(() => expect(deps.pickImportFile).toHaveBeenCalledTimes(1));
+    expect(deps.applyDocument).not.toHaveBeenCalled();
+    expect(await screen.findByTestId('inventory-notice')).toBeTruthy();
+    expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+      'This file is not a valid inventory export.',
+    );
+    // The ready list stays visible: no loading, no error.
+    expect(screen.queryByTestId('inventory-loading')).toBeNull();
+    expect(screen.getByTestId('inventory-count')).toBeTruthy();
+    await cleanup();
+  });
+
+  test('a cancelled pick is silent: no notice, no apply', async () => {
+    const deps = transferDeps({
+      pickImportFile: jest.fn(async () => null),
+    });
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderTransfer(deps);
+    await settle();
+    expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+
+    await fireEvent.press(screen.getByTestId('inventory-import'));
+    await waitFor(() => expect(deps.pickImportFile).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(deps.applyDocument).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('inventory-notice')).toBeNull();
+    await cleanup();
+  });
+
+  test('the transfer entries stay disabled without opt-in mutations', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderContainer();
+    await settle();
+    const exportButton = await screen.findByTestId('inventory-export');
+    const importButton = screen.getByTestId('inventory-import');
+    expect(exportButton).toBeDisabled();
+    expect(importButton).toBeDisabled();
+    expect(String(exportButton.props.accessibilityHint ?? '')).toMatch(
+      /not available/i,
+    );
+    await cleanup();
+  });
+
+  describe('import confirmation (destructive-action gate)', () => {
+    test('a confirmed import cancels stale reminder keys and schedules the imported ones', async () => {
+      // Import replaces every id: the pre-import row key must cancel
+      // and the imported rows must schedule under their new ids.
+      const prevDetail = {
+        id: 1,
+        name: 'Rice',
+        lowStockThreshold: 2,
+        barcode: null,
+        stock: [
+          {
+            locationId: 10,
+            location: {
+              id: 10,
+              name: 'Pantry',
+              address: null,
+              created_at: 'loc-created-10',
+            },
+            quantity: 5,
+            expiresOn: '2030-04-15',
+          },
+        ],
+        totalQuantity: 5,
+        categoryIds: [],
+        categories: [],
+        created_at: 'created-1',
+      };
+      const nextDetail = {
+        id: 7,
+        name: 'Rice',
+        lowStockThreshold: 2,
+        barcode: null,
+        stock: [
+          {
+            locationId: 20,
+            location: {
+              id: 20,
+              name: 'Cellar',
+              address: null,
+              created_at: 'loc-created-20',
+            },
+            quantity: 1,
+            expiresOn: '2031-06-01',
+          },
+        ],
+        totalQuantity: 1,
+        categoryIds: [],
+        categories: [],
+        created_at: 'created-7',
+      };
+      const deps = transferDeps({
+        listDetails: jest
+          .fn()
+          .mockResolvedValueOnce([prevDetail])
+          .mockResolvedValueOnce([nextDetail]),
+      });
+      TransferNotifications.getPermissionsAsync.mockResolvedValue({
+        granted: true,
+        canAskAgain: true,
+      });
+      TransferNotifications.requestPermissionsAsync.mockResolvedValue({
+        granted: true,
+        canAskAgain: true,
+      });
+      initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+      await renderTransfer(deps);
+      await settle();
+      await waitFor(() =>
+        expect(TransferNotifications.getPermissionsAsync).toHaveBeenCalled(),
+      );
+      await act(async () => {});
+      await act(async () => {});
+      TransferNotifications.scheduleNotificationAsync.mockClear();
+      TransferNotifications.cancelScheduledNotificationAsync.mockClear();
+      expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+
+      await fireEvent.press(screen.getByTestId('inventory-import'));
+      await screen.findByTestId('inventory-import-confirm-dialog');
+      await fireEvent.press(
+        screen.getByTestId('inventory-import-confirm-confirm'),
+      );
+      await waitFor(() => expect(deps.applyDocument).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(
+          TransferNotifications.cancelScheduledNotificationAsync,
+        ).toHaveBeenCalledWith('tengo-expiry-1-10'),
+      );
+      const scheduled =
+        TransferNotifications.scheduleNotificationAsync.mock.calls;
+      expect(
+        scheduled.some(
+          ([request]) => (request as { trigger: unknown }).trigger === null,
+        ),
+      ).toBe(true);
+      expect(
+        scheduled.some(
+          ([request]) =>
+            (request as { identifier?: string }).identifier ===
+            'tengo-expiry-7-20',
+        ),
+      ).toBe(true);
+      await cleanup();
+    });
+
+    test('a picker failure surfaces the import-failed notice while cancel stays silent', async () => {
+      const deps = transferDeps({
+        pickImportFile: jest.fn(async () => {
+          throw new Error('document picker blew up');
+        }),
+      });
+      initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+      await renderTransfer(deps);
+      await settle();
+      expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+
+      await fireEvent.press(screen.getByTestId('inventory-import'));
+      await waitFor(() => expect(deps.pickImportFile).toHaveBeenCalledTimes(1));
+      // A throwing picker is a failure (localized notice), never
+      // silence and never raw text; nothing is staged or applied.
+      expect(await screen.findByTestId('inventory-notice')).toBeTruthy();
+      expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+        'Could not import the inventory. Please try again.',
+      );
+      expect(
+        screen.queryByTestId('inventory-import-confirm-dialog'),
+      ).toBeNull();
+      expect(deps.applyDocument).not.toHaveBeenCalled();
+      await cleanup();
+    });
+
+    test('a staged import asks for confirmation naming the impact before applying', async () => {
+      const deps = transferDeps();
+      initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+      await renderTransfer(deps);
+      await settle();
+      expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+
+      await fireEvent.press(screen.getByTestId('inventory-import'));
+      await waitFor(() => expect(deps.pickImportFile).toHaveBeenCalledTimes(1));
+      // The file is staged, not applied: no write, no notice yet.
+      const dialog = await screen.findByTestId(
+        'inventory-import-confirm-dialog',
+      );
+      expect(dialog).toBeTruthy();
+      expect(dialog.props.accessibilityRole).toBe('alert');
+      expect(
+        screen.getByTestId('inventory-import-confirm-title'),
+      ).toHaveTextContent('Replace your inventory?');
+      expect(
+        screen.getByTestId('inventory-import-confirm-message'),
+      ).toHaveTextContent(/cannot be undone/);
+      // Singular counts read correctly (the app's One/Other pattern).
+      expect(
+        screen.getByTestId('inventory-import-confirm-message'),
+      ).toHaveTextContent(/1 location,/);
+      expect(
+        screen.getByTestId('inventory-import-confirm-message'),
+      ).toHaveTextContent(/1 category,/);
+      expect(
+        screen.getByTestId('inventory-import-confirm-message'),
+      ).toHaveTextContent(/1 item\./);
+      expect(deps.applyDocument).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('inventory-notice')).toBeNull();
+      await cleanup();
+    });
+
+    test('plural counts read correctly for many', async () => {
+      const pluralDoc = JSON.stringify({
+        format: 'tengo-inventory',
+        version: 1,
+        exportedAt: '2026-10-14T00:00:00.000Z',
+        locations: [
+          { name: 'Pantry', address: null },
+          { name: 'Cellar', address: null },
+        ],
+        categories: [{ name: 'Bulk' }, { name: 'Grains' }],
+        items: [
+          {
+            name: 'Rice',
+            barcode: null,
+            lowStockThreshold: null,
+            categories: ['Bulk'],
+            stock: [{ location: 'Pantry', quantity: 2, expiresOn: null }],
+          },
+          {
+            name: 'Beans',
+            barcode: null,
+            lowStockThreshold: null,
+            categories: ['Grains'],
+            stock: [{ location: 'Cellar', quantity: 1, expiresOn: null }],
+          },
+          {
+            name: 'Lentils',
+            barcode: null,
+            lowStockThreshold: null,
+            categories: [],
+            stock: [],
+          },
+        ],
+      });
+      const deps = transferDeps({
+        pickImportFile: jest.fn(async () => pluralDoc),
+      });
+      initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+      await renderTransfer(deps);
+      await settle();
+      expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+
+      await fireEvent.press(screen.getByTestId('inventory-import'));
+      await screen.findByTestId('inventory-import-confirm-dialog');
+      expect(
+        screen.getByTestId('inventory-import-confirm-message'),
+      ).toHaveTextContent(/2 locations,/);
+      expect(
+        screen.getByTestId('inventory-import-confirm-message'),
+      ).toHaveTextContent(/2 categories,/);
+      expect(
+        screen.getByTestId('inventory-import-confirm-message'),
+      ).toHaveTextContent(/3 items\./);
+      expect(deps.applyDocument).not.toHaveBeenCalled();
+      await cleanup();
+    });
+
+    test('confirming the dialog applies the whole staged file', async () => {
+      const deps = transferDeps();
+      const fake = makeFakeDb();
+      initializeDatabase.mockResolvedValueOnce(fake);
+      await renderTransfer(deps);
+      await settle();
+      expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+      const readsBefore = fake.getAllAsync.mock.calls.length;
+
+      await fireEvent.press(screen.getByTestId('inventory-import'));
+      await screen.findByTestId('inventory-import-confirm-dialog');
+      expect(deps.applyDocument).not.toHaveBeenCalled();
+
+      await fireEvent.press(
+        screen.getByTestId('inventory-import-confirm-confirm'),
+      );
+      await waitFor(() => expect(deps.applyDocument).toHaveBeenCalledTimes(1));
+      expect(deps.applyDocument.mock.calls[0][1]).toMatchObject({
+        format: 'tengo-inventory',
+        version: 1,
+      });
+      // The post-import refresh re-reads through the same handle.
+      await waitFor(() =>
+        expect(fake.getAllAsync.mock.calls.length).toBeGreaterThan(readsBefore),
+      );
+      expect(await screen.findByTestId('inventory-notice')).toBeTruthy();
+      expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+        'Inventory imported.',
+      );
+      expect(
+        screen.queryByTestId('inventory-import-confirm-dialog'),
+      ).toBeNull();
+      await cleanup();
+    });
+
+    test('cancelling the dialog applies nothing and leaves every count unchanged', async () => {
+      const deps = transferDeps();
+      const fake = makeFakeDb();
+      initializeDatabase.mockResolvedValueOnce(fake);
+      await renderTransfer(deps);
+      await settle();
+      expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+      const storedBefore = JSON.stringify(store);
+      const readsBefore = fake.getAllAsync.mock.calls.length;
+
+      await fireEvent.press(screen.getByTestId('inventory-import'));
+      await screen.findByTestId('inventory-import-confirm-dialog');
+      expect(deps.applyDocument).not.toHaveBeenCalled();
+
+      await fireEvent.press(
+        screen.getByTestId('inventory-import-confirm-cancel'),
+      );
+      await waitFor(() =>
+        expect(
+          screen.queryByTestId('inventory-import-confirm-dialog'),
+        ).toBeNull(),
+      );
+      // Refused confirmation: no apply, no notice, no refresh, no writes —
+      // locations, categories, items and stock rows all untouched.
+      expect(deps.applyDocument).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('inventory-notice')).toBeNull();
+      expect(fake.getAllAsync.mock.calls.length).toBe(readsBefore);
+      expect(JSON.stringify(store)).toBe(storedBefore);
+      expect(screen.getByTestId('inventory-count')).toBeTruthy();
+      await cleanup();
+    });
+
+    test('an unparseable file refuses before any confirmation', async () => {
+      const deps = transferDeps({
+        pickImportFile: jest.fn(async () => '{"format":"tengo-inventory"}'),
+      });
+      initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+      await renderTransfer(deps);
+      await settle();
+      expect(await screen.findByTestId('inventory-count')).toBeTruthy();
+
+      await fireEvent.press(screen.getByTestId('inventory-import'));
+      await waitFor(() => expect(deps.pickImportFile).toHaveBeenCalledTimes(1));
+      expect(await screen.findByTestId('inventory-notice')).toBeTruthy();
+      expect(screen.getByTestId('inventory-notice-text')).toHaveTextContent(
+        'This file is not a valid inventory export.',
+      );
+      expect(
+        screen.queryByTestId('inventory-import-confirm-dialog'),
+      ).toBeNull();
+      expect(deps.applyDocument).not.toHaveBeenCalled();
+      await cleanup();
+    });
+  });
+});

@@ -64,6 +64,16 @@ These rules exist because they were broken and the user reported the damage.
   uncommitted source edits is an inconsistent snapshot and proves nothing; one
   such run already produced a misleading native crash in this project.
 
+- **Boot the emulator only for the run that needs it.** Start the AVD for a
+  device run and kill it in the same pass (`adb -s emulator-5554 emu kill`);
+  never leave it resident between runs, because an idle emulator consumes a lot
+  of the host (user instruction, 2026-10-14). The rebuild a device run needs
+  (`npx expo prebuild` + `./android/gradlew -p android assembleDebug`) is far
+  heavier than the emulator itself: it saturates every core for minutes, so run
+  it when the machine is free, not in the middle of other work. Without `kvm`
+  group membership an x86_64 AVD cannot boot at all, and the failure is
+  measured and recorded in `docs/testing.md` (phase 2 device verification).
+
 ## Worktree and delegation hygiene
 
 These rules exist because they were broken -- most of them more than once.

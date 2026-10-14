@@ -73,6 +73,16 @@ fast: native only. `npm run check` runs `typecheck` + `lint` +
 | Setup and quality commands | [docs/development.md](docs/development.md) |
 | Test boundaries and native protocol | [docs/testing.md](docs/testing.md) |
 | Wireframe boards and transitions | [design/wireframes/README.md](design/wireframes/README.md) |
+| Distribution preparation (no store upload) | [docs/distribution.md](docs/distribution.md) |
+
+## Distribution
+
+Distribution preparation exists but no store pipeline: hand-written
+`eas.json` (Android-only profiles, local versioning), release fields in
+`app.json`, and the release process plus a listing-metadata draft in
+[docs/distribution.md](docs/distribution.md). No EAS project is linked,
+nothing has been built by EAS, nothing has been uploaded, and signing
+is undecided. Releases stay source-only via `release.yml` on tag `v*`.
 
 ## Next Steps
 

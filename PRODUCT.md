@@ -96,8 +96,11 @@ Confirmed foundation (implemented foundation, see Evidence and ROADMAP.md baseli
   proves one launch reaches readiness; it does not prove restart
   persistence or locale detection (see
   [Maestro boundary](docs/testing.md#maestro-boundary)).
-- Source-only GitHub releases; no signing, no EAS, no store upload
-  (see [quality commands](docs/development.md#quality-commands)).
+- Source-only GitHub releases (see [quality commands](docs/development.md#quality-commands)).
+  Distribution preparation exists (`eas.json`, release fields in
+  `app.json`, `docs/distribution.md`); no EAS project is linked,
+  nothing has been built by EAS, nothing has been uploaded, and
+  signing is undecided.
 
 Approved MVP scope (confirmed by the user; repository APIs implemented, product UI pending M3/M4):
 
@@ -215,9 +218,11 @@ brand commitment until the user approves it.
 - `odd/tasks/product-roadmap-design.md`: the planning task that
   authorizes these documents; documentation only, no implementation.
 - Absences future work must not fabricate: no Add/Edit inventory
-  UI, no App-wired list/search, no store listing, no user
+  UI, no App-wired list/search, no store submission, no user
   research or testimonials. (Repository and bounded-query logic
-  exist in `src/inventory/`; they are not product UI.)
+  exist in `src/inventory/`; they are not product UI. A store
+  listing *draft* exists in `docs/distribution.md`; it is not a
+  submitted listing.)
 
 ## Product Principles
 

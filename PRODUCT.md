@@ -185,12 +185,19 @@ without claiming approval):
 
 ## Brand Commitments
 
-The product name is Tengo. No visual identity, palette, typeface,
-icon set, voice-and-tone guide, or marketing claim has been confirmed.
-DESIGN.md proposes a direction; the token values and contrast floors it
+The product name is Tengo. The token values and contrast floors DESIGN.md
 records are approved and implemented (its section 5, guarded by
-`__tests__/contrast-floor.test.tsx`), while no other element of it is a
-brand commitment until the user approves it.
+`__tests__/contrast-floor.test.tsx`). Under the user's blanket order, this
+phase additionally chooses and ships a first identity: an app icon, an
+Android adaptive icon (foreground, background and monochrome), a splash
+screen and a favicon, all rendered deterministically in-repo by
+`scripts/generate-assets.mjs` (`npm run generate:assets`) from the approved
+token palette in `src/theme/tokens.ts` — a light-accent (`#2F6B3A`) tile
+carrying an `accentOn` bin-and-shelves mark, with the splash mark drawn in
+accent over the light `surface` (`#F4F2EC`). Still unconfirmed: no designer
+has approved the mark, and there is no voice-and-tone guide, no marketing
+claim and no typography decision. DESIGN.md records the reasoning and the
+palette derivation.
 
 ## Evidence on Hand
 

@@ -18,6 +18,7 @@
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run verify:flows",
     "verify:flows": "node scripts/verify-maestro-flows.mjs",
     "compat": "expo install --check",
+    "generate:assets": "node scripts/generate-assets.mjs",
     "export:smoke": "expo export --platform android --output-dir dist/ci-export",
     "prepare": "lefthook install"
   },
@@ -31,6 +32,7 @@
     "expo-camera": "~57.0.6",
     "expo-localization": "~57.0.2",
     "expo-notifications": "~57.0.22",
+    "expo-splash-screen": "~57.0.10",
     "expo-sqlite": "~57.0.4",
     "expo-status-bar": "~57.0.1",
     "i18next": "^26.4.2",

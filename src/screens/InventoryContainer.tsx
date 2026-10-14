@@ -39,6 +39,7 @@ import { initializeDatabase } from '../db';
 import type { RepositoryDb } from '../inventory/database';
 import { listCategories, listLocations } from '../inventory/entityRepository';
 import { getLastUsedLocationId, queryItems } from '../inventory/itemQuery';
+import type { TransferSummary } from '../inventory/transfer';
 import type {
   Category,
   ItemDetail,
@@ -46,11 +47,19 @@ import type {
   Location,
 } from '../inventory/types';
 import { useReminders } from '../notifications/useReminders';
+import {
+  DARK as DARK_BASE,
+  LIGHT as LIGHT_BASE,
+  type PaletteBase,
+} from '../theme/tokens';
 import ItemFormScreen from './ItemFormScreen';
 import ScanScreen from './ScanScreen';
 import type { ScanRoute } from './useBarcodeScanController';
 import type { ItemFormRoute } from './useItemFormController';
 import useReducedMotion from './useReducedMotion';
+import useTransferController, {
+  type TransferFileDeps,
+} from './useTransferController';
 
 interface Palette {
   noticeBackground: string;
@@ -68,6 +77,51 @@ const LIGHT: Palette = {
 const DARK: Palette = {
   noticeBackground: '#F2F1ED',
   noticeText: '#121212',
+};
+
+// U6 import-confirmation dialog palette: the same semantic token roles
+// the delete confirmations use (dialog surface, text, destructive
+// confirm), plus the same overlay scrim values.
+type DialogPalette = PaletteBase & { overlay: string };
+
+/**
+ * U6 confirmation copy: the irreversibility lead plus the staged file's
+ * impact counts, each count through the app's One/Other pattern so one
+ * and many read correctly in both languages. The `t` type mirrors the
+ * `formMessageFor` precedent in `ItemFormScreen`.
+ */
+function transferConfirmCopy(
+  t: (key: string, options?: { count: number }) => string,
+  summary: TransferSummary,
+): string {
+  const locations = t(
+    summary.locations === 1
+      ? 'transferImportCountLocationsOne'
+      : 'transferImportCountLocationsOther',
+    { count: summary.locations },
+  );
+  const categories = t(
+    summary.categories === 1
+      ? 'transferImportCountCategoriesOne'
+      : 'transferImportCountCategoriesOther',
+    { count: summary.categories },
+  );
+  const items = t(
+    summary.items === 1
+      ? 'transferImportCountItemsOne'
+      : 'transferImportCountItemsOther',
+    { count: summary.items },
+  );
+  return `${t('transferImportConfirmMessage')} ${locations}, ${categories}, ${items}.`;
+}
+
+const LIGHT_DIALOG: DialogPalette = {
+  ...LIGHT_BASE,
+  overlay: 'rgba(0, 0, 0, 0.4)',
+};
+const DARK_DIALOG: DialogPalette = {
+  ...DARK_BASE,
+  overlay: 'rgba(0, 0, 0, 0.6)',
 };
 
 // T1: search debounce window. Keystrokes that land inside this window
@@ -103,11 +157,18 @@ export interface InventoryContainerProps {
    * mount with a null handle.
    */
   enableMutations?: boolean;
+  /**
+   * U6 injectable transfer seam: the file/share/pick boundary fakes in
+   * unit tests. Defaults to the real Expo modules (share sheet, document
+   * picker, cache file) in production.
+   */
+  transferDeps?: Partial<TransferFileDeps>;
 }
 
 export default function InventoryContainer({
   bootstrap = defaultBootstrap,
   enableMutations = false,
+  transferDeps,
 }: InventoryContainerProps = {}) {
   const { t } = useTranslation();
   const scheme = useColorScheme();
@@ -152,8 +213,10 @@ export default function InventoryContainer({
   // stays visible after the modal dismisses. The token lets a newer
   // message replace an older one and restart the auto-clear timer.
   const [notice, setNotice] = useState<{
-    kind: 'saved' | 'deleted';
+    kind: 'saved' | 'deleted' | 'transfer';
     token: number;
+    /** U6: the controller-resolved localized transfer outcome. */
+    message?: string;
   } | null>(null);
 
   // App-lifetime managed handle: set once by a successful bootstrap and
@@ -303,6 +366,33 @@ export default function InventoryContainer({
     backgroundRefreshRef.current = true;
     setRefreshToken((token) => token + 1);
   }, []);
+  // U6 transfer: the controller resolves localized outcome copy and
+  // reports it here; a successful import refreshes like an entity write.
+  const handleTransferNotice = useCallback((message: string) => {
+    setNotice((prevNotice) => ({
+      kind: 'transfer',
+      token: (prevNotice?.token ?? 0) + 1,
+      message,
+    }));
+  }, []);
+  // U6 import re-homing: the wipe replaced every item and location id,
+  // so the pre-import inventory's scheduled reminder keys are orphans.
+  // Cancel them, then schedule the imported inventory's own reminders
+  // under the fresh ids. Fire-and-forget like the save/delete paths:
+  // the hook never throws, so the refresh below runs identically.
+  const handleImported = useCallback(
+    (prev: ItemDetail[], next: ItemDetail[]) => {
+      void reminders.afterImport(prev, next);
+    },
+    [reminders],
+  );
+  const transfer = useTransferController({
+    db: dbHandle,
+    deps: transferDeps,
+    onNotice: handleTransferNotice,
+    onChanged: handleEntitiesChanged,
+    onImported: handleImported,
+  });
 
   // Transient-notice lifecycle: announce once per new message, then
   // auto-clear after about 3 seconds. The cleanup clears the pending
@@ -317,7 +407,9 @@ export default function InventoryContainer({
       ? null
       : notice.kind === 'saved'
         ? t('itemFormSaved')
-        : t('itemFormDeleted');
+        : notice.kind === 'deleted'
+          ? t('itemFormDeleted')
+          : (notice.message ?? null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: token-keyed announce+timer by design (see above)
   useEffect(() => {
     if (noticeToken === null || noticeMessage === null) return;
@@ -480,10 +572,44 @@ export default function InventoryContainer({
   // its entry arms under the same readiness gate; otherwise it stays
   // honestly disabled with a hint, like Add/Open/Manage.
   const scanReady = mutationsReady;
+  // U6 dialog palette: same scheme switch as the notice palette above.
+  const dialogPalette = scheme === 'dark' ? DARK_DIALOG : LIGHT_DIALOG;
+  // U6 transfer entries arm under the same readiness gate as the
+  // scanner: they need the managed handle, otherwise they stay honestly
+  // disabled with a hint, like Add/Open/Manage.
+  const transferReady = mutationsReady;
 
   return (
     <View style={styles.root}>
       <View style={styles.scanBar}>
+        <Pressable
+          testID="inventory-export"
+          accessibilityRole="button"
+          accessibilityLabel={t('inventoryExport')}
+          accessibilityHint={
+            transferReady ? undefined : t('inventoryTransferUnavailableHint')
+          }
+          accessibilityState={{ disabled: !transferReady }}
+          disabled={!transferReady || transfer.busy}
+          onPress={() => void transfer.onExport()}
+          style={styles.scanButton}
+        >
+          <Text style={styles.scanButtonText}>{t('inventoryExport')}</Text>
+        </Pressable>
+        <Pressable
+          testID="inventory-import"
+          accessibilityRole="button"
+          accessibilityLabel={t('inventoryImport')}
+          accessibilityHint={
+            transferReady ? undefined : t('inventoryTransferUnavailableHint')
+          }
+          accessibilityState={{ disabled: !transferReady }}
+          disabled={!transferReady || transfer.busy}
+          onPress={() => void transfer.onImport()}
+          style={styles.scanButton}
+        >
+          <Text style={styles.scanButtonText}>{t('inventoryImport')}</Text>
+        </Pressable>
         <Pressable
           testID="inventory-scan-open"
           accessibilityRole="button"
@@ -546,6 +672,79 @@ export default function InventoryContainer({
           />
         </Modal>
       ) : null}
+      {transfer.pendingImport !== null ? (
+        <View
+          testID="inventory-import-confirm-dialog"
+          accessibilityRole="alert"
+          accessibilityLabel={t('transferImportConfirmTitle')}
+          accessibilityViewIsModal
+          style={[
+            styles.confirmOverlay,
+            { backgroundColor: dialogPalette.overlay },
+          ]}
+        >
+          <View
+            style={[
+              styles.confirmDialog,
+              { backgroundColor: dialogPalette.background },
+            ]}
+          >
+            <Text
+              testID="inventory-import-confirm-title"
+              style={[styles.confirmTitle, { color: dialogPalette.text }]}
+            >
+              {t('transferImportConfirmTitle')}
+            </Text>
+            <Text
+              testID="inventory-import-confirm-message"
+              style={[styles.confirmMessage, { color: dialogPalette.text }]}
+            >
+              {transferConfirmCopy(t, transfer.pendingImport.summary)}
+            </Text>
+            <Pressable
+              testID="inventory-import-confirm-cancel"
+              accessibilityRole="button"
+              accessibilityLabel={t('transferImportCancel')}
+              accessibilityState={{ disabled: false }}
+              onPress={transfer.onCancelImport}
+              style={styles.confirmTextButton}
+            >
+              <Text
+                style={[
+                  styles.confirmTextButtonText,
+                  { color: dialogPalette.accent },
+                ]}
+              >
+                {t('transferImportCancel')}
+              </Text>
+            </Pressable>
+            <Pressable
+              testID="inventory-import-confirm-confirm"
+              accessibilityRole="button"
+              accessibilityLabel={t('transferImportConfirm')}
+              accessibilityHint={transferConfirmCopy(
+                t,
+                transfer.pendingImport.summary,
+              )}
+              accessibilityState={{ disabled: false }}
+              onPress={() => void transfer.onConfirmImport()}
+              style={[
+                styles.confirmButton,
+                { backgroundColor: dialogPalette.error },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.confirmButtonText,
+                  { color: dialogPalette.accentOn },
+                ]}
+              >
+                {t('transferImportConfirm')}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
       {notice !== null ? (
         <View
           testID="inventory-notice"
@@ -564,9 +763,7 @@ export default function InventoryContainer({
             testID="inventory-notice-text"
             style={[styles.noticeText, { color: palette.noticeText }]}
           >
-            {notice.kind === 'saved'
-              ? t('itemFormSaved')
-              : t('itemFormDeleted')}
+            {noticeMessage}
           </Text>
         </View>
       ) : null}
@@ -617,6 +814,55 @@ const styles = StyleSheet.create({
   },
   noticeText: {
     fontSize: 15,
+    fontWeight: '600',
+  },
+  // U6 import-confirmation dialog: the same destructive-confirmation
+  // pattern the delete confirmations use (overlay scrim, dialog card,
+  // title + message, text cancel, error-colored confirm, 48dp targets).
+  confirmOverlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  confirmDialog: {
+    width: '100%',
+    borderRadius: 12,
+    padding: 16,
+    gap: 8,
+  },
+  confirmTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  confirmMessage: {
+    fontSize: 15,
+  },
+  confirmButton: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    paddingHorizontal: 20,
+    marginTop: 8,
+  },
+  confirmButtonText: {
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  confirmTextButton: {
+    minHeight: 48,
+    minWidth: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  confirmTextButtonText: {
+    fontSize: 17,
     fontWeight: '600',
   },
 });

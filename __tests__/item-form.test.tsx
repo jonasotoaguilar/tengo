@@ -9,7 +9,7 @@
  * focus order, bilingual en/es parity, and structural theme/safe-area
  * behavior. No DB, no navigation, no App wiring.
  */
-import { cleanup, fireEvent, render } from '@testing-library/react-native';
+import { act, cleanup, fireEvent, render } from '@testing-library/react-native';
 import { useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import type { ViewProps } from 'react-native';
@@ -44,6 +44,28 @@ jest.mock('react-native-safe-area-context', () => {
       <View {...props}>{children}</View>
     ),
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  };
+});
+
+// U4 date-picker native boundary: the real picker renders nothing under
+// Jest (proven by probe), so this stub renders a View carrying the picker
+// props. Tests drive selection through `onChange` to prove the
+// toggle/picker/clear wiring and the ISO conversion at the component
+// edge; it proves nothing about the OS dialog itself.
+jest.mock('@react-native-community/datetimepicker', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  return {
+    __esModule: true,
+    default: ({
+      testID,
+      value,
+      onChange,
+    }: {
+      testID?: string;
+      value?: Date;
+      onChange?: (event: { type: string }, date?: Date) => void;
+    }) => React.createElement(View, { testID, value, onChange }),
   };
 });
 
@@ -851,5 +873,205 @@ describe('T4 form per-keystroke work (S2.6)', () => {
     expect((ItemStockRow as { $$typeof?: symbol }).$$typeof).toBe(
       Symbol.for('react.memo'),
     );
+  });
+});
+
+describe('U4 reminder fields (threshold plus per-row expiry)', () => {
+  const { formatExpiresOnDate, parseExpiresOnToDate } =
+    require('../src/components/ItemForm') as {
+      formatExpiresOnDate: (date: Date) => string;
+      parseExpiresOnToDate: (raw: unknown) => Date | null;
+    };
+
+  test('expiry date boundary round-trips local calendar days', () => {
+    expect(formatExpiresOnDate(new Date(2027, 2, 15))).toBe('2027-03-15');
+    expect(parseExpiresOnToDate('2027-03-15')).toEqual(new Date(2027, 2, 15));
+    expect(parseExpiresOnToDate('')).toBeNull();
+    expect(parseExpiresOnToDate(undefined)).toBeNull();
+    expect(parseExpiresOnToDate('tomorrow')).toBeNull();
+    expect(parseExpiresOnToDate('2027-02-30')).toBeNull();
+  });
+
+  test('threshold renders empty when unset and types verbatim', async () => {
+    const onChange = jest.fn();
+    const values: ItemFormValues = {
+      ...emptyValues,
+      stock: [row('2')],
+    };
+    const view = await renderForm(baseProps({ values, onChange }));
+    expect(view.getByTestId('item-form/threshold').props.value).toBe('');
+    await fireEvent.changeText(view.getByTestId('item-form/threshold'), '5');
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({
+      ...values,
+      lowStockThresholdRaw: '5',
+    });
+  });
+
+  test('threshold renders the carried value', async () => {
+    const view = await renderForm(
+      baseProps({
+        values: { ...emptyValues, lowStockThresholdRaw: '5' },
+      }),
+    );
+    expect(view.getByTestId('item-form/threshold').props.value).toBe('5');
+  });
+
+  test('threshold error renders without inventing copy', async () => {
+    const view = await renderForm(
+      baseProps({
+        errors: { lowStockThreshold: 'Enter a threshold of 999999 or less.' },
+      }),
+    );
+    expect(
+      view.getByTestId('item-form/error-low-stock-threshold'),
+    ).toBeTruthy();
+    expect(view.getByText('Enter a threshold of 999999 or less.')).toBeTruthy();
+  });
+
+  test('row without expiry offers set, opens the picker, and stores ISO', async () => {
+    const onChange = jest.fn();
+    const values: ItemFormValues = {
+      ...emptyValues,
+      stock: [row('2')],
+    };
+    const view = await renderForm(baseProps({ values, onChange }));
+    expect(view.queryByTestId('item-form/stock-0/expires-picker')).toBeNull();
+    expect(view.queryByTestId('item-form/stock-0/expires-clear')).toBeNull();
+    await fireEvent.press(view.getByTestId('item-form/stock-0/expires-toggle'));
+    const picker = view.getByTestId('item-form/stock-0/expires-picker');
+    expect(picker).toBeTruthy();
+    picker.props.onChange({ type: 'set' }, new Date(2027, 2, 15));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({
+      ...values,
+      stock: [{ ...row('2'), expiresOnRaw: '2027-03-15' }],
+    });
+  });
+
+  test('picker dismissal stores nothing and closes', async () => {
+    const onChange = jest.fn();
+    const values: ItemFormValues = {
+      ...emptyValues,
+      stock: [row('2')],
+    };
+    const view = await renderForm(baseProps({ values, onChange }));
+    await fireEvent.press(view.getByTestId('item-form/stock-0/expires-toggle'));
+    expect(view.getByTestId('item-form/stock-0/expires-picker')).toBeTruthy();
+    await act(async () => {
+      view
+        .getByTestId('item-form/stock-0/expires-picker')
+        .props.onChange({ type: 'dismissed' }, undefined);
+    });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(view.queryByTestId('item-form/stock-0/expires-picker')).toBeNull();
+  });
+
+  test('row with expiry shows the value and clears back to empty', async () => {
+    const onChange = jest.fn();
+    const values: ItemFormValues = {
+      ...emptyValues,
+      stock: [{ ...row('2'), expiresOnRaw: '2027-03-15' }],
+    };
+    const view = await renderForm(baseProps({ values, onChange }));
+    expect(view.getByText('2027-03-15')).toBeTruthy();
+    await fireEvent.press(view.getByTestId('item-form/stock-0/expires-clear'));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({
+      ...values,
+      stock: [{ ...row('2'), expiresOnRaw: '' }],
+    });
+  });
+
+  test('row expiry error renders without inventing copy', async () => {
+    const view = await renderForm(
+      baseProps({
+        values: { ...emptyValues, stock: [row('2')] },
+        errors: {
+          stock: [{ expiresOn: 'Enter a valid expiry date (YYYY-MM-DD).' }],
+        },
+      }),
+    );
+    expect(view.getByTestId('item-form/error-stock-0-expiresOn')).toBeTruthy();
+    expect(
+      view.getByText('Enter a valid expiry date (YYYY-MM-DD).'),
+    ).toBeTruthy();
+  });
+
+  test('pending disables the threshold input and the expiry affordances', async () => {
+    const view = await renderForm(
+      baseProps({
+        values: {
+          ...emptyValues,
+          stock: [{ ...row('2'), expiresOnRaw: '2027-03-15' }],
+        },
+        submitting: true,
+      }),
+    );
+    expect(view.getByTestId('item-form/threshold').props.editable).toBe(false);
+    expect(
+      view.getByTestId('item-form/stock-0/expires-toggle').props
+        .accessibilityState.disabled,
+    ).toBe(true);
+    expect(
+      view.getByTestId('item-form/stock-0/expires-clear').props
+        .accessibilityState.disabled,
+    ).toBe(true);
+  });
+
+  test('reminder focus order is name, threshold, rows, categories', async () => {
+    expect(firstErrorField({ lowStockThreshold: 't', name: 'n' })).toBe('name');
+    expect(
+      firstErrorField({ lowStockThreshold: 't', stock: [{ quantity: 'q' }] }),
+    ).toBe('lowStockThreshold');
+    expect(
+      firstErrorField({ stock: [{ quantity: 'q', expiresOn: 'e' }] }),
+    ).toEqual({ row: 0, side: 'quantity' });
+    expect(
+      firstErrorField({ stock: [{ location: 'l', expiresOn: 'e' }] }),
+    ).toEqual({ row: 0, side: 'location' });
+    expect(firstErrorField({ stock: [{ expiresOn: 'e' }] })).toEqual({
+      row: 0,
+      side: 'expiresOn',
+    });
+    expect(firstErrorField({ categories: 'c', lowStockThreshold: 't' })).toBe(
+      'lowStockThreshold',
+    );
+  });
+
+  test('reminder error focus targets exist', async () => {
+    expect(resolveErrorFocusTarget('lowStockThreshold', undefined)).toBe(
+      'item-form/threshold',
+    );
+    expect(
+      resolveErrorFocusTarget({ row: 1, side: 'expiresOn' }, 'existing'),
+    ).toBe('item-form/stock-1/expires-toggle');
+  });
+
+  test('threshold error requests focus on its mounted input', async () => {
+    const onRequestErrorFocus = jest.fn();
+    const view = await renderForm(
+      baseProps({
+        errors: { lowStockThreshold: 'Enter a whole number of 0 or more.' },
+        onRequestErrorFocus,
+      }),
+    );
+    expect(onRequestErrorFocus).toHaveBeenCalledWith('item-form/threshold');
+    expect(view.getByTestId('item-form/threshold')).toBeTruthy();
+  });
+
+  test('row expiry error requests focus on the row toggle', async () => {
+    const onRequestErrorFocus = jest.fn();
+    const view = await renderForm(
+      baseProps({
+        values: { ...emptyValues, stock: [row('2')] },
+        errors: { stock: [{ expiresOn: 'Enter a valid date.' }] },
+        onRequestErrorFocus,
+      }),
+    );
+    expect(onRequestErrorFocus).toHaveBeenCalledWith(
+      'item-form/stock-0/expires-toggle',
+    );
+    expect(view.getByTestId('item-form/stock-0/expires-toggle')).toBeTruthy();
   });
 });

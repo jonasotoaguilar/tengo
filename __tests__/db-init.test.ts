@@ -100,10 +100,10 @@ describe('initializeDatabase (mocked native boundary)', () => {
     expect(SQLite.openDatabaseAsync).toHaveBeenCalledWith(DATABASE_NAME);
   });
 
-  test('fresh database applies migrations 1-4 in order and records version 4', async () => {
+  test('fresh database applies migrations 1-5 in order and records version 5', async () => {
     const { db, execCalls, getVersion } = makeFakeDb({ version: 0 });
     await initializeDatabase(db);
-    for (const version of [1, 2, 3, 4]) {
+    for (const version of [1, 2, 3, 4, 5]) {
       expect(execCalls).toContain(MIGRATIONS[version]);
     }
     expect(execCalls.indexOf(MIGRATIONS[1])).toBeLessThan(
@@ -115,7 +115,10 @@ describe('initializeDatabase (mocked native boundary)', () => {
     expect(execCalls.indexOf(MIGRATIONS[3])).toBeLessThan(
       execCalls.indexOf(MIGRATIONS[4]),
     );
-    expect(getVersion()).toBe(4);
+    expect(execCalls.indexOf(MIGRATIONS[4])).toBeLessThan(
+      execCalls.indexOf(MIGRATIONS[5]),
+    );
+    expect(getVersion()).toBe(5);
   });
 
   test('foreign keys are enabled first, outside any transaction', async () => {
@@ -130,14 +133,25 @@ describe('initializeDatabase (mocked native boundary)', () => {
     const { db, execCalls, events } = makeFakeDb({ version: 3 });
     await initializeDatabase(db);
     // The v4 envelope only: FK OFF outside the txn, rebuild + check +
-    // bump inside, FK ON after commit.
-    expect(events).toEqual(['fk-on', 'fk-off', 'begin', 'commit', 'fk-on']);
+    // bump inside, FK ON after commit. The additive v5 follows on the
+    // generic path: one transaction with the version bump, no toggling.
+    expect(events).toEqual([
+      'fk-on',
+      'fk-off',
+      'begin',
+      'commit',
+      'fk-on',
+      'begin',
+      'commit',
+    ]);
     expect(execCalls).toEqual([
       expect.stringMatching(/PRAGMA\s+foreign_keys\s*=\s*ON/i),
       expect.stringMatching(/PRAGMA\s+foreign_keys\s*=\s*OFF/i),
       MIGRATIONS[4],
       expect.stringMatching(/PRAGMA\s+user_version\s*=\s*4/i),
       expect.stringMatching(/PRAGMA\s+foreign_keys\s*=\s*ON/i),
+      MIGRATIONS[5],
+      expect.stringMatching(/PRAGMA\s+user_version\s*=\s*5/i),
     ]);
     // The empty-check read runs inside the transaction via getFirstAsync.
     expect(db.getFirstAsync).toHaveBeenCalledWith(
@@ -162,7 +176,7 @@ describe('initializeDatabase (mocked native boundary)', () => {
     expect(v2Index).toBeLessThan(v3Index);
   });
 
-  test('empty v1 database migrates cleanly to version 4', async () => {
+  test('empty v1 database migrates cleanly to version 5', async () => {
     const { db, execCalls, getVersion } = makeFakeDb({
       version: 1,
       rowCount: 0,
@@ -170,7 +184,8 @@ describe('initializeDatabase (mocked native boundary)', () => {
     await initializeDatabase(db);
     expect(execCalls).toContain(MIGRATIONS[2]);
     expect(execCalls).toContain(MIGRATIONS[4]);
-    expect(getVersion()).toBe(4);
+    expect(execCalls).toContain(MIGRATIONS[5]);
+    expect(getVersion()).toBe(5);
   });
 
   test('nonempty v1 blocks migration with a typed error and preserves rows/version', async () => {
@@ -191,8 +206,8 @@ describe('initializeDatabase (mocked native boundary)', () => {
     expect(getVersion()).toBe(1);
   });
 
-  test('migrated database (version 4) executes no migration SQL', async () => {
-    const { db, execCalls } = makeFakeDb({ version: 4 });
+  test('migrated database (version 5) executes no migration SQL', async () => {
+    const { db, execCalls } = makeFakeDb({ version: 5 });
     await initializeDatabase(db);
     expect(execCalls.filter((sql) => /CREATE TABLE/i.test(sql))).toEqual([]);
     expect(execCalls.filter((sql) => /DROP TABLE/i.test(sql))).toEqual([]);

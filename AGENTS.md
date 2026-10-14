@@ -63,3 +63,37 @@ These rules exist because they were broken and the user reported the damage.
 - **Never serve a bundle from a dirty `src/`.** A device run on a worktree with
   uncommitted source edits is an inconsistent snapshot and proves nothing; one
   such run already produced a misleading native crash in this project.
+
+## Worktree and delegation hygiene
+
+These rules exist because they were broken -- most of them more than once.
+
+- **A task's spec document must exist inside the worktree the worker reads.** A
+  spec written only in another checkout is invisible to the worker: it happened
+  with `odd/tasks/optimizations.md` and again with `odd/tasks/product-v2.md`, and
+  both times the worker correctly said the document was missing and worked from
+  the brief alone. Copy the spec into the worktree before delegating, and commit
+  it with the unit it governs.
+- **Format and commit per unit, with an explicit file list.** The pre-commit hook
+  rejects unformatted or lint-failing files, so run `npx biome check --write` on
+  exactly the files of the unit being committed — never across another writer's
+  in-flight files — and stage those files by name. Never `git add .` in a shared
+  worktree: it sweeps up other units and the `node_modules` symlink.
+- **Parallel writers need disjoint surfaces.** Several workers may share one
+  worktree only when their allowed edit surfaces do not overlap; a unit that
+  changes a shared type or the data model lands before the units that consume it,
+  not beside them.
+- **Check that a unit can be finished inside the surfaces you grant.** A brief
+  whose allowed files cannot reach the feature's goal produces a half-feature that
+  reports itself as complete. The scanner unit could open the add form for an
+  unknown barcode but could not carry the code into the created item, because the
+  form plumbing sat outside its surfaces, so re-scanning reached nothing — the
+  exact value the feature existed for. Trace the data path from entry to stored
+  value before delegating, and grant every file it crosses.
+- **A new persisted field is not done until the form carries it.** The repository
+  writes the save draft verbatim, so a field the draft omits is a field an edit
+  erases. Schema v5 added the low-stock threshold and the expiry, the reminders
+  unit wired them to notifications, and neither owned the item form — so editing
+  an item silently disarmed its own reminders, and no user could set either value
+  in the first place. Wire the field, the form that carries it, and the way the
+  user sets it in the same phase, and test that an untouched edit preserves it.

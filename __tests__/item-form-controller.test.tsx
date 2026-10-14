@@ -2026,3 +2026,462 @@ describe('T4 form per-keystroke work (S2.6)', () => {
     }
   });
 });
+
+test('U1: create with a last-used location starts with exactly one empty-quantity row', async () => {
+  const { result } = await renderController(
+    baseOptions({ route: { kind: 'create', prefilledLocationId: 10 } }),
+  );
+  expect(result.current.mode).toBe('add');
+  expect(result.current.loadState).toBe('ready');
+  expect(result.current.values).toEqual({
+    name: '',
+    stock: [existingRow(10, '')],
+    categories: [],
+    pendingNewCategoryName: '',
+  });
+  // A prefill is a starting point, not a user edit: clean, no confirm.
+  expect(result.current.dirty).toBe(false);
+});
+
+test('U1: an invalid prefilled location falls back to the blank form', async () => {
+  const { result } = await renderController(
+    baseOptions({
+      route: { kind: 'create', prefilledLocationId: 0 },
+    }),
+  );
+  expect(result.current.values.stock).toEqual([]);
+});
+
+test('U1: an untouched prefill saves catalog-only (blank-and-droppable unchanged)', async () => {
+  const repository = makeRepository();
+  const { result } = await renderController(
+    baseOptions({
+      repository,
+      route: { kind: 'create', prefilledLocationId: 10 },
+    }),
+  );
+  await act(async () => {
+    result.current.onChange({
+      ...(result.current.values as object),
+      name: 'Rice',
+    });
+  });
+  await act(async () => {
+    await result.current.onSave();
+  });
+  expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+  const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+    string,
+    unknown
+  >;
+  expect(draft.stock).toEqual([]);
+});
+
+test('U1 PRESERVE: edit loads only the detail rows and never gains a prefilled row', async () => {
+  const repository = makeRepository();
+  const { result } = await renderController(
+    baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+  );
+  await act(async () => {});
+  expect(result.current.mode).toBe('edit');
+  expect(result.current.loadState).toBe('ready');
+  expect(result.current.values.stock).toEqual([existingRow(10, '2')]);
+});
+
+describe('U3 scanned barcode plumbing (closed loop)', () => {
+  const { decideScanRoute } =
+    require('../src/screens/useBarcodeScanController') as typeof import('../src/screens/useBarcodeScanController');
+
+  test('RED: a scanned create carries the code into the draft', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(
+      baseOptions({
+        repository,
+        route: { kind: 'create', prefilledBarcode: 'ZZZ-9999' },
+      }),
+    );
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Beans',
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.barcode).toBe('ZZZ-9999');
+  });
+
+  test('a manual (unscanned) create stores no barcode', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.barcode ?? null).toBeNull();
+  });
+
+  test('an existing item edited from a scan keeps its own code untouched', async () => {
+    const repository = makeRepository();
+    repository.getItem.mockResolvedValueOnce(
+      makeDetail({ name: 'Rice', barcode: 'AAA-1111' }),
+    );
+    const { result } = await renderController(
+      baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+    );
+    await act(async () => {});
+    expect(result.current.loadState).toBe('ready');
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice edited',
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.updateItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.updateItemFromDraft.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.barcode).toBe('AAA-1111');
+  });
+
+  test('an invalid code never reaches the draft', async () => {
+    for (const bad of ['ab', '   ', '!!!nope!!!']) {
+      const repository = makeRepository();
+      const { result } = await renderController(
+        baseOptions({
+          repository,
+          route: { kind: 'create', prefilledBarcode: bad },
+        }),
+      );
+      await act(async () => {
+        result.current.onChange({
+          ...(result.current.values as object),
+          name: 'Rice',
+        });
+      });
+      await act(async () => {
+        await result.current.onSave();
+      });
+      expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+      const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+        string,
+        unknown
+      >;
+      expect(draft.barcode ?? null).toBeNull();
+    }
+  });
+
+  test('closed loop: unknown scan creates with the code and the same code finds it', async () => {
+    // In-memory fake database: barcode -> stored detail.
+    const store = new Map<string, ItemDetail>();
+    const fakeDb = {} as RepositoryDb;
+    const lookup = jest.fn(async (_db: RepositoryDb, code: string) => {
+      const found = store.get(code);
+      return found !== undefined ? { ...found } : null;
+    });
+    const repository = makeRepository();
+    let nextId = 100;
+    repository.createItemFromDraft.mockImplementation(
+      async (_db: RepositoryDb, draft: unknown) => {
+        const input = draft as { name: string; barcode?: string | null };
+        const detail = makeDetail({
+          id: nextId++,
+          name: input.name,
+          barcode: input.barcode ?? null,
+        });
+        if (typeof input.barcode === 'string' && input.barcode !== '') {
+          store.set(input.barcode, detail);
+        }
+        return detail;
+      },
+    );
+    // Scan an unknown code: create carrying the normalized code.
+    const first = await decideScanRoute(fakeDb, 'ZZZ-9999', lookup);
+    expect(first).toEqual({ kind: 'create', barcode: 'ZZZ-9999' });
+    if (first.kind !== 'create') throw new Error('expected create route');
+    // The create form opens prefilled with that code and saves.
+    const { result } = await renderController(
+      baseOptions({
+        repository,
+        route: { kind: 'create', prefilledBarcode: first.barcode },
+      }),
+    );
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Scanned beans',
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(true);
+    // The stored item carries that code.
+    const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.barcode).toBe('ZZZ-9999');
+    expect(outcome.detail?.barcode).toBe('ZZZ-9999');
+    // A re-scan of the same code reaches that item.
+    const second = await decideScanRoute(fakeDb, 'ZZZ-9999', lookup);
+    expect(second).toEqual({ kind: 'edit', itemId: outcome.detail?.id });
+    expect(lookup).toHaveBeenCalledWith(fakeDb, 'ZZZ-9999');
+  });
+});
+
+describe('U4 reminder form plumbing (edit preserves threshold and expiry)', () => {
+  function detailWithReminders() {
+    return makeDetail({
+      name: 'Rice',
+      lowStockThreshold: 5,
+      stock: [
+        {
+          locationId: pantry.id,
+          location: { ...pantry },
+          quantity: 2,
+          expiresOn: '2027-03-15',
+        },
+      ],
+    });
+  }
+
+  test('REGRESSION U4a: editing an item with a threshold and an expiry preserves both through a save', async () => {
+    const repository = makeRepository();
+    repository.getItem.mockResolvedValueOnce(detailWithReminders());
+    const { result } = await renderController(
+      baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+    );
+    await act(async () => {});
+    expect(result.current.loadState).toBe('ready');
+    // Touch only the name: the reminder values ride along untouched.
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice edited',
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(true);
+    expect(repository.updateItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.updateItemFromDraft.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.lowStockThreshold).toBe(5);
+    expect((draft.stock as { expiresOn?: string | null }[])[0]?.expiresOn).toBe(
+      '2027-03-15',
+    );
+  });
+
+  test('setting the threshold from empty stores it', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        lowStockThresholdRaw: '3',
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.lowStockThreshold).toBe(3);
+  });
+
+  test('clearing the threshold back to empty stores no threshold', async () => {
+    const repository = makeRepository();
+    repository.getItem.mockResolvedValueOnce(detailWithReminders());
+    const { result } = await renderController(
+      baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+    );
+    await act(async () => {});
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        lowStockThresholdRaw: '',
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.updateItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.updateItemFromDraft.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.lowStockThreshold ?? null).toBeNull();
+  });
+
+  test('setting the expiry from empty stores it on the row', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        stock: [{ ...existingRow(10, '2'), expiresOnRaw: '2027-03-15' }],
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.createItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.createItemFromDraft.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect((draft.stock as { expiresOn?: string | null }[])[0]?.expiresOn).toBe(
+      '2027-03-15',
+    );
+  });
+
+  test('clearing the expiry back to empty stores no expiry on the row', async () => {
+    const repository = makeRepository();
+    repository.getItem.mockResolvedValueOnce(detailWithReminders());
+    const { result } = await renderController(
+      baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+    );
+    await act(async () => {});
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        stock: [{ ...existingRow(10, '2'), expiresOnRaw: '' }],
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.updateItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.updateItemFromDraft.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(
+      (draft.stock as { expiresOn?: string | null }[])[0]?.expiresOn ?? null,
+    ).toBeNull();
+  });
+
+  test('an out-of-range threshold writes nothing and reports the bound', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        lowStockThresholdRaw: '1000000',
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(false);
+    expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+    expect(result.current.errors.lowStockThreshold).toBe(
+      'Enter a threshold of 999999 or less.',
+    );
+  });
+
+  test('a non-numeric threshold writes nothing and reports invalid', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        lowStockThresholdRaw: 'abc',
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(false);
+    expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+    expect(result.current.errors.lowStockThreshold).toBe(
+      'Enter a whole number of 0 or more.',
+    );
+  });
+
+  test('a misshapen expiry writes nothing and reports the row error', async () => {
+    const repository = makeRepository();
+    const { result } = await renderController(baseOptions({ repository }));
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice',
+        stock: [{ ...existingRow(10, '2'), expiresOnRaw: 'tomorrow' }],
+      });
+    });
+    let outcome!: SaveOutcome;
+    await act(async () => {
+      outcome = await result.current.onSave();
+    });
+    expect(outcome.persisted).toBe(false);
+    expect(repository.createItemFromDraft).not.toHaveBeenCalled();
+    const stock = result.current.errors.stock as unknown as
+      | { expiresOn?: string }[]
+      | undefined;
+    expect(stock?.[0]?.expiresOn).toBe(
+      'Enter a valid expiry date (YYYY-MM-DD).',
+    );
+  });
+
+  test('an edit without reminders stores no phantom values', async () => {
+    const repository = makeRepository();
+    repository.getItem.mockResolvedValueOnce(makeDetail({ name: 'Rice' }));
+    const { result } = await renderController(
+      baseOptions({ repository, route: { kind: 'edit', itemId: 7 } }),
+    );
+    await act(async () => {});
+    await act(async () => {
+      result.current.onChange({
+        ...(result.current.values as object),
+        name: 'Rice edited',
+      });
+    });
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(repository.updateItemFromDraft).toHaveBeenCalledTimes(1);
+    const draft = repository.updateItemFromDraft.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.lowStockThreshold ?? null).toBeNull();
+    expect(
+      (draft.stock as { expiresOn?: string | null }[])[0]?.expiresOn ?? null,
+    ).toBeNull();
+  });
+});

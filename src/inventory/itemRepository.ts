@@ -12,7 +12,12 @@
  * existing M1 domain normalization (`validateItemInput`, draft checks
  * below), so 0-quantity rows are dropped rather than stored, duplicate
  * location ids are rejected, every stock quantity honors the S10 bounds,
- * and verbatim text is preserved.
+ * and verbatim text is preserved. The U2 scanner/reminder base rides the
+ * same paths: an optional `low_stock_threshold` and `barcode` per catalog
+ * row (one code maps to one item via the v5 UNIQUE index; NULLs never
+ * collide) plus an optional `expires_on` per stock row, all validated by
+ * the U2 normalizers. `findItemByBarcode` is the scanner lookup (null
+ * when the code is unknown).
  *
  * Reads return the `ItemDetail` read model (catalog row plus the stock
  * breakdown with resolved locations plus the category list/ids). Every
@@ -26,7 +31,7 @@
  * `./entityRepository`); deleting an item cascades its stock and join
  * rows while locations and categories survive.
  */
-import type { RepositoryDb, TransactionHandle } from './database';
+import type { BindParams, RepositoryDb, TransactionHandle } from './database';
 import {
   assertUniqueCategoryNames,
   assertUniqueLocationNames,
@@ -47,6 +52,9 @@ import type {
 } from './types';
 import {
   type NormalizedItemStockInput,
+  normalizeBarcode,
+  normalizeExpiresOn,
+  normalizeLowStockThreshold,
   normalizeName,
   normalizeNameKey,
   normalizeQuantity,
@@ -79,6 +87,8 @@ function isUnexpectedError(error: unknown): boolean {
 interface ItemRow {
   id: number;
   name: string;
+  low_stock_threshold: number | null;
+  barcode: string | null;
   created_at: string;
 }
 
@@ -101,15 +111,17 @@ interface StockJoinRow {
   location_name: string;
   location_address: string | null;
   location_created_at: string;
+  expires_on: string | null;
 }
 
-const ITEM_COLUMNS = 'id, name, created_at';
+const ITEM_COLUMNS = 'id, name, low_stock_threshold, barcode, created_at';
 const LOCATION_COLUMNS = 'id, name, address, created_at';
 const CATEGORY_COLUMNS = 'id, name, created_at';
 const CATEGORY_JOIN_SELECT = `SELECT c.${CATEGORY_COLUMNS} FROM categories c JOIN item_categories jc ON jc.category_id = c.id WHERE jc.item_id = ? ORDER BY c.id ASC`;
 const STOCK_JOIN_SELECT =
   'SELECT s.quantity AS quantity, l.id AS location_id, l.name AS location_name, ' +
-  'l.address AS location_address, l.created_at AS location_created_at ' +
+  'l.address AS location_address, l.created_at AS location_created_at, ' +
+  's.expires_on AS expires_on ' +
   'FROM stock s JOIN locations l ON l.id = s.location_id ' +
   'WHERE s.item_id = ? ORDER BY l.id ASC';
 
@@ -127,6 +139,9 @@ function toStockLevel(row: StockJoinRow): StockLevel {
       created_at: row.location_created_at,
     },
     quantity: row.quantity,
+    // Pre-v5 rows (and host fakes shaped before v5) carry no alias:
+    // the additive column reads as null, never as a hole.
+    expiresOn: row.expires_on ?? null,
   };
 }
 
@@ -294,6 +309,10 @@ async function detailForRow(
     return {
       id: row.id,
       name: row.name,
+      // Additive v5 columns read as null when absent (pre-v5 rows,
+      // legacy fakes, or an item that simply has no reminder/code).
+      lowStockThreshold: row.low_stock_threshold ?? null,
+      barcode: row.barcode ?? null,
       stock,
       totalQuantity: stock.reduce((sum, level) => sum + level.quantity, 0),
       categoryIds: categories.map((category) => category.id),
@@ -340,7 +359,8 @@ async function requireItemRow(db: RepositoryDb, id: number): Promise<ItemRow> {
 /**
  * Replace an item's stock set: one DELETE plus one multi-row INSERT per
  * chunk (T3 batching); zero rows allowed. The single INSERT keeps the
- * UNIQUE backstop on `(item_id, location_id)` exactly as before.
+ * UNIQUE backstop on `(item_id, location_id)` exactly as before; v5
+ * appends the optional expiry to each row group.
  */
 async function replaceStockRows(
   txn: TransactionHandle,
@@ -349,15 +369,89 @@ async function replaceStockRows(
 ): Promise<void> {
   await txn.runAsync('DELETE FROM stock WHERE item_id = ?', [itemId]);
   for (const group of chunk(stock, INSERT_ROWS_PER_STATEMENT)) {
-    const placeholders = group.map(() => '(?, ?, ?)').join(', ');
+    const placeholders = group.map(() => '(?, ?, ?, ?)').join(', ');
     const params: (string | number | null)[] = [];
     for (const row of group) {
-      params.push(itemId, row.locationId, row.quantity);
+      params.push(itemId, row.locationId, row.quantity, row.expiresOn);
     }
     await txn.runAsync(
-      `INSERT INTO stock (item_id, location_id, quantity) VALUES ${placeholders}`,
+      `INSERT INTO stock (item_id, location_id, quantity, expires_on) VALUES ${placeholders}`,
       params,
     );
+  }
+}
+
+/**
+ * U2 barcode identity: one code maps to one item (v5 UNIQUE index).
+ * The table name is a fixed literal, the code a bound param. Throws
+ * `EntityConflictError('item', ...)` for another row's code; `excludeId`
+ * keeps an update's own barcode (same pattern as the S11 asserts).
+ */
+async function assertUniqueItemBarcode(
+  db: RepositoryDb | TransactionHandle,
+  barcode: string,
+  excludeId?: number,
+): Promise<void> {
+  const row = await db.getFirstAsync<{ id: number }>(
+    'SELECT id FROM items WHERE barcode = ?',
+    [barcode],
+  );
+  if (row !== null && row.id !== excludeId) {
+    throw new EntityConflictError('item', barcode);
+  }
+}
+
+/**
+ * Insert one catalog row with its U2 fields. A stored collision the
+ * domain pre-check cannot see (a race) maps from the driver's UNIQUE
+ * failure to the same typed `conflict`, never raw SQLite text.
+ */
+async function insertCatalogRow(
+  txn: TransactionHandle,
+  name: string,
+  lowStockThreshold: number | null,
+  barcode: string | null,
+): Promise<number> {
+  if (barcode !== null) await assertUniqueItemBarcode(txn, barcode);
+  const params: BindParams = [name, lowStockThreshold, barcode];
+  try {
+    const created = await txn.runAsync(
+      'INSERT INTO items (name, low_stock_threshold, barcode) VALUES (?, ?, ?)',
+      params,
+    );
+    return created.lastInsertRowId;
+  } catch (error) {
+    if (barcode !== null && isUniqueConstraintViolation(error)) {
+      throw new EntityConflictError('item', barcode);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Update one catalog row's name and U2 fields (`created_at` preserved).
+ * Same conflict mapping as the insert; keeping the row's own barcode is
+ * not a conflict.
+ */
+async function updateCatalogRow(
+  txn: TransactionHandle,
+  id: number,
+  name: string,
+  lowStockThreshold: number | null,
+  barcode: string | null,
+): Promise<void> {
+  if (barcode !== null) await assertUniqueItemBarcode(txn, barcode, id);
+  const params: BindParams = [name, lowStockThreshold, barcode, id];
+  try {
+    await txn.runAsync(
+      'UPDATE items SET name = ?, low_stock_threshold = ?, barcode = ? WHERE id = ?',
+      params,
+    );
+  } catch (error) {
+    if (barcode !== null && isUniqueConstraintViolation(error)) {
+      throw new EntityConflictError('item', barcode);
+    }
+    throw error;
   }
 }
 
@@ -388,16 +482,22 @@ interface NormalizedStockDraft {
   locationId: number | null;
   newLocation: { name: string; address: string | null } | null;
   quantity: number;
+  expiresOn: string | null;
 }
 
 interface NormalizedDraft {
   name: string;
+  lowStockThreshold: number | null;
+  barcode: string | null;
   stock: NormalizedStockDraft[];
   categoryIds: number[];
   newCategories: { name: string }[];
 }
 
-/** Validate one draft stock row: a location selector plus an S10 quantity. */
+/**
+ * Validate one draft stock row: a location selector, an S10 quantity,
+ * and an optional ISO expiry.
+ */
 function validateStockDraft(entry: ItemStockDraft): NormalizedStockDraft {
   if (entry === null || typeof entry !== 'object') {
     throw new ValidationError(
@@ -407,6 +507,7 @@ function validateStockDraft(entry: ItemStockDraft): NormalizedStockDraft {
     );
   }
   const quantity = normalizeQuantity(entry.quantity);
+  const expiresOn = normalizeExpiresOn(entry.expiresOn);
   const selector = entry.location;
   if (selector === null || typeof selector !== 'object') {
     throw new ValidationError(
@@ -420,6 +521,7 @@ function validateStockDraft(entry: ItemStockDraft): NormalizedStockDraft {
       locationId: validateId(selector.locationId, 'locationId'),
       newLocation: null,
       quantity,
+      expiresOn,
     };
   }
   if (selector.kind === 'new') {
@@ -427,6 +529,7 @@ function validateStockDraft(entry: ItemStockDraft): NormalizedStockDraft {
       locationId: null,
       newLocation: validateLocationInput(selector.location),
       quantity,
+      expiresOn,
     };
   }
   throw new ValidationError(
@@ -454,6 +557,8 @@ function validateDraftInput(draft: ItemDraftInput): NormalizedDraft {
     );
   }
   const name = normalizeName(draft.name, 'name');
+  const lowStockThreshold = normalizeLowStockThreshold(draft.lowStockThreshold);
+  const barcode = normalizeBarcode(draft.barcode);
   const rawStock = draft.stock === undefined ? [] : draft.stock;
   if (!Array.isArray(rawStock)) {
     throw new ValidationError(
@@ -514,7 +619,14 @@ function validateDraftInput(draft: ItemDraftInput): NormalizedDraft {
       'categories must not select the same existing category twice.',
     );
   }
-  return { name, stock, categoryIds, newCategories };
+  return {
+    name,
+    lowStockThreshold,
+    barcode,
+    stock,
+    categoryIds,
+    newCategories,
+  };
 }
 
 /**
@@ -684,11 +796,16 @@ async function resolveDraftRelations(
   let newLocationIndex = 0;
   for (const row of draft.stock) {
     if (row.locationId !== null) {
-      stock.push({ locationId: row.locationId, quantity: row.quantity });
+      stock.push({
+        locationId: row.locationId,
+        quantity: row.quantity,
+        expiresOn: row.expiresOn,
+      });
     } else {
       stock.push({
         locationId: createdLocationIds[newLocationIndex],
         quantity: row.quantity,
+        expiresOn: row.expiresOn,
       });
       newLocationIndex += 1;
     }
@@ -722,19 +839,15 @@ export async function createItem(
       normalized.stock.map((row) => row.locationId),
     );
     await requireCategories(txn, normalized.categoryIds);
-    const created = await txn.runAsync('INSERT INTO items (name) VALUES (?)', [
+    const itemId = await insertCatalogRow(
+      txn,
       normalized.name,
-    ]);
-    await replaceStockRows(txn, created.lastInsertRowId, normalized.stock);
-    await replaceCategoryLinks(
-      txn,
-      created.lastInsertRowId,
-      normalized.categoryIds,
+      normalized.lowStockThreshold,
+      normalized.barcode,
     );
-    detail = await detailForRow(
-      txn,
-      await requireItemRow(txn, created.lastInsertRowId),
-    );
+    await replaceStockRows(txn, itemId, normalized.stock);
+    await replaceCategoryLinks(txn, itemId, normalized.categoryIds);
+    detail = await detailForRow(txn, await requireItemRow(txn, itemId));
   });
   if (detail === null) throw new StorageError('item', 'create');
   return detail;
@@ -747,6 +860,44 @@ export async function getItem(
 ): Promise<ItemDetail> {
   const validId = validateId(id, 'id');
   return detailForRow(db, await requireItemRow(db, validId));
+}
+
+/**
+ * Scanner lookup: find one item by its barcode. The input is trimmed
+ * and shape-checked before any SQL (blank/misshapen codes reject with
+ * `ValidationError`, never a driver round trip); the read itself is a
+ * fixed SELECT with the code as a bound param, so scanned text is never
+ * interpolated. Returns `null` when no item carries the code — an
+ * unknown scan is an empty result, not an error. Driver failures map to
+ * generic `StorageError('item', 'fetch')` with `cause`, never raw text.
+ */
+export async function findItemByBarcode(
+  db: RepositoryDb,
+  barcode: string,
+): Promise<ItemDetail | null> {
+  const normalized = normalizeBarcode(barcode);
+  if (normalized === null) {
+    throw new ValidationError('barcode', 'blank', 'barcode must not be blank.');
+  }
+  try {
+    const row = await db.getFirstAsync<ItemRow>(
+      `SELECT ${ITEM_COLUMNS} FROM items WHERE barcode = ?`,
+      [normalized],
+    );
+    if (row === null) return null;
+    return detailForRow(db, row);
+  } catch (error) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof EntityNotFoundError ||
+      error instanceof EntityConflictError ||
+      error instanceof StorageError
+    ) {
+      throw error;
+    }
+    if (isUnexpectedError(error)) throw error;
+    throw new StorageError('item', 'fetch', error);
+  }
 }
 
 /** List items in insertion order with their stock breakdowns and categories. */
@@ -795,10 +946,13 @@ export async function updateItem(
       normalized.stock.map((row) => row.locationId),
     );
     await requireCategories(txn, normalized.categoryIds);
-    await txn.runAsync('UPDATE items SET name = ? WHERE id = ?', [
-      normalized.name,
+    await updateCatalogRow(
+      txn,
       validId,
-    ]);
+      normalized.name,
+      normalized.lowStockThreshold,
+      normalized.barcode,
+    );
     await replaceStockRows(txn, validId, normalized.stock);
     await replaceCategoryLinks(txn, validId, normalized.categoryIds);
     detail = await detailForRow(txn, await requireItemRow(txn, validId));
@@ -838,19 +992,15 @@ export async function createItemFromDraft(
   let detail: ItemDetail | null = null;
   await runExclusive(db, 'create', async (txn) => {
     const relations = await resolveDraftRelations(txn, normalized);
-    const created = await txn.runAsync('INSERT INTO items (name) VALUES (?)', [
+    const itemId = await insertCatalogRow(
+      txn,
       normalized.name,
-    ]);
-    await replaceStockRows(txn, created.lastInsertRowId, relations.stock);
-    await replaceCategoryLinks(
-      txn,
-      created.lastInsertRowId,
-      relations.categoryIds,
+      normalized.lowStockThreshold,
+      normalized.barcode,
     );
-    detail = await detailForRow(
-      txn,
-      await requireItemRow(txn, created.lastInsertRowId),
-    );
+    await replaceStockRows(txn, itemId, relations.stock);
+    await replaceCategoryLinks(txn, itemId, relations.categoryIds);
+    detail = await detailForRow(txn, await requireItemRow(txn, itemId));
   });
   if (detail === null) throw new StorageError('item', 'create');
   return detail;
@@ -871,10 +1021,13 @@ export async function updateItemFromDraft(
   await runExclusive(db, 'update', async (txn) => {
     await requireItemRow(txn, validId);
     const relations = await resolveDraftRelations(txn, normalized);
-    await txn.runAsync('UPDATE items SET name = ? WHERE id = ?', [
-      normalized.name,
+    await updateCatalogRow(
+      txn,
       validId,
-    ]);
+      normalized.name,
+      normalized.lowStockThreshold,
+      normalized.barcode,
+    );
     await replaceStockRows(txn, validId, relations.stock);
     await replaceCategoryLinks(txn, validId, relations.categoryIds);
     detail = await detailForRow(txn, await requireItemRow(txn, validId));

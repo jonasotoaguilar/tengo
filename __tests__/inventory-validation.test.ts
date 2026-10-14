@@ -118,9 +118,11 @@ describe('inventory domain validation (M1, no persistence)', () => {
     });
     expect(valid).toEqual({
       name: 'Rice',
+      lowStockThreshold: null,
+      barcode: null,
       stock: [
-        { locationId: 1, quantity: 2 },
-        { locationId: 3, quantity: 5 },
+        { locationId: 1, quantity: 2, expiresOn: null },
+        { locationId: 3, quantity: 5, expiresOn: null },
       ],
       categoryIds: [],
     });
@@ -129,11 +131,15 @@ describe('inventory domain validation (M1, no persistence)', () => {
   test('item input with no stock rows is a valid catalog-only (sin stock) item', () => {
     expect(validateItemInput({ name: 'Rice', stock: [] })).toEqual({
       name: 'Rice',
+      lowStockThreshold: null,
+      barcode: null,
       stock: [],
       categoryIds: [],
     });
     expect(validateItemInput({ name: 'Rice' })).toEqual({
       name: 'Rice',
+      lowStockThreshold: null,
+      barcode: null,
       stock: [],
       categoryIds: [],
     });
@@ -148,7 +154,7 @@ describe('inventory domain validation (M1, no persistence)', () => {
           { locationId: 2, quantity: 3 },
         ],
       }).stock,
-    ).toEqual([{ locationId: 2, quantity: 3 }]);
+    ).toEqual([{ locationId: 2, quantity: 3, expiresOn: null }]);
     expect(
       validateItemInput({
         name: 'Rice',
@@ -202,7 +208,7 @@ describe('inventory domain validation (M1, no persistence)', () => {
         name: 'Rice',
         stock: [{ locationId: 1, quantity: 999999 }],
       }).stock,
-    ).toEqual([{ locationId: 1, quantity: 999999 }]);
+    ).toEqual([{ locationId: 1, quantity: 999999, expiresOn: null }]);
   });
 
   test('item input accepts zero or many categories but rejects duplicates', () => {
@@ -214,7 +220,9 @@ describe('inventory domain validation (M1, no persistence)', () => {
       }),
     ).toEqual({
       name: 'Rice',
-      stock: [{ locationId: 1, quantity: 2 }],
+      lowStockThreshold: null,
+      barcode: null,
+      stock: [{ locationId: 1, quantity: 2, expiresOn: null }],
       categoryIds: [2, 3],
     });
     expect(() =>
@@ -271,7 +279,7 @@ describe('inventory domain validation (M1, no persistence)', () => {
         name: 'Rice',
         stock: [{ locationId: 1, quantity: 999999 }],
       }).stock,
-    ).toEqual([{ locationId: 1, quantity: 999999 }]);
+    ).toEqual([{ locationId: 1, quantity: 999999, expiresOn: null }]);
     expect(() =>
       validateItemInput({
         name: 'Rice',

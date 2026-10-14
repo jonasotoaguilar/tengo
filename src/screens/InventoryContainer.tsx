@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next';
 import {
   AccessibilityInfo,
   Modal,
+  Pressable,
   StyleSheet,
   Text,
   useColorScheme,
@@ -37,14 +38,17 @@ import InventoryList, {
 import { initializeDatabase } from '../db';
 import type { RepositoryDb } from '../inventory/database';
 import { listCategories, listLocations } from '../inventory/entityRepository';
-import { queryItems } from '../inventory/itemQuery';
+import { getLastUsedLocationId, queryItems } from '../inventory/itemQuery';
 import type {
   Category,
   ItemDetail,
   ItemFilter,
   Location,
 } from '../inventory/types';
+import { useReminders } from '../notifications/useReminders';
 import ItemFormScreen from './ItemFormScreen';
+import ScanScreen from './ScanScreen';
+import type { ScanRoute } from './useBarcodeScanController';
 import type { ItemFormRoute } from './useItemFormController';
 import useReducedMotion from './useReducedMotion';
 
@@ -139,6 +143,10 @@ export default function InventoryContainer({
   // form screen. Independent of the read effect so a post-write refresh
   // never unmounts it before dismissal.
   const [entitiesOpen, setEntitiesOpen] = useState(false);
+  // U3 scanner entry: hosted in the same conditional pattern as the form
+  // screen (`ScanScreen` owns its own Modal). Independent of the read
+  // effect so a background refresh never unmounts it mid-scan.
+  const [scanOpen, setScanOpen] = useState(false);
   // M4 Gap A transient confirmation: a small non-blocking notice near
   // the bottom of the container, rendered OUTSIDE the form modal so it
   // stays visible after the modal dismisses. The token lets a newer
@@ -151,6 +159,11 @@ export default function InventoryContainer({
   // App-lifetime managed handle: set once by a successful bootstrap and
   // reused by every filter/retry round. Never closed here.
   const dbRef = useRef<RepositoryDb | null>(null);
+  // U1: live mirror of the loaded locations so the Add press can
+  // validate the derived last-used id without churning handleAdd's
+  // identity (which the list holds by ref).
+  const locationsRef = useRef<Location[]>([]);
+  locationsRef.current = locations;
   // Pending bootstrap shared by every round: a filter change or retry while
   // the first open is still in flight must reuse it, never open again (the
   // stale winner's handle would otherwise be discarded and leak). Cleared
@@ -174,28 +187,114 @@ export default function InventoryContainer({
   const staticKeyRef = useRef<string | null>(null);
   const staticLoadedRef = useRef(false);
   const allItemsRef = useRef<ItemDetail[]>([]);
+  // Write affordances arm only when opted in AND the handle is reactively
+  // available. Literally `undefined` otherwise, preserving the disabled
+  // rendering and the DEV read-only fixture.
+  const mutationsReady = enableMutations && dbHandle !== null;
+  // U4 local reminders (S4): armed only for writers, so read-only
+  // sessions never prompt for permission and never schedule. The hook
+  // resolves `'skipped'` without a single native call when permission
+  // is not granted, so a denial changes nothing else below. Declared
+  // before the save/delete handlers that call into it.
+  const reminders = useReminders({ enabled: mutationsReady });
+  // Live mirror of the rendered page: the save/delete handlers look up
+  // the pre-mutation detail here (stable callback identity, no state
+  // closure), so the crossing rule and the expiry cancel set see the
+  // row exactly as it was before the write.
+  const itemsRef = useRef<ItemDetail[]>([]);
+  itemsRef.current = items;
 
+  // U1 quick capture: the form opens already pointed at the household's
+  // last-used location, derived from the database (bounded single-row
+  // read, no new state). A fresh database (null), a location deleted
+  // after the choice lists loaded (unknown id), and a read failure all
+  // fall back to the blank form, exactly as today — Add never fails.
   const handleAdd = useCallback((prefilledName?: string) => {
-    setRoute({ kind: 'create', prefilledName });
+    const db = dbRef.current;
+    const open = (prefilledLocationId?: number) => {
+      setRoute({ kind: 'create', prefilledName, prefilledLocationId });
+    };
+    if (db === null) {
+      open();
+      return;
+    }
+    const known = new Set(locationsRef.current.map((location) => location.id));
+    void (async () => {
+      try {
+        const lastUsed = await getLastUsedLocationId(db);
+        if (lastUsed !== null && known.has(lastUsed)) {
+          open(lastUsed);
+          return;
+        }
+      } catch {
+        // Fall through to the blank form below: a prefill miss must
+        // never block adding an item.
+      }
+      open();
+    })();
   }, []);
   const handleOpenItem = useCallback((id: number) => {
     setRoute({ kind: 'edit', itemId: id });
   }, []);
-  const handleSaved = useCallback(() => {
-    backgroundRefreshRef.current = true;
-    setRefreshToken((token) => token + 1);
-    setNotice((prev) => ({ kind: 'saved', token: (prev?.token ?? 0) + 1 }));
-  }, []);
-  const handleDeleted = useCallback(() => {
-    backgroundRefreshRef.current = true;
-    setRefreshToken((token) => token + 1);
-    setNotice((prev) => ({ kind: 'deleted', token: (prev?.token ?? 0) + 1 }));
-  }, []);
+  const handleSaved = useCallback(
+    (detail: ItemDetail) => {
+      // U4: the mutation already persisted — decide locally whether it
+      // crossed a threshold or moved an expiry date. Fire-and-forget by
+      // design (the hook never throws): the refresh and the notice below
+      // run identically whether reminders are granted, denied, or silent.
+      const prev =
+        itemsRef.current.find((item) => item.id === detail.id) ?? null;
+      void reminders.afterSave(prev, detail);
+      backgroundRefreshRef.current = true;
+      setRefreshToken((token) => token + 1);
+      setNotice((prevNotice) => ({
+        kind: 'saved',
+        token: (prevNotice?.token ?? 0) + 1,
+      }));
+    },
+    [reminders],
+  );
+  const handleDeleted = useCallback(
+    (id: number) => {
+      // U4: the item is gone — cancel its rows from the last-known
+      // detail so no orphan reminder survives it. Same fire-and-forget
+      // contract as the save path above.
+      const prev = itemsRef.current.find((item) => item.id === id) ?? null;
+      void reminders.afterDelete(prev);
+      backgroundRefreshRef.current = true;
+      setRefreshToken((token) => token + 1);
+      setNotice((prevNotice) => ({
+        kind: 'deleted',
+        token: (prevNotice?.token ?? 0) + 1,
+      }));
+    },
+    [reminders],
+  );
   const handleDismiss = useCallback(() => {
     setRoute(null);
   }, []);
   const handleManageEntities = useCallback(() => {
     setEntitiesOpen(true);
+  }, []);
+  const handleOpenScan = useCallback(() => {
+    setScanOpen(true);
+  }, []);
+  const handleCloseScan = useCallback(() => {
+    setScanOpen(false);
+  }, []);
+  // U3 scan-to-route: a known code opens that item's edit route; an
+  // unknown code opens create carrying the normalized code as its
+  // invisible identity, so the saved item owns the code and a re-scan
+  // reaches it (closed loop via `prefilledBarcode`).
+  const handleScanResolved = useCallback((route: ScanRoute) => {
+    setScanOpen(false);
+    if (route.kind === 'edit') {
+      setRoute({ kind: 'edit', itemId: route.itemId });
+      return;
+    }
+    if (route.kind === 'create') {
+      setRoute({ kind: 'create', prefilledBarcode: route.barcode });
+    }
   }, []);
   const handleCloseEntities = useCallback(() => {
     setEntitiesOpen(false);
@@ -204,11 +303,6 @@ export default function InventoryContainer({
     backgroundRefreshRef.current = true;
     setRefreshToken((token) => token + 1);
   }, []);
-
-  // Write affordances arm only when opted in AND the handle is reactively
-  // available. Literally `undefined` otherwise, preserving the disabled
-  // rendering and the DEV read-only fixture.
-  const mutationsReady = enableMutations && dbHandle !== null;
 
   // Transient-notice lifecycle: announce once per new message, then
   // auto-clear after about 3 seconds. The cleanup clears the pending
@@ -382,8 +476,29 @@ export default function InventoryContainer({
     };
   }, [debouncedQuery, filter.categoryIds, retryToken, refreshToken]);
 
+  // The scanner resolves into the same add/edit routes as the list, so
+  // its entry arms under the same readiness gate; otherwise it stays
+  // honestly disabled with a hint, like Add/Open/Manage.
+  const scanReady = mutationsReady;
+
   return (
     <View style={styles.root}>
+      <View style={styles.scanBar}>
+        <Pressable
+          testID="inventory-scan-open"
+          accessibilityRole="button"
+          accessibilityLabel={t('inventoryScan')}
+          accessibilityHint={
+            scanReady ? undefined : t('inventoryScanUnavailableHint')
+          }
+          accessibilityState={{ disabled: !scanReady }}
+          disabled={!scanReady}
+          onPress={handleOpenScan}
+          style={styles.scanButton}
+        >
+          <Text style={styles.scanButtonText}>{t('inventoryScan')}</Text>
+        </Pressable>
+      </View>
       <InventoryList
         state={viewState}
         items={items}
@@ -397,6 +512,13 @@ export default function InventoryContainer({
         onOpenItem={mutationsReady ? handleOpenItem : undefined}
         onManageEntities={mutationsReady ? handleManageEntities : undefined}
       />
+      {scanOpen && dbHandle !== null ? (
+        <ScanScreen
+          db={dbHandle}
+          onResolved={handleScanResolved}
+          onClose={handleCloseScan}
+        />
+      ) : null}
       {route !== null && dbHandle !== null ? (
         <ItemFormScreen
           db={dbHandle}
@@ -455,6 +577,27 @@ export default function InventoryContainer({
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+  },
+  // U3 scanner entry: a compact bar above the list (the list component
+  // itself is outside this unit's edit surfaces, so the entry lives
+  // here). Unstyled chrome on purpose: the translated label carries the
+  // meaning, and the disabled state mirrors Add/Open/Manage.
+  scanBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  scanButton: {
+    minHeight: 48,
+    minWidth: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  scanButtonText: {
+    fontSize: 17,
+    fontWeight: '600',
   },
   // Transient confirmation (DESIGN.md §3.4/§4): small, non-blocking,
   // never focusable, never intercepts touches (`pointerEvents="none"`)

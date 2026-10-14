@@ -105,8 +105,8 @@ def main() -> int:
     v4_sql = extract_migration_sql(4)
     check("extracted MIGRATIONS[4] SQL", "CREATE TABLE" in v4_sql.upper())
     check(
-        "SCHEMA_VERSION is 4",
-        re.search(r"export const SCHEMA_VERSION\s*=\s*4", MIGRATIONS_TS.read_text()) is not None,
+        "SCHEMA_VERSION is 5",
+        re.search(r"export const SCHEMA_VERSION\s*=\s*5", MIGRATIONS_TS.read_text()) is not None,
     )
 
     # --- A. empty v3 migrates cleanly to v4 with the new shape -------------
@@ -325,6 +325,116 @@ def main() -> int:
         "blocked v4 preserves rows and version",
         con.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
         and con.execute("PRAGMA user_version").fetchone()[0] == 3,
+    )
+
+    # --- G. v5 additive migration: threshold, barcode, expiry -------------
+    v5_sql = extract_migration_sql(5)
+    check("extracted MIGRATIONS[5] SQL", "ALTER TABLE" in v5_sql.upper())
+    check(
+        "v5 adds both item columns",
+        "low_stock_threshold" in v5_sql and "barcode" in v5_sql,
+    )
+    check(
+        "v5 creates the unique barcode index",
+        "CREATE UNIQUE INDEX" in v5_sql.upper() and "idx_items_barcode" in v5_sql,
+    )
+    check("v5 adds the stock expiry column", "expires_on" in v5_sql)
+    check(
+        "v5 is additive: no rebuild, delete, or backfill",
+        all(
+            word not in v5_sql.upper()
+            for word in ("CREATE TABLE", "DROP TABLE", "DELETE FROM", "INSERT INTO")
+        ),
+    )
+    con = fresh_db()
+    con.execute("PRAGMA foreign_keys = ON")
+    apply_v3(con)
+    apply_v4_envelope(con, v4_sql)
+    before_items = con.execute("SELECT id, name, created_at FROM items ORDER BY id").fetchall()
+    before_stock = con.execute("SELECT item_id, location_id, quantity FROM stock").fetchall()
+    # Additive path: one transaction, FK pragma never toggled (only v4
+    # owns the FK-off envelope).
+    con.executescript(f"BEGIN;\n{v5_sql}\nPRAGMA user_version = 5;\nCOMMIT;")
+    check(
+        "v5 user_version recorded",
+        con.execute("PRAGMA user_version").fetchone()[0] == 5,
+    )
+    check(
+        "v5 preserves catalog and stock rows",
+        con.execute("SELECT id, name, created_at FROM items ORDER BY id").fetchall() == before_items
+        and con.execute("SELECT item_id, location_id, quantity FROM stock").fetchall() == before_stock,
+    )
+    item_cols = {row[1]: row for row in con.execute("PRAGMA table_info(items)").fetchall()}
+    check(
+        "items carries nullable threshold/barcode defaulting to NULL",
+        item_cols["low_stock_threshold"][2].upper() == "INTEGER"
+        and item_cols["barcode"][2].upper() == "TEXT"
+        and item_cols["low_stock_threshold"][3] == 0
+        and item_cols["barcode"][3] == 0
+        and item_cols["low_stock_threshold"][4] is None
+        and item_cols["barcode"][4] is None,
+        str(sorted(item_cols)),
+    )
+    stock_cols = {row[1]: row for row in con.execute("PRAGMA table_info(stock)").fetchall()}
+    check(
+        "stock carries nullable expires_on defaulting to NULL",
+        stock_cols["expires_on"][2].upper() == "TEXT"
+        and stock_cols["expires_on"][3] == 0
+        and stock_cols["expires_on"][4] is None,
+        str(sorted(stock_cols)),
+    )
+    barcode_unique = con.execute(
+        "SELECT `unique` FROM pragma_index_list('items') WHERE name = 'idx_items_barcode'"
+    ).fetchone()
+    check("idx_items_barcode is UNIQUE", barcode_unique is not None and barcode_unique[0] == 1)
+    # NULL barcodes never collide: three codeless items stay legal.
+    con.execute("INSERT INTO items (name) VALUES ('Rice')")
+    con.execute("INSERT INTO items (name) VALUES ('Beans')")
+    con.execute("INSERT INTO items (name) VALUES ('Salt')")
+    check(
+        "many items without a barcode stay legal",
+        con.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 3,
+    )
+    con.execute("INSERT INTO items (name, barcode) VALUES ('Honey', '12345678')")
+    check(
+        "duplicate barcode rejected (UNIQUE)",
+        expect_error(con, "INSERT INTO items (name, barcode) VALUES ('Oats', '12345678')") is not None,
+    )
+    rice = con.execute("SELECT id FROM items WHERE name = 'Rice'").fetchone()[0]
+    con.execute("UPDATE items SET low_stock_threshold = 0 WHERE id = ?", (rice,))
+    con.execute("UPDATE items SET low_stock_threshold = 999999 WHERE id = ?", (rice,))
+    con.execute("UPDATE items SET low_stock_threshold = NULL WHERE id = ?", (rice,))
+    check(
+        "threshold CHECK: 0/999999/NULL pass",
+        con.execute("SELECT low_stock_threshold FROM items WHERE id = ?", (rice,)).fetchone()[0] is None,
+    )
+    check(
+        "threshold CHECK: -1/1000000/1.5 rejected",
+        all(
+            expect_error(con, "UPDATE items SET low_stock_threshold = ? WHERE id = ?", (bad, rice)) is not None
+            for bad in (-1, 1000000, 1.5)
+        ),
+    )
+    loc = con.execute("INSERT INTO locations (name) VALUES ('Casa')").lastrowid
+    con.execute("INSERT INTO stock (item_id, location_id, quantity) VALUES (?, ?, 2)", (rice, loc))
+    con.execute("UPDATE stock SET expires_on = '2027-03-15' WHERE item_id = ?", (rice,))
+    con.execute("UPDATE stock SET expires_on = NULL WHERE item_id = ?", (rice,))
+    check(
+        "expires_on CHECK: ISO shape and NULL pass",
+        con.execute("SELECT expires_on FROM stock WHERE item_id = ?", (rice,)).fetchone()[0] is None,
+    )
+    check(
+        "expires_on CHECK: non-ISO text rejected",
+        all(
+            expect_error(con, "UPDATE stock SET expires_on = ? WHERE item_id = ?", (bad, rice)) is not None
+            for bad in ("not-a-date", "15-03-2027", "2027-3-5")
+        ),
+    )
+    check(
+        "location delete still cascades stock, never items (R3 after v5)",
+        expect_error(con, "DELETE FROM locations WHERE id = ?", (loc,)) is None
+        and con.execute("SELECT COUNT(*) FROM stock").fetchone()[0] == 0
+        and con.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 4,
     )
 
     print(f"\n{PASS_COUNT} checks passed, {len(FAILURES)} failed (host SQLite).")

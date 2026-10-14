@@ -18,10 +18,22 @@
  * validation can focus errors; absent save/close callbacks render
  * truthfully disabled, never no-op. Unit tests only — TalkBack/keyboard
  * focus needs Android proof, never claimed from Jest.
+ *
+ * U4 reminder fields ride the same carried-optional convention as the
+ * barcode: `lowStockThresholdRaw` (item-level raw number text) and each
+ * row's `expiresOnRaw` (raw ISO date text) are populated from the detail
+ * on edit, preserved by every spread, and omitted from the draft while
+ * blank — so an untouched edit can never disarm its own reminders, and
+ * clearing a field genuinely stores no value. The expiry is set through
+ * a real date picker (never free text); the picker converts at the pure
+ * date boundary so the value handling stays testable without native UI.
  */
 
+import DateTimePicker, {
+  type DateTimePickerEvent,
+} from '@react-native-community/datetimepicker';
 import type { Ref, RefObject } from 'react';
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AccessibilityInfo,
@@ -58,27 +70,56 @@ export type ItemFormMode = 'add' | 'edit';
  */
 export interface ItemFormValues {
   name: string;
+  /**
+   * U4 reminder level, raw text (blank or absent means no reminder).
+   * Optional so carried sessions keep the barcode convention: the
+   * detail populates it on edit, every `onChange` preserves it via
+   * spread, and blanks stay out of the draft. Empty means no reminder;
+   * the controller bounds it like a quantity.
+   */
+  lowStockThresholdRaw?: string;
   stock: ItemStockRowValues[];
   categories: ItemCategoryDraft[];
   pendingNewCategoryName: string;
+  /**
+   * U3 scanned identity: carried invisibly (no input renders it; the
+   * code is identity, not a form question). Optional so blank/manual
+   * sessions stay byte-identical to before; absent or blank means no
+   * code. Every `onChange` preserves it via spread, so the draft owns it.
+   */
+  barcode?: string | null;
 }
 
 /** One per-location editor row: a location selector plus raw quantity. */
 export interface ItemStockRowValues {
   location: ItemLocationDraft;
   quantityRaw: string;
+  /**
+   * U4 per-row expiry, raw ISO `YYYY-MM-DD` text (blank or absent means
+   * no expiry). Same carried-optional convention as the threshold: the
+   * detail populates it, spreads preserve it, and the picker edits it
+   * through the pure date helpers below (never free text).
+   */
+  expiresOnRaw?: string;
 }
 
 /** Per-row inline errors, index-aligned with `values.stock`. */
 export interface ItemStockRowErrors {
   location?: string;
   quantity?: string;
+  expiresOn?: string;
 }
 
-export type ItemFormField = 'name' | 'stock' | 'categories' | 'form';
+export type ItemFormField =
+  | 'name'
+  | 'lowStockThreshold'
+  | 'stock'
+  | 'categories'
+  | 'form';
 
 export interface ItemFormErrors {
   name?: string;
+  lowStockThreshold?: string;
   stock?: (ItemStockRowErrors | undefined)[];
   categories?: string;
   form?: string;
@@ -87,9 +128,10 @@ export interface ItemFormErrors {
 /** Mounted focus target descriptor for an error: a field or one row side. */
 export type ItemFormErrorTarget =
   | 'name'
+  | 'lowStockThreshold'
   | 'categories'
   | 'form'
-  | { row: number; side: 'quantity' | 'location' };
+  | { row: number; side: 'quantity' | 'location' | 'expiresOn' };
 
 export interface ItemFormProps {
   mode: ItemFormMode;
@@ -123,17 +165,20 @@ export interface ItemFormProps {
   categories: Category[];
 }
 
-/** First error to focus: name, then stock rows in order (quantity before
- * location within a row), then categories, then form. */
+/** First error to focus: name, threshold, then stock rows in order
+ * (quantity before location before expiry within a row), then
+ * categories, then form. */
 export function firstErrorField(
   errors?: ItemFormErrors,
 ): ItemFormErrorTarget | null {
   if (!errors) return null;
   if (errors.name) return 'name';
+  if (errors.lowStockThreshold) return 'lowStockThreshold';
   const rows = errors.stock ?? [];
   for (let row = 0; row < rows.length; row += 1) {
     if (rows[row]?.quantity) return { row, side: 'quantity' };
     if (rows[row]?.location) return { row, side: 'location' };
+    if (rows[row]?.expiresOn) return { row, side: 'expiresOn' };
   }
   if (errors.categories) return 'categories';
   if (errors.form) return 'form';
@@ -154,7 +199,9 @@ const REMOVE_GLYPH = '✕';
  * Mounted focus target for an error in each editor state. Row quantity
  * errors target that row's quantity input; row location errors target the
  * inline name input for new-location rows and the row's announced location
- * error otherwise (always mounted, never steals selection); categories
+ * error otherwise (always mounted, never steals selection); row expiry
+ * errors target the row's expiry toggle; the threshold error targets the
+ * always-mounted threshold input; categories
  * target the always-mounted new-category input and form errors target the
  * announced form alert.
  */
@@ -163,9 +210,13 @@ export function resolveErrorFocusTarget(
   locationKind: ItemLocationDraft['kind'] | undefined,
 ): string | null {
   if (target === 'name') return 'item-form/name';
+  if (target === 'lowStockThreshold') return 'item-form/threshold';
   if (typeof target === 'object' && target !== null) {
     if (target.side === 'quantity') {
       return `item-form/stock-${target.row}/quantity`;
+    }
+    if (target.side === 'expiresOn') {
+      return `item-form/stock-${target.row}/expires-toggle`;
     }
     return locationKind === 'new'
       ? `item-form/stock-${target.row}/location-new/name`
@@ -210,6 +261,41 @@ export function isQuantityAboveProductMax(raw: string): boolean {
     value > PRODUCT_MAX_QUANTITY &&
     value <= MAX_QUANTITY
   );
+}
+
+/**
+ * U4 expiry date boundary: the picker itself stays out of the decision
+ * logic. Form values and the draft carry the raw ISO `YYYY-MM-DD` text
+ * (the shape the schema and validation already expect); these pure
+ * functions convert at the picker edge so the value handling stays
+ * unit-testable without native UI. Local calendar fields (never UTC)
+ * format the picker's Date, so the stored text matches the day the user
+ * saw regardless of timezone.
+ */
+export function formatExpiresOnDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/** Parse raw expiry text to a picker Date; null for blank/misshapen. */
+export function parseExpiresOnToDate(raw: unknown): Date | null {
+  if (typeof raw !== 'string') return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date;
 }
 
 /** Best-effort native focus: a11y focus on device, direct focus fallback.
@@ -267,6 +353,18 @@ export interface ItemStockRowProps {
   onRemove: (index: number) => void;
   onEditNewLocation: (index: number, patch: Partial<NewLocationInput>) => void;
   onQuantityBlur: (index: number) => void;
+  /** U4: raw ISO expiry text for this row (blank means no expiry). */
+  onExpiresOnChange: (index: number, expiresOnRaw: string) => void;
+  /** U4: open this row's date picker (the picker renders one row at a time). */
+  onOpenExpiresPicker: (index: number) => void;
+  /** U4: true while this row's picker is open. */
+  expiresPickerOpen: boolean;
+  /** U4: picker dismissal/selection, converted at the date boundary. */
+  onExpiresPickerChange: (
+    index: number,
+    event: DateTimePickerEvent,
+    date: Date | undefined,
+  ) => void;
   registerNode: (testID: string) => (node: TextInput | View | null) => void;
 }
 
@@ -289,6 +387,10 @@ export const ItemStockRow = memo(function ItemStockRow({
   onRemove,
   onEditNewLocation,
   onQuantityBlur,
+  onExpiresOnChange,
+  onOpenExpiresPicker,
+  expiresPickerOpen,
+  onExpiresPickerChange,
   registerNode,
 }: ItemStockRowProps) {
   const { t } = useTranslation();
@@ -313,6 +415,13 @@ export const ItemStockRow = memo(function ItemStockRow({
         ? selector.location.name
         : t('itemFormLocationNew');
   const quantityTestID = `item-form/stock-${index}/quantity`;
+  // U4 per-row expiry: raw ISO text, blank means no expiry. The picker
+  // opens at the carried date (or today when unset); the ISO text
+  // itself renders verbatim as stored data, never translated copy.
+  const expiresText = (row.expiresOnRaw ?? '').trim();
+  const hasExpiry = expiresText !== '';
+  const expiresToggleTestID = `item-form/stock-${index}/expires-toggle`;
+  const pickerDate = parseExpiresOnToDate(row.expiresOnRaw) ?? new Date();
   return (
     <View style={styles.stockRow}>
       <View style={styles.stockRowHeader}>
@@ -487,6 +596,66 @@ export const ItemStockRow = memo(function ItemStockRow({
           message={rowErrors.location}
           palette={palette}
           focusRef={registerNode(`item-form/error-stock-${index}-location`)}
+        />
+      ) : null}
+      <Text style={[styles.subLabel, { color: palette.text }]}>
+        {t('itemFormExpiresOnLabel')}
+      </Text>
+      <View style={styles.expiryRow}>
+        <Pressable
+          testID={expiresToggleTestID}
+          ref={registerNode(expiresToggleTestID)}
+          accessibilityRole="button"
+          accessibilityLabel={
+            hasExpiry
+              ? `${t('itemFormExpiresOnLabel')}: ${expiresText}`
+              : t('itemFormExpiresOnSet')
+          }
+          accessibilityState={{ disabled: pending }}
+          disabled={pending}
+          onPress={() => onOpenExpiresPicker(index)}
+          style={[
+            styles.chip,
+            {
+              borderColor: palette.controlBorder,
+              backgroundColor: 'transparent',
+            },
+          ]}
+        >
+          <Text style={{ color: palette.text }}>
+            {hasExpiry ? expiresText : t('itemFormExpiresOnSet')}
+          </Text>
+        </Pressable>
+        {hasExpiry ? (
+          <Pressable
+            testID={`item-form/stock-${index}/expires-clear`}
+            accessibilityRole="button"
+            accessibilityLabel={t('itemFormExpiresOnClear')}
+            accessibilityState={{ disabled: pending }}
+            disabled={pending}
+            onPress={() => onExpiresOnChange(index, '')}
+            style={styles.draftRemove}
+          >
+            <Text style={[styles.draftRemoveText, { color: palette.accent }]}>
+              {REMOVE_GLYPH}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+      {expiresPickerOpen ? (
+        <DateTimePicker
+          testID={`item-form/stock-${index}/expires-picker`}
+          value={pickerDate}
+          mode="date"
+          display="default"
+          onChange={(event, date) => onExpiresPickerChange(index, event, date)}
+        />
+      ) : null}
+      {rowErrors?.expiresOn ? (
+        <FieldError
+          testID={`item-form/error-stock-${index}-expiresOn`}
+          message={rowErrors.expiresOn}
+          palette={palette}
         />
       ) : null}
     </View>
@@ -836,6 +1005,40 @@ export default function ItemForm({
     [pending, onFieldBlur],
   );
 
+  // U4: one open date picker at a time (row index, never the date
+  // itself). The date lives in the row's `expiresOnRaw`; this state only
+  // decides which row renders its picker.
+  const [expiresPickerRow, setExpiresPickerRow] = useState<number | null>(null);
+
+  const handleExpiresOnChange = useCallback(
+    (index: number, expiresOnRaw: string) => {
+      if (pending) return;
+      setRow(index, { expiresOnRaw });
+    },
+    [pending, setRow],
+  );
+
+  const handleOpenExpiresPicker = useCallback(
+    (index: number) => {
+      if (pending) return;
+      setExpiresPickerRow(index);
+    },
+    [pending],
+  );
+
+  // U4 picker edge: dismissal only closes; a picked date is stored
+  // through the pure ISO formatter, so the conversion stays testable
+  // without native UI.
+  const handleExpiresPickerChange = useCallback(
+    (index: number, event: DateTimePickerEvent, date: Date | undefined) => {
+      setExpiresPickerRow(null);
+      if (pending) return;
+      if (event?.type === 'dismissed' || date === undefined) return;
+      setRow(index, { expiresOnRaw: formatExpiresOnDate(date) });
+    },
+    [pending, setRow],
+  );
+
   // Location-identity projection of the stock rows: quantity-only
   // keystrokes keep this key, so the membership set and the filtered chip
   // list below keep their identities and memoized sections skip those
@@ -1100,6 +1303,36 @@ export default function ItemForm({
         ) : null}
 
         <Text style={[styles.label, { color: palette.text }]}>
+          {t('itemFormLowStockThresholdLabel')}
+        </Text>
+        <TextInput
+          testID="item-form/threshold"
+          ref={registerNode('item-form/threshold')}
+          accessibilityLabel={t('itemFormLowStockThresholdLabel')}
+          placeholder={t('itemFormLowStockThresholdPlaceholder')}
+          placeholderTextColor={palette.secondary}
+          value={values.lowStockThresholdRaw ?? ''}
+          onChangeText={(next) => {
+            if (!pending) onChange({ ...values, lowStockThresholdRaw: next });
+          }}
+          editable={!pending}
+          keyboardType="number-pad"
+          inputMode="numeric"
+          returnKeyType="done"
+          style={[
+            styles.input,
+            { color: palette.text, borderColor: palette.controlBorder },
+          ]}
+        />
+        {errors?.lowStockThreshold ? (
+          <FieldError
+            testID="item-form/error-low-stock-threshold"
+            message={errors.lowStockThreshold}
+            palette={palette}
+          />
+        ) : null}
+
+        <Text style={[styles.label, { color: palette.text }]}>
           {t('itemFormStockLabel')}
         </Text>
         {values.stock.map((row, index) => {
@@ -1121,6 +1354,10 @@ export default function ItemForm({
               onRemove={removeRow}
               onEditNewLocation={editRowNewLocation}
               onQuantityBlur={handleQuantityBlur}
+              onExpiresOnChange={handleExpiresOnChange}
+              onOpenExpiresPicker={handleOpenExpiresPicker}
+              expiresPickerOpen={expiresPickerRow === index}
+              onExpiresPickerChange={handleExpiresPickerChange}
               registerNode={registerNode}
             />
           );
@@ -1292,6 +1529,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     fontSize: 17,
     textAlign: 'center',
+  },
+  expiryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
   },
   exhausted: {
     fontSize: 15,

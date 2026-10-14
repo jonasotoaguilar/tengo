@@ -38,6 +38,21 @@
  * runner (see `src/db/index.ts`) owns that envelope; this SQL only holds
  * the rebuild plus its preserve-and-stop guard.
  *
+ * Migration 5 (scanner + reminders base, U2) is purely ADDITIVE: two
+ * `ALTER TABLE items ADD COLUMN` (`low_stock_threshold`, `barcode`), one
+ * `CREATE UNIQUE INDEX` (`idx_items_barcode`), and one `ALTER TABLE stock
+ * ADD COLUMN` (`expires_on`). No table is rebuilt, so no preserve-and-stop
+ * guard is needed: existing rows keep every value and the new columns
+ * default to NULL. The runner applies it on the generic path (FK ON,
+ * one transaction with the version bump) — only v4 owns the FK-off
+ * envelope. `low_stock_threshold` mirrors the S10 product bound
+ * (0-999999, integer storage) in SQL; the barcode SHAPE is domain-only
+ * (same split as S11 accents: SQLite cannot express the code regex, so
+ * `normalizeBarcode` owns it and the UNIQUE index owns identity); the
+ * `expires_on` CHECK enforces the ISO YYYY-MM-DD shape while calendar
+ * validity (month/day, leap years) stays domain-only in
+ * `normalizeExpiresOn`.
+ *
  * The guard aborts with a clear `Migration to schema version 4 blocked`
  * message (via a single-firing TEMP trigger, same pattern as v3) when the
  * copied catalog count differs from the old item count or the stock sum
@@ -47,7 +62,7 @@
  * never rewritten, never an invented location, never backfilled. `PRAGMA
  * foreign_key_check` must come back empty before the version bump.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const MIGRATIONS: Record<number, string> = {
   1: `
@@ -159,6 +174,18 @@ DROP TABLE items;
 ALTER TABLE items_new RENAME TO items;
 UPDATE sqlite_sequence SET name = 'items' WHERE name = 'items_new';
 CREATE INDEX IF NOT EXISTS idx_stock_location_id ON stock (location_id);
+`.trim(),
+  // Additive (U2 scanner + reminders base): two nullable item columns,
+  // the UNIQUE barcode identity index, and one nullable stock column.
+  // Existing rows are untouched (new columns default to NULL) and NULL
+  // barcodes never collide, so many codeless items stay legal. Runs on
+  // the generic runner path: FK ON, one transaction with the version
+  // bump, no envelope, no guard.
+  5: `
+ALTER TABLE items ADD COLUMN low_stock_threshold INTEGER CHECK (low_stock_threshold IS NULL OR (typeof(low_stock_threshold) = 'integer' AND low_stock_threshold >= 0 AND low_stock_threshold <= 999999));
+ALTER TABLE items ADD COLUMN barcode TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_items_barcode ON items (barcode);
+ALTER TABLE stock ADD COLUMN expires_on TEXT CHECK (expires_on IS NULL OR (expires_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'));
 `.trim(),
 };
 

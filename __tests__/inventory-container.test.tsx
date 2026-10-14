@@ -39,7 +39,39 @@ jest.mock('../src/inventory/itemRepository', () => ({
   createItemFromDraft: jest.fn(),
   updateItemFromDraft: jest.fn(),
   deleteItem: jest.fn(),
+  // U3 scanner lookup (null = unknown code; the real default resolves
+  // per test below, never in the suites above).
+  findItemByBarcode: jest.fn(),
 }));
+
+// U3 scanner camera boundary (virtual: these suites never touch a real
+// camera; `ScanScreen` mounts only when a test below opens it).
+jest.mock(
+  'expo-camera',
+  () => {
+    const React = require('react');
+    const { View } = require('react-native');
+    return {
+      CameraView: ({
+        onBarcodeScanned,
+        onMountError,
+        testID,
+      }: {
+        onBarcodeScanned?: (event: { data: string }) => void;
+        onMountError?: (event: { message: string }) => void;
+        testID?: string;
+      }) =>
+        React.createElement(View, {
+          testID: testID ?? 'scan-camera',
+          // Tests read the handlers back off props; no real camera.
+          onBarcodeScanned,
+          onMountError,
+        }),
+      useCameraPermissions: jest.fn(() => [null, jest.fn()]),
+    };
+  },
+  { virtual: true },
+);
 
 jest.mock('react-native-safe-area-context', () => {
   const React = require('react');
@@ -140,6 +172,28 @@ function makeFakeDb() {
           });
         }),
     ),
+    // U1 last-used read: the newest stocked item's location among
+    // locations that still exist (JOIN-equivalent filter), smallest
+    // location on ties, null when no stock row qualifies.
+    getFirstAsync: jest.fn(async (sql: string) => {
+      if (!sql.includes('FROM stock'))
+        throw new Error(`unexpected SQL: ${sql}`);
+      const live = new Set(store.locations.map((l) => l.id));
+      let best: { itemId: number; locationId: number } | null = null;
+      for (const row of store.stock) {
+        const itemId = row.stock_item_id as number;
+        const locationId = row.location_id as number;
+        if (!live.has(locationId)) continue;
+        if (
+          best === null ||
+          itemId > best.itemId ||
+          (itemId === best.itemId && locationId < best.locationId)
+        ) {
+          best = { itemId, locationId };
+        }
+      }
+      return best === null ? null : { location_id: best.locationId };
+    }),
     closeAsync,
   };
 }
@@ -600,7 +654,12 @@ describe('U2b opt-in mutations (enableMutations)', () => {
 
   async function fillValidCreateForm(): Promise<void> {
     await fireEvent.changeText(screen.getByTestId('item-form/name'), 'Quinoa');
-    await fireEvent.press(screen.getByTestId('item-form/location-10'));
+    // U1: the form opens prefilled with the last-used location (Pantry
+    // in this seed), so its chip is already consumed — append it only
+    // when it is still offered. End state is unchanged either way.
+    if (screen.queryByTestId('item-form/location-10') !== null) {
+      await fireEvent.press(screen.getByTestId('item-form/location-10'));
+    }
     await fireEvent.changeText(
       screen.getByTestId('item-form/stock-0/quantity'),
       '1',
@@ -814,7 +873,12 @@ describe('M4 transient feedback (Gap A)', () => {
 
   async function fillValidCreateForm(): Promise<void> {
     await fireEvent.changeText(screen.getByTestId('item-form/name'), 'Quinoa');
-    await fireEvent.press(screen.getByTestId('item-form/location-10'));
+    // U1: the form opens prefilled with the last-used location (Pantry
+    // in this seed), so its chip is already consumed — append it only
+    // when it is still offered. End state is unchanged either way.
+    if (screen.queryByTestId('item-form/location-10') !== null) {
+      await fireEvent.press(screen.getByTestId('item-form/location-10'));
+    }
     await fireEvent.changeText(
       screen.getByTestId('item-form/stock-0/quantity'),
       '1',
@@ -1226,7 +1290,12 @@ describe('T1 search-cost optimization (S2.1)', () => {
     await fireEvent.press(screen.getByTestId('inventory-add-header'));
     expect(await screen.findByTestId('item-form/name')).toBeTruthy();
     await fireEvent.changeText(screen.getByTestId('item-form/name'), 'Quinoa');
-    await fireEvent.press(screen.getByTestId('item-form/location-10'));
+    // U1: the form opens prefilled with the last-used location (Pantry
+    // in this seed), so its chip is already consumed — append it only
+    // when it is still offered. End state is unchanged either way.
+    if (screen.queryByTestId('item-form/location-10') !== null) {
+      await fireEvent.press(screen.getByTestId('item-form/location-10'));
+    }
     await fireEvent.changeText(
       screen.getByTestId('item-form/stock-0/quantity'),
       '1',
@@ -1261,6 +1330,294 @@ describe('T1 search-cost optimization (S2.1)', () => {
     );
     expect(screen.getByTestId('inventory-location-12')).toBeTruthy();
     expect(screen.getByTestId('inventory-category-21')).toBeTruthy();
+    await cleanup();
+  });
+});
+
+describe('U1 quick capture (last-used location prefill)', () => {
+  const repository = require('../src/inventory/itemRepository') as {
+    getItem: jest.Mock;
+    createItemFromDraft: jest.Mock;
+    updateItemFromDraft: jest.Mock;
+    deleteItem: jest.Mock;
+  };
+
+  const riceDetail = {
+    id: 1,
+    name: 'Rice',
+    stock: [
+      {
+        locationId: 10,
+        location: {
+          id: 10,
+          name: 'Pantry',
+          address: null,
+          created_at: 'loc-created-10',
+        },
+        quantity: 2,
+      },
+    ],
+    totalQuantity: 2,
+    categoryIds: [],
+    categories: [],
+    created_at: 'created-1',
+  };
+
+  beforeEach(() => {
+    repository.getItem.mockReset();
+    repository.createItemFromDraft.mockReset();
+    repository.updateItemFromDraft.mockReset();
+    repository.deleteItem.mockReset();
+    repository.getItem.mockResolvedValue({ ...riceDetail });
+  });
+
+  async function renderMutations() {
+    return render(
+      <I18nextProvider i18n={i18n}>
+        <InventoryContainer enableMutations />
+      </I18nextProvider>,
+    );
+  }
+
+  test('Add opens with the newest stocked location prefilled and an empty quantity', async () => {
+    // Lentils (item 2) is newer than Rice (item 1): its Fridge stock is
+    // the last-used location even though Rice also has stock.
+    store.stock = [stockRow(1, 2, 10, 'Pantry'), stockRow(2, 1, 11, 'Fridge')];
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-add-header'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+    expect(screen.getByTestId('item-form/stock-0/name')).toHaveTextContent(
+      'Fridge',
+    );
+    expect(screen.getByTestId('item-form/stock-0/quantity').props.value).toBe(
+      '',
+    );
+    // Exactly one prefilled row, never a second guess.
+    expect(screen.queryByTestId('item-form/stock-1/name')).toBeNull();
+    await cleanup();
+  });
+
+  test('a fresh database with no stock opens the blank form', async () => {
+    store.stock = [];
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-add-header'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+    expect(screen.queryByTestId('item-form/stock-0/name')).toBeNull();
+    await cleanup();
+  });
+
+  test('a deleted location falls back to the blank form, never a stale row', async () => {
+    // The only stock lived in the Pantry, which no longer exists: the
+    // derived id must not render as a stale row (not even as `#10`).
+    store.locations = store.locations.filter((l) => l.id !== 10);
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-add-header'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+    expect(screen.queryByTestId('item-form/stock-0/name')).toBeNull();
+    expect(screen.queryByText(/#10/)).toBeNull();
+    await cleanup();
+  });
+
+  test('a last-used read failure still opens the blank form', async () => {
+    const fake = makeFakeDb();
+    (fake.getFirstAsync as jest.Mock).mockRejectedValueOnce(
+      new Error('last-used read blew up'),
+    );
+    initializeDatabase.mockResolvedValueOnce(fake);
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-add-header'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+    expect(screen.queryByTestId('item-form/stock-0/name')).toBeNull();
+    expect(screen.queryByText(/blew up/)).toBeNull();
+    await cleanup();
+  });
+
+  test('U1 PRESERVE: edit opens the stored rows with no prefilled row', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-row-1'));
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+    expect(screen.getByTestId('item-form/name').props.value).toBe('Rice');
+    // Exactly the stored breakdown: one Pantry row at quantity 2.
+    expect(screen.getByTestId('item-form/stock-0/name')).toHaveTextContent(
+      'Pantry',
+    );
+    expect(screen.getByTestId('item-form/stock-0/quantity').props.value).toBe(
+      '2',
+    );
+    expect(screen.queryByTestId('item-form/stock-1/name')).toBeNull();
+    await cleanup();
+  });
+});
+
+describe('U3 barcode scan entry (scan to find or create)', () => {
+  const cameraMocks = require('expo-camera') as {
+    useCameraPermissions: jest.Mock;
+  };
+  const repository = require('../src/inventory/itemRepository') as {
+    getItem: jest.Mock;
+    findItemByBarcode: jest.Mock;
+  };
+
+  const riceDetail = {
+    id: 1,
+    name: 'Rice',
+    stock: [
+      {
+        locationId: 10,
+        location: {
+          id: 10,
+          name: 'Pantry',
+          address: null,
+          created_at: 'loc-created-10',
+        },
+        quantity: 2,
+      },
+    ],
+    totalQuantity: 2,
+    categoryIds: [],
+    categories: [],
+    created_at: 'created-1',
+  };
+
+  beforeEach(() => {
+    repository.getItem.mockReset();
+    repository.findItemByBarcode.mockReset();
+    repository.getItem.mockResolvedValue({ ...riceDetail });
+    repository.findItemByBarcode.mockResolvedValue(null);
+    cameraMocks.useCameraPermissions.mockReturnValue([
+      { granted: true, canAskAgain: true },
+      jest.fn(async () => ({ granted: true })),
+    ]);
+  });
+
+  async function renderMutations() {
+    return render(
+      <I18nextProvider i18n={i18n}>
+        <InventoryContainer enableMutations />
+      </I18nextProvider>,
+    );
+  }
+
+  async function emitContainerScan(data: string): Promise<void> {
+    const camera = await screen.findByTestId('scan-camera');
+    await act(async () => {
+      await (
+        camera.props as {
+          onBarcodeScanned: (event: { data: string }) => void;
+        }
+      ).onBarcodeScanned({ data });
+    });
+  }
+
+  test('the scan entry stays disabled without opt-in mutations', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderContainer();
+    await settle();
+    const scan = await screen.findByTestId('inventory-scan-open');
+    expect(scan).toBeDisabled();
+    expect(String(scan.props.accessibilityHint ?? '')).toMatch(
+      /not available/i,
+    );
+    await cleanup();
+  });
+
+  test('the scan entry opens the scanner once the handle is ready', async () => {
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+    expect(screen.getByTestId('inventory-scan-open')).not.toBeDisabled();
+
+    await fireEvent.press(screen.getByTestId('inventory-scan-open'));
+    expect(await screen.findByTestId('scan-screen')).toBeTruthy();
+    expect(screen.getByTestId('scan-camera')).toBeTruthy();
+
+    await fireEvent.press(screen.getByTestId('scan-close'));
+    await waitFor(() => expect(screen.queryByTestId('scan-screen')).toBeNull());
+    await cleanup();
+  });
+
+  test('a known scan opens that item for edit', async () => {
+    repository.findItemByBarcode.mockResolvedValueOnce({ ...riceDetail });
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-scan-open'));
+    await emitContainerScan('ABC-1234');
+    expect(repository.findItemByBarcode).toHaveBeenCalledTimes(1);
+    // The scanner closes and the edit route opens prefilled.
+    await waitFor(() => expect(screen.queryByTestId('scan-screen')).toBeNull());
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+    expect(screen.getByTestId('item-form/name').props.value).toBe('Rice');
+    expect(repository.getItem).toHaveBeenCalledWith(expect.anything(), 1);
+    await cleanup();
+  });
+
+  test('an unknown scan opens the create route', async () => {
+    repository.findItemByBarcode.mockResolvedValueOnce(null);
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-scan-open'));
+    await emitContainerScan('ZZZ-9999');
+    await waitFor(() => expect(screen.queryByTestId('scan-screen')).toBeNull());
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+    expect(screen.getByText('New item')).toBeTruthy();
+    await cleanup();
+  });
+
+  test('U3 RED: an unknown scan carries the code into the created item', async () => {
+    const mutations = require('../src/inventory/itemRepository') as {
+      createItemFromDraft: jest.Mock;
+    };
+    mutations.createItemFromDraft.mockReset();
+    mutations.createItemFromDraft.mockResolvedValue({
+      id: 3,
+      name: 'Scanned beans',
+      stock: [],
+      totalQuantity: 0,
+      categoryIds: [],
+      categories: [],
+      created_at: 'created-3',
+      barcode: 'ZZZ-9999',
+    });
+    repository.findItemByBarcode.mockResolvedValueOnce(null);
+    initializeDatabase.mockResolvedValueOnce(makeFakeDb());
+    await renderMutations();
+    await settle();
+
+    await fireEvent.press(screen.getByTestId('inventory-scan-open'));
+    await emitContainerScan('ZZZ-9999');
+    await waitFor(() => expect(screen.queryByTestId('scan-screen')).toBeNull());
+    expect(await screen.findByTestId('item-form/name')).toBeTruthy();
+    await fireEvent.changeText(
+      screen.getByTestId('item-form/name'),
+      'Scanned beans',
+    );
+    await fireEvent.press(screen.getByTestId('item-form/save'));
+    await waitFor(() =>
+      expect(mutations.createItemFromDraft).toHaveBeenCalledTimes(1),
+    );
+    const draft = mutations.createItemFromDraft.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(draft.barcode).toBe('ZZZ-9999');
     await cleanup();
   });
 });

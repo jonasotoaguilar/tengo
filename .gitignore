@@ -50,3 +50,7 @@ yarn-error.*
 # Lefthook local overrides (per-machine hook tweaks; see lefthook.yml).
 /lefthook-local.yml
 /skills-lock.json
+
+# A worktree may link node_modules to the main checkout; a trailing slash
+# does not match a symlink, so the entry is written without one.
+node_modules

@@ -61,6 +61,13 @@ export interface ItemFormValues {
   stock: ItemStockRowValues[];
   categories: ItemCategoryDraft[];
   pendingNewCategoryName: string;
+  /**
+   * U3 scanned identity: carried invisibly (no input renders it; the
+   * code is identity, not a form question). Optional so blank/manual
+   * sessions stay byte-identical to before; absent or blank means no
+   * code. Every `onChange` preserves it via spread, so the draft owns it.
+   */
+  barcode?: string | null;
 }
 
 /** One per-location editor row: a location selector plus raw quantity. */

@@ -105,6 +105,20 @@ export const en = {
     'A category with this name already exists.',
   itemFormSaved: 'Item saved.',
   itemFormDeleted: 'Item deleted.',
+  inventoryScan: 'Scan',
+  inventoryScanUnavailableHint:
+    'Scanning barcodes is not available in this preview yet.',
+  scanTitle: 'Scan barcode',
+  scanPrompt: 'Point the camera at a barcode.',
+  scanLoading: 'Preparing the camera…',
+  scanChecking: 'Looking up…',
+  scanInvalidCode: 'That code is not a valid barcode. Try again.',
+  scanPermissionDenied: 'Camera access is off. Allow it to scan barcodes.',
+  scanRetryPermission: 'Allow camera',
+  scanPermissionPermanent:
+    'Camera access is blocked. Open system settings to allow it.',
+  scanOpenSettings: 'Open settings',
+  scanNoCamera: 'No camera is available on this device.',
   inventoryManageEntities: 'Manage locations and categories',
   inventoryManageEntitiesUnavailableHint:
     'Managing locations and categories is not available in this preview yet.',
@@ -245,6 +259,20 @@ export const es: typeof en = {
   itemFormErrorCategoryNameConflict: 'Ya existe una categoría con este nombre.',
   itemFormSaved: 'Artículo guardado.',
   itemFormDeleted: 'Artículo eliminado.',
+  inventoryScan: 'Escanear',
+  inventoryScanUnavailableHint:
+    'Escanear códigos aún no está disponible en esta vista previa.',
+  scanTitle: 'Escanear código',
+  scanPrompt: 'Apunta la cámara a un código de barras.',
+  scanLoading: 'Preparando la cámara…',
+  scanChecking: 'Buscando…',
+  scanInvalidCode: 'Ese código no es un código válido. Inténtalo de nuevo.',
+  scanPermissionDenied: 'La cámara está desactivada. Permítela para escanear.',
+  scanRetryPermission: 'Permitir cámara',
+  scanPermissionPermanent:
+    'El acceso a la cámara está bloqueado. Ábrelo en los ajustes del sistema.',
+  scanOpenSettings: 'Abrir ajustes',
+  scanNoCamera: 'Este dispositivo no tiene cámara disponible.',
   inventoryManageEntities: 'Gestionar ubicaciones y categorías',
   inventoryManageEntitiesUnavailableHint:
     'Gestionar ubicaciones y categorías aún no está disponible en esta vista previa.',

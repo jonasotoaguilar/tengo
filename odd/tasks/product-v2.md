@@ -63,3 +63,27 @@ packaging work starts.
   identity (one code, one item, unique index), so it rides in the same additive v5 migration as the threshold and the
   expiry date instead of a second migration. The scanner's value is "scan to find or create": without a product catalog the
   code cannot supply a name, but a re-scan of the same code must reach the same item.
+- **L5** (bug found by a unit, reported instead of worked around): the scanner could open the add form for an unknown
+  barcode but the code never reached the created item, so a re-scan reached nothing — the exact value the feature existed
+  for. Cause: the brief's allowed surfaces excluded the form plumbing. Fixed in `b426114`; the rule it earned is in
+  `AGENTS.md` ("check that a unit can be finished inside the surfaces you grant").
+- **L6** (bug found by a unit, reported instead of worked around): the item form carried neither `lowStockThreshold` nor
+  `expiresOn` in its save draft, and the repository writes the draft verbatim, so **editing an item silently disarmed its
+  own reminders** — and no user could set either value in the first place. Cause: the schema unit added the fields, the
+  reminders unit wired them, and neither owned the form. Fixed in `0733fe2`; the rule it earned is in `AGENTS.md` ("a new
+  persisted field is not done until the form carries it"). Nothing was on `main` while this existed, so no user was
+  affected.
+- **L7** (sizes, measured rather than assumed): `git diff` does not list new files, so a unit's real size is only visible
+  after counting them. The scanner measured 1327 authored lines against this repo's 800-line PR limit and ships as two
+  commits (`207f523` + `b426114`), the larger one carrying `size:exception`; the form unit measured 978 and ships as one
+  with the same exception. Splitting further would have cut a test file mid-way or left a decision unit without its tests.
+- **L8** (widget feasibility gate, answered before any code was written): a home-screen widget is **not feasible in this
+  project as it stands**. Evidence: this is a bare managed Expo project with no checked-in native tree (`.gitignore` lists
+  `/android` and `/ios` as generated), nothing installed provides widgets (the only `expo-widgets` mention is an optional
+  peer inside `babel-preset-expo`, not an installed package), and a widget runs in a separate process with no React
+  runtime, so it cannot use the app's `expo-sqlite` driver and would have to open the same database file natively — and
+  the repo has no cross-process data path (no ContentProvider, no exported file or share). The smallest change that would
+  make it feasible: a widget-capable native surface through tracked config (a widget module plus its `app.json` plugin),
+  then `expo prebuild` to materialize the ignored `android/` provider, plus a design for sharing the database across
+  processes. U5 therefore stops at this boundary and reports instead of shipping a guess. Reopening it is a scope decision
+  for the user: it would put a native tree in a project that has deliberately had none.

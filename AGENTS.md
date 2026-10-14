@@ -66,7 +66,7 @@ These rules exist because they were broken and the user reported the damage.
 
 ## Worktree and delegation hygiene
 
-These rules also exist because they were broken, twice each.
+These rules exist because they were broken -- most of them more than once.
 
 - **A task's spec document must exist inside the worktree the worker reads.** A
   spec written only in another checkout is invisible to the worker: it happened
@@ -90,3 +90,10 @@ These rules also exist because they were broken, twice each.
   form plumbing sat outside its surfaces, so re-scanning reached nothing — the
   exact value the feature existed for. Trace the data path from entry to stored
   value before delegating, and grant every file it crosses.
+- **A new persisted field is not done until the form carries it.** The repository
+  writes the save draft verbatim, so a field the draft omits is a field an edit
+  erases. Schema v5 added the low-stock threshold and the expiry, the reminders
+  unit wired them to notifications, and neither owned the item form — so editing
+  an item silently disarmed its own reminders, and no user could set either value
+  in the first place. Wire the field, the form that carries it, and the way the
+  user sets it in the same phase, and test that an untouched edit preserves it.

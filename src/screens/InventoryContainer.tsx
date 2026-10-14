@@ -45,6 +45,7 @@ import type {
   ItemFilter,
   Location,
 } from '../inventory/types';
+import { useReminders } from '../notifications/useReminders';
 import ItemFormScreen from './ItemFormScreen';
 import ScanScreen from './ScanScreen';
 import type { ScanRoute } from './useBarcodeScanController';
@@ -186,6 +187,22 @@ export default function InventoryContainer({
   const staticKeyRef = useRef<string | null>(null);
   const staticLoadedRef = useRef(false);
   const allItemsRef = useRef<ItemDetail[]>([]);
+  // Write affordances arm only when opted in AND the handle is reactively
+  // available. Literally `undefined` otherwise, preserving the disabled
+  // rendering and the DEV read-only fixture.
+  const mutationsReady = enableMutations && dbHandle !== null;
+  // U4 local reminders (S4): armed only for writers, so read-only
+  // sessions never prompt for permission and never schedule. The hook
+  // resolves `'skipped'` without a single native call when permission
+  // is not granted, so a denial changes nothing else below. Declared
+  // before the save/delete handlers that call into it.
+  const reminders = useReminders({ enabled: mutationsReady });
+  // Live mirror of the rendered page: the save/delete handlers look up
+  // the pre-mutation detail here (stable callback identity, no state
+  // closure), so the crossing rule and the expiry cancel set see the
+  // row exactly as it was before the write.
+  const itemsRef = useRef<ItemDetail[]>([]);
+  itemsRef.current = items;
 
   // U1 quick capture: the form opens already pointed at the household's
   // last-used location, derived from the database (bounded single-row
@@ -219,16 +236,40 @@ export default function InventoryContainer({
   const handleOpenItem = useCallback((id: number) => {
     setRoute({ kind: 'edit', itemId: id });
   }, []);
-  const handleSaved = useCallback(() => {
-    backgroundRefreshRef.current = true;
-    setRefreshToken((token) => token + 1);
-    setNotice((prev) => ({ kind: 'saved', token: (prev?.token ?? 0) + 1 }));
-  }, []);
-  const handleDeleted = useCallback(() => {
-    backgroundRefreshRef.current = true;
-    setRefreshToken((token) => token + 1);
-    setNotice((prev) => ({ kind: 'deleted', token: (prev?.token ?? 0) + 1 }));
-  }, []);
+  const handleSaved = useCallback(
+    (detail: ItemDetail) => {
+      // U4: the mutation already persisted — decide locally whether it
+      // crossed a threshold or moved an expiry date. Fire-and-forget by
+      // design (the hook never throws): the refresh and the notice below
+      // run identically whether reminders are granted, denied, or silent.
+      const prev =
+        itemsRef.current.find((item) => item.id === detail.id) ?? null;
+      void reminders.afterSave(prev, detail);
+      backgroundRefreshRef.current = true;
+      setRefreshToken((token) => token + 1);
+      setNotice((prevNotice) => ({
+        kind: 'saved',
+        token: (prevNotice?.token ?? 0) + 1,
+      }));
+    },
+    [reminders],
+  );
+  const handleDeleted = useCallback(
+    (id: number) => {
+      // U4: the item is gone — cancel its rows from the last-known
+      // detail so no orphan reminder survives it. Same fire-and-forget
+      // contract as the save path above.
+      const prev = itemsRef.current.find((item) => item.id === id) ?? null;
+      void reminders.afterDelete(prev);
+      backgroundRefreshRef.current = true;
+      setRefreshToken((token) => token + 1);
+      setNotice((prevNotice) => ({
+        kind: 'deleted',
+        token: (prevNotice?.token ?? 0) + 1,
+      }));
+    },
+    [reminders],
+  );
   const handleDismiss = useCallback(() => {
     setRoute(null);
   }, []);
@@ -262,11 +303,6 @@ export default function InventoryContainer({
     backgroundRefreshRef.current = true;
     setRefreshToken((token) => token + 1);
   }, []);
-
-  // Write affordances arm only when opted in AND the handle is reactively
-  // available. Literally `undefined` otherwise, preserving the disabled
-  // rendering and the DEV read-only fixture.
-  const mutationsReady = enableMutations && dbHandle !== null;
 
   // Transient-notice lifecycle: announce once per new message, then
   // auto-clear after about 3 seconds. The cleanup clears the pending

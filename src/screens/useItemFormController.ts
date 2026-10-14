@@ -15,6 +15,12 @@
  * `onSaved`/`onDeleted` so U2b can refresh the current list, total, and
  * choices; the hook performs no refresh itself. Unit tests only — no
  * native persistence proof (existing domain atomic proof stands).
+ *
+ * U4 reminder carrying: the edit load reads `lowStockThreshold` and each
+ * row's `expiresOn` from the detail into the raw form values (same
+ * carried-optional convention as the scanned code), the save converts
+ * them back into the draft, and a cleared field genuinely stores no
+ * value — so an untouched edit preserves both, never silently wipes them.
  */
 import {
   useCallback,
@@ -59,6 +65,7 @@ import {
   ITEM_NAME_MAX_LENGTH,
   LOCATION_NAME_MAX_LENGTH,
   normalizeBarcode,
+  normalizeExpiresOn,
 } from '../inventory/validation';
 
 export type ItemFormRoute =
@@ -226,11 +233,22 @@ export function blankItemFormValues(
 
 function detailToValues(detail: ItemDetail): ItemFormValues {
   const barcode = sanitizeCarriedBarcode(detail.barcode);
+  // U4: the reminder level rides the values like the scanned code — a
+  // stored number becomes its raw text, absent stays absent so untouched
+  // sessions keep their shape and an untouched save re-stores the value.
+  const threshold = detail.lowStockThreshold ?? null;
   return {
     name: detail.name,
+    ...(typeof threshold === 'number'
+      ? { lowStockThresholdRaw: String(threshold) }
+      : {}),
     stock: detail.stock.map((level) => ({
       location: { kind: 'existing', locationId: level.locationId },
       quantityRaw: String(level.quantity),
+      // U4: each row's expiry rides along; blank stays absent.
+      ...(typeof level.expiresOn === 'string' && level.expiresOn.trim() !== ''
+        ? { expiresOnRaw: level.expiresOn.trim() }
+        : {}),
     })),
     categories: detail.categoryIds.map((categoryId) => ({
       kind: 'existing' as const,
@@ -261,6 +279,9 @@ function locationDraftEquals(
 function stockRowEquals(a: ItemStockRowValues, b: ItemStockRowValues): boolean {
   return (
     a.quantityRaw === b.quantityRaw &&
+    // U4 carried fields: absent and blank both mean no value, so a
+    // typed-then-cleared field compares clean against its baseline.
+    (a.expiresOnRaw ?? '') === (b.expiresOnRaw ?? '') &&
     locationDraftEquals(a.location, b.location)
   );
 }
@@ -287,7 +308,8 @@ function sameValues(a: ItemFormValues, b: ItemFormValues): boolean {
   if (a === b) return true;
   if (
     a.name !== b.name ||
-    a.pendingNewCategoryName !== b.pendingNewCategoryName
+    a.pendingNewCategoryName !== b.pendingNewCategoryName ||
+    (a.lowStockThresholdRaw ?? '') !== (b.lowStockThresholdRaw ?? '')
   ) {
     return false;
   }
@@ -437,7 +459,7 @@ export default function useItemFormController(
       // the message falls back to the form level, never to a ghost row.
       const rowError = (
         index: number,
-        side: 'location' | 'quantity',
+        side: 'location' | 'quantity' | 'expiresOn',
         message: string,
       ): { errors: ItemFormErrors; code: string | null } => {
         if (!stockRows || stockRows.length === 0) {
@@ -466,6 +488,27 @@ export default function useItemFormController(
             return rowError(0, 'quantity', t('itemFormErrorQuantityTooLarge'));
           }
           return rowError(0, 'quantity', t('itemFormErrorQuantityInvalid'));
+        }
+        // U4: the controller pre-validates both reminder fields, so these
+        // backend mappings are a backstop only (same copies, same sides).
+        if (error.field === 'lowStockThreshold') {
+          if (error.code === 'out-of-range') {
+            return {
+              errors: {
+                lowStockThreshold: t('itemFormErrorLowStockThresholdTooLarge'),
+              },
+              code: null,
+            };
+          }
+          return {
+            errors: {
+              lowStockThreshold: t('itemFormErrorLowStockThresholdInvalid'),
+            },
+            code: null,
+          };
+        }
+        if (error.field === 'expiresOn') {
+          return rowError(0, 'expiresOn', t('itemFormErrorExpiresOnInvalid'));
         }
         if (
           error.field === 'location' ||
@@ -616,6 +659,24 @@ export default function useItemFormController(
       } else if (trimmedName.length > ITEM_NAME_MAX_LENGTH) {
         fieldErrors.name = t('itemFormErrorNameTooLong');
       }
+      // U4: the reminder level is optional — blank means no reminder and
+      // stays out of the draft; otherwise the quantity bound applies, so
+      // an untouched edit re-stores its carried value and a cleared field
+      // genuinely stores none.
+      const thresholdText = (current.lowStockThresholdRaw ?? '').trim();
+      let lowStockThreshold: number | null = null;
+      if (thresholdText !== '') {
+        const parsedThreshold = parseQuantityRaw(thresholdText);
+        if (parsedThreshold === null) {
+          fieldErrors.lowStockThreshold = isQuantityAboveProductMax(
+            thresholdText,
+          )
+            ? t('itemFormErrorLowStockThresholdTooLarge')
+            : t('itemFormErrorLowStockThresholdInvalid');
+        } else {
+          lowStockThreshold = parsedThreshold;
+        }
+      }
       // Per-row stock validation, index-aligned with `current.stock`. A
       // blank or zero quantity means "no stock there" and drops the row
       // (never an error); anything else unparsable reports the row's
@@ -626,6 +687,10 @@ export default function useItemFormController(
       const rowErrors: (ItemStockRowErrors | undefined)[] = rows.map(
         () => undefined,
       );
+      // U4: per-row validated expiry, index-aligned with `rows` for the
+      // draft loop below. Blank means no expiry (never an error); valid
+      // ISO text rides into the draft of kept rows.
+      const rowExpiresOn: (string | null)[] = rows.map(() => null);
       const seenLocationIds = new Set<number>();
       const duplicateRows = new Set<number>();
       rows.forEach((row, index) => {
@@ -667,6 +732,17 @@ export default function useItemFormController(
           };
         }
         const raw = row.quantityRaw ?? '';
+        // U4: per-row expiry validates on every row (even a row whose
+        // blank quantity will drop it), so a carried date can never hide
+        // a misshapen value past the save. Blank means no expiry.
+        try {
+          rowExpiresOn[index] = normalizeExpiresOn(row.expiresOnRaw);
+        } catch {
+          rowErrors[index] = {
+            ...rowErrors[index],
+            expiresOn: t('itemFormErrorExpiresOnInvalid'),
+          };
+        }
         if (raw.trim() === '') return;
         const quantity = parseQuantityRaw(raw);
         if (quantity === null) {
@@ -723,10 +799,13 @@ export default function useItemFormController(
       }
       const hasRowErrors = rowErrors.some(
         (entry) =>
-          entry?.location !== undefined || entry?.quantity !== undefined,
+          entry?.location !== undefined ||
+          entry?.quantity !== undefined ||
+          entry?.expiresOn !== undefined,
       );
       if (
         fieldErrors.name !== undefined ||
+        fieldErrors.lowStockThreshold !== undefined ||
         hasRowErrors ||
         fieldErrors.categories !== undefined
       ) {
@@ -738,10 +817,19 @@ export default function useItemFormController(
         };
       }
       const stock: ItemStockDraft[] = [];
-      for (const row of rows) {
+      for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index];
         const quantity = parseQuantityRaw(row.quantityRaw ?? '');
         if (quantity === null || quantity === 0) continue;
-        stock.push({ location: row.location, quantity });
+        // U4: a kept row re-stores its carried expiry; a cleared one
+        // stores none (absent normalizes to null in the repository, so a
+        // dropped zero row takes its expiry with it, never orphaned).
+        const expiresOn = rowExpiresOn[index];
+        stock.push({
+          location: row.location,
+          quantity,
+          ...(expiresOn != null ? { expiresOn } : {}),
+        });
       }
       // U3 scanned identity: the invisible carried code. Sanitized so
       // blank/misshapen input means no code and never reaches the
@@ -754,6 +842,11 @@ export default function useItemFormController(
           stock,
           categories,
           ...(barcode !== undefined ? { barcode } : {}),
+          // U4: a set threshold rides into the draft; a blank one stays
+          // out (the repository normalizes absent to null, i.e. no
+          // reminder), so clearing genuinely disarms and omitting a
+          // never-set one stores no phantom value.
+          ...(lowStockThreshold !== null ? { lowStockThreshold } : {}),
         },
       };
     },

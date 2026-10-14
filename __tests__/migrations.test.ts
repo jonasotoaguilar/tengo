@@ -128,33 +128,44 @@ function seedV3(db: RealDb): { locA: number; locB: number; itemIds: number[] } {
 }
 
 describe('database migrations (M1 normalized model)', () => {
-  test('schema version is 5 with migrations 1, 2, 3, 4, and 5', () => {
-    expect(SCHEMA_VERSION).toBe(5);
-    expect(Object.keys(MIGRATIONS).sort()).toEqual(['1', '2', '3', '4', '5']);
+  test('schema version is 6 with migrations 1, 2, 3, 4, 5, and 6', () => {
+    expect(SCHEMA_VERSION).toBe(6);
+    expect(Object.keys(MIGRATIONS).sort()).toEqual([
+      '1',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+    ]);
   });
 
-  test('v4 database has only migration 5 pending', () => {
-    expect(getPendingMigrations(4)).toEqual([5]);
+  test('v5 database has only migration 6 pending', () => {
+    expect(getPendingMigrations(5)).toEqual([6]);
   });
 
-  test('v3 database has migrations 4 and 5 pending in order', () => {
-    expect(getPendingMigrations(3)).toEqual([4, 5]);
+  test('v4 database has migrations 5 and 6 pending in order', () => {
+    expect(getPendingMigrations(4)).toEqual([5, 6]);
   });
 
-  test('v2 database has migrations 3, 4, and 5 pending in order', () => {
-    expect(getPendingMigrations(2)).toEqual([3, 4, 5]);
+  test('v3 database has migrations 4, 5, and 6 pending in order', () => {
+    expect(getPendingMigrations(3)).toEqual([4, 5, 6]);
   });
 
-  test('fresh database (version 0) has migrations 1-5 pending in order', () => {
-    expect(getPendingMigrations(0)).toEqual([1, 2, 3, 4, 5]);
+  test('v2 database has migrations 3, 4, 5, and 6 pending in order', () => {
+    expect(getPendingMigrations(2)).toEqual([3, 4, 5, 6]);
   });
 
-  test('v1 database has migrations 2, 3, 4, and 5 pending in order', () => {
-    expect(getPendingMigrations(1)).toEqual([2, 3, 4, 5]);
+  test('fresh database (version 0) has migrations 1-6 pending in order', () => {
+    expect(getPendingMigrations(0)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
-  test('migrated database (version 5) has nothing pending', () => {
-    expect(getPendingMigrations(5)).toEqual([]);
+  test('v1 database has migrations 2, 3, 4, 5, and 6 pending in order', () => {
+    expect(getPendingMigrations(1)).toEqual([2, 3, 4, 5, 6]);
+  });
+
+  test('migrated database (version 6) has nothing pending', () => {
+    expect(getPendingMigrations(6)).toEqual([]);
   });
 
   test('newer-than-known database version has nothing pending', () => {

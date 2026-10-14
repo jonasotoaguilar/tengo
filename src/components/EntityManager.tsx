@@ -120,9 +120,10 @@ export default function EntityManager({
   /** Map a repository failure to localized inline copy (never raw text). */
   function messageFor(error: unknown, kind: 'location' | 'category'): string {
     if (error instanceof EntityConflictError) {
-      return kind === 'location'
-        ? t('itemFormErrorLocationNameConflict')
-        : t('itemFormErrorCategoryNameConflict');
+      if (kind !== 'location') return t('itemFormErrorCategoryNameConflict');
+      return error.field === 'address'
+        ? t('itemFormErrorLocationAddressConflict')
+        : t('itemFormErrorLocationNameConflict');
     }
     if (error instanceof ValidationError) {
       if (error.code === 'blank') return t('itemFormErrorNameRequired');

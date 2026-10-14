@@ -333,6 +333,25 @@ test('a conflicting location name surfaces localized inline copy, never raw stor
   expect(error).not.toHaveTextContent(/sqlite|constraint/i);
 });
 
+test('a conflicting location address surfaces its own localized copy (U11)', async () => {
+  repository.createLocation.mockRejectedValueOnce(
+    new EntityConflictError('location', 'Pasillo 3', 'address'),
+  );
+  await renderManager();
+  await fireEvent.changeText(
+    screen.getByTestId('entity-new-location-name'),
+    'Deposito',
+  );
+  await fireEvent.changeText(
+    screen.getByTestId('entity-new-location-address'),
+    'Pasillo 3',
+  );
+  await fireEvent.press(screen.getByTestId('entity-add-location'));
+  const error = await screen.findByTestId('entity-location-form-error');
+  expect(error).toHaveTextContent(/address already exists/i);
+  expect(error).not.toHaveTextContent(/sqlite|constraint/i);
+});
+
 test('a conflicting category name surfaces localized inline copy', async () => {
   repository.createCategory.mockRejectedValueOnce(
     new EntityConflictError('category', 'Bulk'),

@@ -96,8 +96,8 @@ async function countV1Items(db: DatabaseLike): Promise<number> {
  * plus a `foreign_key_check` plus the version bump in one transaction,
  * then commit, then `PRAGMA foreign_keys=ON`. A non-empty check or the
  * in-SQL preserve-and-stop guard surfaces as `MigrationIntegrityError`
- * with rows and version untouched. Migrations 2 and 3 are exactly as
- * they were: FK ON inside one transaction.
+ * with rows and version untouched. Migrations 2, 3, 5, and 6 run the generic path exactly as before:
+ * FK ON inside one transaction (5 and 6 are purely additive, so neither needs the v4 envelope).
  */
 async function applyMigration(
   db: DatabaseLike,

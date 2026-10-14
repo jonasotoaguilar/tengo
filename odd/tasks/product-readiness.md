@@ -94,3 +94,11 @@ into `main` once, exactly like phase 1.
   busy failed 2 tests in `__tests__/inventory-container.test.tsx` (call-count assertions behind real timers); the suite
   alone passed 49/49 and a rerun on an idle host passed everything in 34s (the failing run took 67s). Known host-load
   flake, not a product defect — rerun before treating those two assertions as a regression.
+- **L8** (device units attempted, blocked, stopped): U9/U10 were attempted on 2026-10-14 from
+  `feat/product-readiness-05-device-verification` at the tracker tip `9918c02`. The emulator could not start: `sv-home` is
+  not in the `kvm` group (`/etc/group` reads `kvm:x:993:` with no members) and `/dev/kvm` is `crw-rw---- root kvm`, so the
+  x86_64 AVD reports `x86_64 emulation currently requires hardware acceleration!`; `sudo` needs a password. A root
+  container with `--device /dev/kvm` was measured to open the node and the emulator binary needs only `libX11.so.6`, but
+  the required native rebuild (`expo prebuild` + `assembleDebug`) saturated the host CPU and was stopped on the
+  maintainer's instruction. Per S11 the two units stop at that boundary and are recorded as blocked with the exact
+  unblocking steps in `docs/testing.md`; no device claim is made anywhere.

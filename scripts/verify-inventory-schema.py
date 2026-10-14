@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Host SQLite verification for the Tengo v4 (catalog + stock) migration SQL.
+"""Host SQLite verification for the Tengo v4-v6 migration SQL.
 
 Reads the REAL migration SQL from src/db/migrations.ts and executes it
 against host SQLite (python3 sqlite3 module) to prove the rebuild mapping,
-the preserve-and-stop guard, the FK-off envelope requirement, and the new
-constraint behavior with a real engine.
+the preserve-and-stop guard, the FK-off envelope requirement, the new
+constraint behavior, and the v6 address-uniqueness rule with a real engine.
 
 This is HOST evidence only. It is NOT Expo/device proof: Jest fakes never
 touch SQLite, this script never touches expo-sqlite or a device, and the
@@ -105,8 +105,8 @@ def main() -> int:
     v4_sql = extract_migration_sql(4)
     check("extracted MIGRATIONS[4] SQL", "CREATE TABLE" in v4_sql.upper())
     check(
-        "SCHEMA_VERSION is 5",
-        re.search(r"export const SCHEMA_VERSION\s*=\s*5", MIGRATIONS_TS.read_text()) is not None,
+        "SCHEMA_VERSION is 6",
+        re.search(r"export const SCHEMA_VERSION\s*=\s*6", MIGRATIONS_TS.read_text()) is not None,
     )
 
     # --- A. empty v3 migrates cleanly to v4 with the new shape -------------
@@ -435,6 +435,91 @@ def main() -> int:
         expect_error(con, "DELETE FROM locations WHERE id = ?", (loc,)) is None
         and con.execute("SELECT COUNT(*) FROM stock").fetchone()[0] == 0
         and con.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 4,
+    )
+
+    # --- H. v6 address uniqueness: partial index, guard, NULL legality ---
+    v6_sql = extract_migration_sql(6)
+    check("extracted MIGRATIONS[6] SQL", "CREATE UNIQUE INDEX" in v6_sql.upper())
+    check(
+        "v6 creates the partial normalized-address index",
+        "idx_locations_address_norm" in v6_sql
+        and re.search(r"locations\s*\(\s*lower\s*\(\s*trim\s*\(\s*address\s*\)", v6_sql, re.IGNORECASE) is not None
+        and re.search(r"WHERE\s+address\s+IS\s+NOT\s+NULL", v6_sql, re.IGNORECASE) is not None,
+    )
+    check(
+        "v6 never rebuilds, drops, deletes, updates, or backfills locations",
+        all(
+            word not in v6_sql.upper()
+            for word in ("CREATE TABLE", "DROP TABLE", "DELETE FROM", "ALTER TABLE", "INSERT INTO LOCATIONS", "UPDATE LOCATIONS")
+        ),
+    )
+    check("guard carries the typed v6 block", "Migration to schema version 6 blocked" in v6_sql)
+    con = fresh_db()
+    con.execute("PRAGMA foreign_keys = ON")
+    apply_v3(con)
+    apply_v4_envelope(con, v4_sql)
+    con.executescript(f"BEGIN;\n{v5_sql}\nPRAGMA user_version = 5;\nCOMMIT;")
+    con.execute("INSERT INTO locations (name, address) VALUES ('Casa', 'Main Street 12')")
+    con.execute("INSERT INTO locations (name) VALUES ('Garage')")
+    before_locations = con.execute("SELECT id, name, address FROM locations ORDER BY id").fetchall()
+    con.executescript(f"BEGIN;\n{v6_sql}\nPRAGMA user_version = 6;\nCOMMIT;")
+    check(
+        "v6 user_version recorded",
+        con.execute("PRAGMA user_version").fetchone()[0] == 6,
+    )
+    check(
+        "v6 preserves locations byte-identical",
+        con.execute("SELECT id, name, address FROM locations ORDER BY id").fetchall() == before_locations,
+    )
+    addr_unique = con.execute(
+        "SELECT `unique` FROM pragma_index_list('locations') WHERE name = 'idx_locations_address_norm'"
+    ).fetchone()
+    check("idx_locations_address_norm is UNIQUE", addr_unique is not None and addr_unique[0] == 1)
+    addr_ddl = con.execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'idx_locations_address_norm'"
+    ).fetchone()[0]
+    check("address index DDL carries the partial WHERE", "WHERE" in addr_ddl.upper() and "NOT NULL" in addr_ddl.upper())
+    check(
+        "duplicate address rejected (UNIQUE)",
+        expect_error(con, "INSERT INTO locations (name, address) VALUES ('Other', 'Main Street 12')") is not None,
+    )
+    check(
+        "normalised address collision rejected (trim/case)",
+        expect_error(con, "INSERT INTO locations (name, address) VALUES ('Other', '  MAIN street 12 ')") is not None,
+    )
+    con.execute("INSERT INTO locations (name) VALUES ('Shed')")
+    con.execute("INSERT INTO locations (name, address) VALUES ('Cabin', NULL)")
+    check(
+        "NULL addresses stay legal (many address-less locations)",
+        con.execute("SELECT COUNT(*) FROM locations").fetchone()[0] == 4,
+    )
+    # Guard: a v5 database holding duplicate addresses refuses v6 loudly.
+    con = fresh_db()
+    con.execute("PRAGMA foreign_keys = ON")
+    apply_v3(con)
+    apply_v4_envelope(con, v4_sql)
+    con.executescript(f"BEGIN;\n{v5_sql}\nPRAGMA user_version = 5;\nCOMMIT;")
+    con.execute("INSERT INTO locations (name, address) VALUES ('Casa', 'Main Street 12')")
+    con.execute("INSERT INTO locations (name, address) VALUES ('Other', '  MAIN street 12 ')")
+    blocked_err: str | None = None
+    try:
+        con.executescript(f"BEGIN;\n{v6_sql}\nPRAGMA user_version = 6;\nCOMMIT;")
+    except sqlite3.Error as error:
+        blocked_err = str(error)
+        try:
+            con.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+    check(
+        "duplicate addresses block v6 loudly",
+        blocked_err is not None and "Migration to schema version 6 blocked" in blocked_err,
+        blocked_err or "",
+    )
+    check(
+        "blocked v6 preserves rows and version",
+        con.execute("SELECT COUNT(*) FROM locations").fetchone()[0] == 2
+        and con.execute("SELECT address FROM locations WHERE name = 'Other'").fetchone()[0] == "  MAIN street 12 "
+        and con.execute("PRAGMA user_version").fetchone()[0] == 5,
     )
 
     print(f"\n{PASS_COUNT} checks passed, {len(FAILURES)} failed (host SQLite).")

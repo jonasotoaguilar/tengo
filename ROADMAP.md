@@ -14,7 +14,7 @@ product record) and [DESIGN.md](DESIGN.md) (design contract; its section 3 descr
 | Area | State | Evidence |
 | ---- | ----- | -------- |
 | App shell | Implemented: readiness screen with translated title, subtitle, DB state | `App.tsx` |
-| Database | Implemented: `tengo.db`, versioned migrations, schema v4 (items catalog plus stock(item_id, location_id, quantity) with composite PK, quantity > 0, both FKs ON DELETE CASCADE and idx_stock_location_id; locations, categories, item-category join, unique indexes on the folded entity name) | `src/db/index.ts`, `src/db/migrations.ts` |
+| Database | Implemented: `tengo.db`, versioned migrations, schema v6 (items catalog plus stock(item_id, location_id, quantity) with composite PK, quantity > 0, both FKs ON DELETE CASCADE and idx_stock_location_id; locations, categories, item-category join, unique indexes on the folded entity name, partial unique index on the normalized location address) | `src/db/index.ts`, `src/db/migrations.ts` |
 | i18n | Implemented: `en`/`es`, device-locale detection, English fallback, type-locked keys | `src/i18n/index.ts`, `src/i18n/resources.ts` |
 | Unit tests | Implemented scaffolding: native boundary mocked, never touches a real DB | `jest.setup.ts`, `__tests__/`, `jest.config.js` |
 | Native smoke | Minimal: one launch reaches readiness; no restart-persistence or locale proof | `.maestro/smoke.yaml`, [Maestro boundary](docs/testing.md#maestro-boundary) |
@@ -114,8 +114,10 @@ and validation.
   with 0-quantity rows dropped, location
   1–80, category 80), name uniqueness, accent-folding semantics,
   and the index choices that carry them (the v3 unique indexes on
-  the folded name). Address uniqueness was never adopted and is not
-  implemented: only entity names are unique.
+  the folded name). Address uniqueness was adopted and is implemented
+  (U11): the domain layer folds trim/accent/case and the v6 partial
+  unique index on the normalized address carries the case/whitespace
+  part, with NULL addresses excluded; entity names stay unique as before.
 - Migration policy (approved; the v1→v2 entry stands as the record of
   that earlier migration): v1 rows carry only
   `id`/`name`/`created_at` with no location, and no production v1
@@ -128,8 +130,11 @@ and validation.
   The v4 rebuild carries one stock row per old item with `quantity > 0`
   (an old zero-quantity item becomes catalog-only, "sin stock"),
   aborts with rows and version untouched on any count/sum mismatch,
-  and bumps the version in the same transaction with no downgrade
-  (`SCHEMA_VERSION = 4`).
+  and bumps the version in the same transaction with no downgrade.
+  The v5 columns are purely additive (no rebuild, no guard); the v6
+  partial unique address index is likewise additive but carries the same
+  preserve-and-stop guard shape as v3 for pre-existing duplicates
+  (`SCHEMA_VERSION = 6`).
 - Acceptance: empty, v1-shaped, and already-v2 fixtures behave as
   above with zero silent loss; invalid/missing location or category
   references and duplicate associations are rejected; a 0-quantity
@@ -386,9 +391,9 @@ come from emulator or hardware. None of these is decided.
 
 | Gate | Closes in | Status |
 | ---- | --------- | ------ |
-| Wireframes + gate defaults reviewed | G0 (before M1) | Recorded 2026-10-12: the boards and DESIGN.md sections 3–5 were reviewed against the built screens, and the entries below are the approved contract. The defaults deferred here were then adopted by the user as the named owner and implemented on 2026-10-12: trimmed bounds, name uniqueness, accent folding, and location/category text matching, each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen was then adopted by the user and implemented on 2026-10-12, and address uniqueness was never adopted |
+| Wireframes + gate defaults reviewed | G0 (before M1) | Recorded 2026-10-12: the boards and DESIGN.md sections 3–5 were reviewed against the built screens, and the entries below are the approved contract. The defaults deferred here were then adopted by the user as the named owner and implemented on 2026-10-12: trimmed bounds, name uniqueness, accent folding, and location/category text matching, each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen was then adopted by the user and implemented on 2026-10-12, and address uniqueness was adopted and implemented (domain check plus the v6 partial unique index) |
 | Quantity semantics | M1 | Approved: each stock row carries 1–999999; a 0-quantity row is dropped rather than stored and an item with no rows shows as "sin stock". Bounds adopted and implemented (1–999999 per row with 0 dropped, typed `out-of-range`); negatives are rejected by that same bound; units stay out of MVP scope |
-| Locations | M1/M4 | Approved: location entity, name required, address optional, free entry; one item may hold stock in several locations and zero locations is a valid state. Name uniqueness adopted and implemented (accent-aware domain check plus the v3 unique index); deleting a location cascades its stock rows and never deletes items, with the confirmation stating the impact; `LocationInUseError` no longer exists; the managed-location UI was adopted and implemented on 2026-10-12 |
+| Locations | M1/M4 | Approved: location entity, name required, address optional, free entry; one item may hold stock in several locations and zero locations is a valid state. Name uniqueness adopted and implemented (accent-aware domain check plus the v3 unique index); address uniqueness adopted and implemented (accent-aware domain check plus the v6 partial unique index; NULL addresses never collide; a database holding duplicate addresses refuses to migrate instead of being rewritten); deleting a location cascades its stock rows and never deletes items, with the confirmation stating the impact; `LocationInUseError` no longer exists; the managed-location UI was adopted and implemented on 2026-10-12 |
 | Categories | M1/M4 | Approved: independent entities, zero or many per item, multi-select OR filter with dedup. Location/category text matching adopted and implemented; deleting a category removes only the association with items (confirmation states the impact); the management UI was adopted and implemented on 2026-10-12 |
 | Deletion/backup | M4 | Approved: confirm every delete, no trash/undo in MVP, irreversibility stated in the dialog; location deletion states how many existencias go (items survive) and category deletion states the association removal; an item is deleted only explicitly, never as a side effect; anything beyond that undecided |
 
@@ -435,6 +440,6 @@ accumulated branch.
   `docs/testing.md`); see
   [verified native evidence](docs/testing.md#verified-native-evidence-android-only).
 - [x] M5: `en`/`es` audit (guard), accessibility-tree pass with 48dp targets, contrast floor implemented and guarded, performance budgets measured on a device pass where the search budget is currently MISSED and recorded as a FAIL rather than waived, and extended Maestro flows (1.0x 97/97, 2.0x 78/78) observed on a debug build. TalkBack speech is a stated boundary, not claimed.
-- [x] Section 9 recorded and then closed by adoption: the approved quantity/location/category/deletion entries stay approved, and the defaults deferred to the user as the named owner were adopted on 2026-10-12 and implemented — trimmed bounds, name uniqueness, accent folding, and location/category text matching — each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen was then adopted by the user and implemented on 2026-10-12, so no adopted proposal remains unimplemented; address uniqueness was never adopted.
+- [x] Section 9 recorded and then closed by adoption: the approved quantity/location/category/deletion entries stay approved, and the defaults deferred to the user as the named owner were adopted on 2026-10-12 and implemented — trimmed bounds, name uniqueness, accent folding, and location/category text matching — each with its review and verification receipt in `odd/tasks/inventory-mvp.md`. The managed-entity screen was then adopted by the user and implemented on 2026-10-12, so no adopted proposal remains unimplemented; address uniqueness was adopted and is implemented (U11).
 - [x] No backend/accounts/sync introduced; `npm run web` still fails fast
   (`node -e` exits 1) and releases stay source-only (`release.yml` on tag `v*`).

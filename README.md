@@ -48,10 +48,11 @@ fast: native only. `npm run check` runs `typecheck` + `lint` +
 ## Key Features You Should Know About
 
 - Wired inventory list (the App default) with versioned SQLite bootstrap
-  (schema v4: items catalog plus stock(item_id, location_id, quantity)
+  (schema v6: items catalog plus stock(item_id, location_id, quantity)
   with a composite primary key, quantity > 0, both foreign keys
   ON DELETE CASCADE and idx_stock_location_id; an item-category join,
-  and unique indexes on the folded entity name).
+  unique indexes on the folded entity name, and a partial unique index
+  on the normalized location address that leaves NULL addresses legal).
 - English/Spanish from day one with device-locale detection.
 - Domain validation and parameterized location/category/item
   repositories with typed errors that never surface raw SQLite

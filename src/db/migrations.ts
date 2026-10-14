@@ -53,6 +53,20 @@
  * validity (month/day, leap years) stays domain-only in
  * `normalizeExpiresOn`.
  *
+ * Migration 6 (U11 address uniqueness, adopted now) is purely ADDITIVE:
+ * one `CREATE UNIQUE INDEX` (partial: `WHERE address IS NOT NULL`, so
+ * many address-less locations stay legal) over the normalized address
+ * (`lower(trim(address))`, the same case/whitespace expression discipline
+ * migration 3 uses for names). SQLite cannot fold accents, so the accent
+ * part is enforced in the domain layer (`normalizeAddressKey`), which
+ * runs before every write; the index stays the backstop authority for
+ * races. No table rebuild, no DROP, no column change; a database that
+ * already holds duplicate addresses fails loudly with a clear `Migration
+ * to schema version 6 blocked` message and leaves rows and
+ * `user_version` untouched, exactly like the v3 guard (TEMP scratch
+ * table plus a single-firing TEMP trigger, inside the runner's
+ * transaction). Never rewritten, never nulled out, never fabricated.
+ *
  * The guard aborts with a clear `Migration to schema version 4 blocked`
  * message (via a single-firing TEMP trigger, same pattern as v3) when the
  * copied catalog count differs from the old item count or the stock sum
@@ -62,7 +76,7 @@
  * never rewritten, never an invented location, never backfilled. `PRAGMA
  * foreign_key_check` must come back empty before the version bump.
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export const MIGRATIONS: Record<number, string> = {
   1: `
@@ -186,6 +200,30 @@ ALTER TABLE items ADD COLUMN low_stock_threshold INTEGER CHECK (low_stock_thresh
 ALTER TABLE items ADD COLUMN barcode TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_items_barcode ON items (barcode);
 ALTER TABLE stock ADD COLUMN expires_on TEXT CHECK (expires_on IS NULL OR (expires_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'));
+`.trim(),
+  // Guard (enforced by this SQL before the index is built): the v5
+  // locations table must hold no duplicate addresses after trim/case
+  // normalization (NULL addresses excluded: many address-less locations
+  // stay legal). `RAISE` only runs inside a trigger, so the guard is a
+  // TEMP scratch table plus a single-firing TEMP trigger (TEMP objects
+  // vanish when the connection closes, so only the trigger is dropped
+  // explicitly). The runner applies this whole script in one transaction
+  // with the version bump, so a blocked migration rolls back to
+  // untouched rows and `user_version`. A v5 database with duplicates
+  // stops with a clear `Migration to schema version 6 blocked` message
+  // instead of being rewritten; an empty v5 database migrates cleanly.
+  6: `
+CREATE TEMP TABLE _migration_v6_guard (id INTEGER);
+CREATE TEMP TRIGGER _migration_v6_guard_check BEFORE INSERT ON _migration_v6_guard
+BEGIN
+  SELECT CASE
+    WHEN (SELECT COUNT(*) FROM (SELECT lower(trim(address)) AS k FROM locations WHERE address IS NOT NULL GROUP BY k HAVING COUNT(*) > 1)) > 0
+    THEN RAISE(ABORT, 'Migration to schema version 6 blocked: locations holds duplicate addresses after trim/case normalization. Rows and schema version are preserved; give each address to at most one location before retrying. No data was modified.')
+  END;
+END;
+INSERT INTO _migration_v6_guard (id) VALUES (1);
+DROP TRIGGER IF EXISTS temp._migration_v6_guard_check;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_locations_address_norm ON locations (lower(trim(address))) WHERE address IS NOT NULL;
 `.trim(),
 };
 

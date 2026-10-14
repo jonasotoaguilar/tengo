@@ -104,6 +104,8 @@ export const en = {
     'Enter a location name of 80 characters or fewer.',
   itemFormErrorLocationNameConflict:
     'A location with this name already exists.',
+  itemFormErrorLocationAddressConflict:
+    'A location with this address already exists.',
   itemFormErrorCategoryNameTooLong:
     'Enter a category name of 80 characters or fewer.',
   itemFormErrorCategoryNameConflict:
@@ -268,6 +270,8 @@ export const es: typeof en = {
   itemFormErrorLocationNameTooLong:
     'Escribe un nombre de ubicación de 80 caracteres o menos.',
   itemFormErrorLocationNameConflict: 'Ya existe una ubicación con este nombre.',
+  itemFormErrorLocationAddressConflict:
+    'Ya existe una ubicación con esta dirección.',
   itemFormErrorCategoryNameTooLong:
     'Escribe un nombre de categoría de 80 caracteres o menos.',
   itemFormErrorCategoryNameConflict: 'Ya existe una categoría con este nombre.',

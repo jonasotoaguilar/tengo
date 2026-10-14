@@ -9,7 +9,12 @@
  * trim/accent/case normalization (`normalizeNameKey`), checked in the
  * domain layer before every create/update (self-excluded on update) with
  * the v3 `UNIQUE` index as the backstop authority; `UNIQUE` driver failures
- * map to `EntityConflictError`, never raw SQLite text. No caps are invented.
+ * map to `EntityConflictError`, never raw SQLite text. U11 extends the
+ * same discipline to location addresses (`normalizeAddressKey`, checked
+ * before every location create/update with self-exclusion, NULL
+ * addresses never colliding) with the v6 partial `UNIQUE` index as the
+ * backstop authority and the same typed mapping for a lost race.
+ * No caps are invented.
  * Location deletes cascade their `stock` rows per the v4 schema (R3) while
  * catalog items survive; category deletes cascade to `item_categories`
  * join rows per the schema (R4) while items themselves survive. The delete
@@ -32,6 +37,7 @@ import type {
   NewLocationInput,
 } from './types';
 import {
+  normalizeAddressKey,
   normalizeNameKey,
   ValidationError,
   validateCategoryInput,
@@ -117,6 +123,33 @@ async function findConflictingName(
   return null;
 }
 
+/**
+ * U11 domain uniqueness: no two locations share a `normalizeAddressKey`
+ * (trim/accent/case-insensitive). A null address never collides: many
+ * address-less locations stay legal. Excludes `excludeId` (updates keep
+ * their own address). Throws only `EntityConflictError` with
+ * `field: 'address'`; driver failures propagate to the caller's typed
+ * mapping.
+ */
+export async function assertUniqueLocationAddress(
+  db: RepositoryDb,
+  address: string | null,
+  excludeId?: number,
+): Promise<void> {
+  if (address === null) return;
+  const rows = await db.getAllAsync<{ id: number; address: string | null }>(
+    'SELECT id, address FROM locations ORDER BY id ASC',
+  );
+  const key = normalizeAddressKey(address);
+  for (const row of rows) {
+    if (excludeId !== undefined && row.id === excludeId) continue;
+    if (row.address === null) continue;
+    if (normalizeAddressKey(row.address) === key) {
+      throw new EntityConflictError('location', address, 'address');
+    }
+  }
+}
+
 /** Reject a location name that collides after S11 normalization. */
 export async function assertUniqueLocationName(
   db: RepositoryDb,
@@ -186,7 +219,25 @@ async function assertUniqueNames(
   }
 }
 
-/** Create a location; rejects `conflict` on an S11 duplicate name. */
+/**
+ * Detect whether a UNIQUE driver failure came from the v6 partial
+ * address index (`idx_locations_address_norm`) rather than a name
+ * index. Expression-index violations name the index, never the column,
+ * so match the index/column token case-insensitively.
+ */
+function isAddressUniqueViolation(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  const message =
+    typeof (error as { message?: unknown }).message === 'string'
+      ? ((error as { message: string }).message as string)
+      : '';
+  return /address/i.test(message);
+}
+
+/**
+ * Create a location; rejects `conflict` on an S11 duplicate name or a
+ * U11 duplicate address (`field: 'address'`).
+ */
 export async function createLocation(
   db: RepositoryDb,
   input: NewLocationInput,
@@ -194,6 +245,7 @@ export async function createLocation(
   const normalized = validateLocationInput(input);
   try {
     await assertUniqueLocationName(db, normalized.name);
+    await assertUniqueLocationAddress(db, normalized.address);
     const result = await db.runAsync(
       'INSERT INTO locations (name, address) VALUES (?, ?)',
       [normalized.name, normalized.address],
@@ -217,6 +269,15 @@ export async function createLocation(
     }
     if (isUnexpectedError(error)) throw error;
     if (isUniqueConstraintViolation(error)) {
+      // A race lost to the v6 address index maps back to the same typed
+      // address conflict the domain pre-check throws, never raw SQL text.
+      if (normalized.address !== null && isAddressUniqueViolation(error)) {
+        throw new EntityConflictError(
+          'location',
+          normalized.address,
+          'address',
+        );
+      }
       throw new EntityConflictError('location', normalized.name);
     }
     throw new StorageError('location', 'create', error);
@@ -273,7 +334,9 @@ export async function getLocation(
 
 /**
  * Update a location; rejects `not-found` when the row is missing and
- * `conflict` when the new name collides with another row's S11 key.
+ * `conflict` when the new name collides with another row's S11 key or
+ * the new address collides with another row's U11 key (keeping the
+ * row's own address is not a conflict).
  */
 export async function updateLocation(
   db: RepositoryDb,
@@ -284,6 +347,7 @@ export async function updateLocation(
   const normalized = validateLocationInput(input);
   try {
     await assertUniqueLocationName(db, normalized.name, validId);
+    await assertUniqueLocationAddress(db, normalized.address, validId);
     const result = await db.runAsync(
       'UPDATE locations SET name = ?, address = ? WHERE id = ?',
       [normalized.name, normalized.address, validId],
@@ -303,6 +367,15 @@ export async function updateLocation(
     }
     if (isUnexpectedError(error)) throw error;
     if (isUniqueConstraintViolation(error)) {
+      // Same race mapping as the create path: an address-index loss
+      // surfaces the typed address conflict, never raw SQL text.
+      if (normalized.address !== null && isAddressUniqueViolation(error)) {
+        throw new EntityConflictError(
+          'location',
+          normalized.address,
+          'address',
+        );
+      }
       throw new EntityConflictError('location', normalized.name);
     }
     throw new StorageError('location', 'update', error);

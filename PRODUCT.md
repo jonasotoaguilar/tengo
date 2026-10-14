@@ -76,7 +76,9 @@ Confirmed foundation (implemented foundation, see Evidence and ROADMAP.md baseli
 
 - App shell with translated readiness screen and DB bootstrap
   (`App.tsx`).
-- Versioned SQLite migrations, currently schema version 4 (v4 splits
+- Versioned SQLite migrations, currently schema version 6 (v6 adds
+  the partial unique index on the normalized location address; v5 added
+  the barcode/expiry/reminder columns; v4 splits
   the catalog from per-location stock; v3 added
   the unique indexes on the folded entity name):
   the `items` catalog (`id`, `name`, `created_at`) plus
@@ -86,7 +88,7 @@ Confirmed foundation (implemented foundation, see Evidence and ROADMAP.md baseli
   and the `item_categories` join.
   See `src/db/migrations.ts`. The M1/M2 native gates passed on
   Android on the previous model (see [verified native evidence](docs/testing.md#verified-native-evidence-android-only));
-  on v4 the schema is verified by 36 checks against real host SQLite, and
+  on v6 the schema is verified by 66 checks against real host SQLite, and
   the M1/M2 gate scripts themselves have not been re-run on a device.
 - English/Spanish i18n with device-locale detection and English
   fallback. See `src/i18n/`.
@@ -162,7 +164,13 @@ without claiming approval):
    implemented on 2026-10-12. Deleting a location cascades its stock
    rows and never deletes items; the confirmation states the impact
    (how many existencias); `LocationInUseError` no longer exists.
-   Address uniqueness remains unimplemented. The managed-location UI was
+   Address uniqueness was adopted and is implemented: the domain layer
+   rejects a duplicate address after trim/accent/case normalization with a
+   typed conflict, and the database enforces the case/whitespace part with
+   the v6 partial unique index (NULL addresses never collide, so many
+   address-less locations stay legal). A database that already holds
+   duplicate addresses refuses to migrate instead of being rewritten.
+   The managed-location UI was
    adopted by the user and implemented on 2026-10-12 and is now observed on
    the device through the entity flow, which exercises create, rename and
    delete with its impact confirmation; TalkBack speech on that screen
@@ -179,9 +187,11 @@ without claiming approval):
    adopted and implemented on 2026-10-12, and the contrast and
    placeholder semantics in DESIGN.md are implemented and guarded by
    `__tests__/contrast-floor.test.tsx`. The managed-entity screen was
-   adopted by the user and implemented on 2026-10-12; address uniqueness
-   was never adopted and is the one item in this area still awaiting a
-   user decision.
+   adopted by the user and implemented on 2026-10-12, and address
+   uniqueness was adopted and is implemented (domain check plus the v6
+   partial unique index, with a loud migration block instead of a silent
+   rewrite when duplicates already exist), so no adopted proposal remains
+   unimplemented in this area.
 
 ## Brand Commitments
 
@@ -202,8 +212,9 @@ brand commitment until the user approves it.
   testIDs); the default screen is still readiness and the fixture
   branches are DEV-only.
 - `src/db/index.ts`, `src/db/migrations.ts`: init logic,
-  `DATABASE_NAME`, `SCHEMA_VERSION = 4`, v4
-  catalog-plus-stock schema (earlier shapes retained in the migration ladder).
+  `DATABASE_NAME`, `SCHEMA_VERSION = 6`, v6
+  catalog-plus-stock schema with the partial unique address index
+  (earlier shapes retained in the migration ladder).
 - `src/i18n/index.ts`, `src/i18n/resources.ts`: `en`/`es` resources,
   `resolveLanguage`, `detectDeviceLanguage`.
 - `jest.setup.ts`, `__tests__/`: mocked SQL/native boundary and

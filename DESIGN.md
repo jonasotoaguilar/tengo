@@ -398,3 +398,37 @@ resolve per theme:
   one stock row per old item with `quantity > 0` under a
   preserve-and-stop guard per ROADMAP.md (the v1 backfill rule stands
   as the record of that earlier migration).
+
+## 11. Brand identity (U7 — implemented)
+
+First identity shipped under the user's blanket order: one geometric mark,
+rendered deterministically in-repo, with no designer approval claimed.
+
+- Reasoning: the mark is a storage-bin outline (rounded-rect ring) holding
+  two shelf bars with one item (filled circle) on the upper shelf — the
+  labeled-shelves world of section 1 drawn without type, decoration or
+  downloaded art. Geometry only, so it survives small sizes and
+  single-color (monochrome) use.
+- Palette derivation (no new brand color invented; `scripts/generate-assets.mjs`
+  parses these literals at runtime from `src/theme/tokens.ts` and refuses to
+  run if they are unreadable):
+
+  | Use | Value | Token role |
+  | --- | ----- | ---------- |
+  | Launcher tile, adaptive background, favicon tile | #2F6B3A | LIGHT `accent` |
+  | Mark on the tile, foreground, monochrome silhouette | #FFFFFF | LIGHT `accentOn` (the monochrome silhouette reuses it; the system tints it) |
+  | Splash background (`expo-splash-screen`) | #F4F2EC | LIGHT `surface` |
+  | Splash mark | #2F6B3A | LIGHT `accent` |
+
+- Full-bleed accent tile for the launcher (no transparency fringing), white
+  mark for contrast; the adaptive foreground mark spans ~56% of its 512px
+  canvas, inside the ~66% safe dialog. The app is light-only
+  (`userInterfaceStyle`), so no dark splash variant is configured; the splash
+  shows the transparent accent mark at 200dp (`contain`) over the surface.
+- Reproducibility: the generator encodes 8-bit RGBA PNGs itself (Node
+  `zlib` + its own CRC32, 4x supersampled rasterizer) because no image tools
+  exist on the host. Same input is byte-identical output; `npm run
+  generate:assets` rewrites `assets/`, and `__tests__/brand-assets.test.ts`
+  regenerates into a temp dir and compares bytes.
+- Still unconfirmed: designer approval of the mark, voice-and-tone guide,
+  marketing claim, typography decision (PRODUCT.md "Brand Commitments").

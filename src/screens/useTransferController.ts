@@ -30,6 +30,7 @@ import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { RepositoryDb } from '../inventory/database';
+import { listItems } from '../inventory/itemRepository';
 import {
   applyTransferDocument,
   buildTransferDocument,
@@ -39,6 +40,7 @@ import {
   TransferError,
   type TransferSummary,
 } from '../inventory/transfer';
+import type { ItemDetail } from '../inventory/types';
 
 /** File/share/pick boundary: real Expo modules by default, fakes in tests. */
 export interface TransferFileDeps {
@@ -50,6 +52,11 @@ export interface TransferFileDeps {
     db: RepositoryDb,
     doc: TransferDocument,
   ) => Promise<TransferSummary>;
+  /**
+   * Full-detail reads around the wipe, so the owner can re-home
+   * id-keyed side effects (reminders). Defaults to the real `listItems`.
+   */
+  listDetails?: (db: RepositoryDb) => Promise<ItemDetail[]>;
 }
 
 interface ExpoFileModule {
@@ -110,6 +117,7 @@ const defaultDeps: TransferFileDeps = {
   pickImportFile: defaultPickImportFile,
   buildDocument: buildTransferDocument,
   applyDocument: applyTransferDocument,
+  listDetails: listItems,
 };
 
 export interface TransferControllerOptions {
@@ -121,6 +129,12 @@ export interface TransferControllerOptions {
   onNotice?: (message: string) => void;
   /** Fired after a successful import so the container refreshes. */
   onChanged?: () => void;
+  /**
+   * Fired after a successful import with the pre-wipe and post-wipe
+   * details, so the container can move id-keyed side effects (reminders)
+   * from the replaced ids to the fresh ones.
+   */
+  onImported?: (prev: ItemDetail[], next: ItemDetail[]) => void;
 }
 
 /** A parsed file staged for confirmation: the doc plus its impact counts. */
@@ -241,7 +255,16 @@ export default function useTransferController(
     setBusy(true);
     try {
       const deps = { ...defaultDeps, ...active.deps };
-      const content = await deps.pickImportFile();
+      // The picker sits inside the same typed-to-localized mapping as
+      // the rest of import: a throwing picker surfaces the localized
+      // import-failed notice, while a user cancel (null) stays silent.
+      let content: string | null;
+      try {
+        content = await deps.pickImportFile();
+      } catch (error) {
+        active.onNotice?.(t(importErrorKey(error)));
+        return;
+      }
       // A cancelled pick is silent: no notice, no staging, no refresh.
       if (content === null) return;
       let doc: TransferDocument;
@@ -277,11 +300,21 @@ export default function useTransferController(
       setBusy(false);
       return;
     }
+    let prev: ItemDetail[] = [];
+    let next: ItemDetail[] = [];
     try {
       const deps = { ...defaultDeps, ...active.deps };
+      const list = deps.listDetails ?? listItems;
+      // Snapshot before the wipe: its id-keyed schedules become orphans.
+      // A failed snapshot refuses closed instead of orphaning silently.
+      prev = await list(active.db);
       const apply = deps.applyDocument ?? applyTransferDocument;
       // Validates first, then writes atomically: a refusal writes nothing.
       await apply(active.db, staged.doc);
+      // Re-read after the wipe: the fresh ids own the new schedules. A
+      // failed re-read degrades to cancelling the stale keys only — the
+      // import itself succeeded, so it still refreshes and confirms.
+      next = await list(active.db).catch((): ItemDetail[] => []);
     } catch (error) {
       active.onNotice?.(t(importErrorKey(error)));
       return;
@@ -289,6 +322,9 @@ export default function useTransferController(
       busyRef.current = false;
       setBusy(false);
     }
+    // Observer callbacks stay outside the try: a throwing observer must
+    // not rewrite a successful import into a failure notice.
+    active.onImported?.(prev, next);
     active.onChanged?.();
     active.onNotice?.(t('transferImported'));
   }, [t]);

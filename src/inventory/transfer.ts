@@ -40,6 +40,7 @@ import type { RepositoryDb, TransactionHandle } from './database';
 import { listCategories, listLocations } from './entityRepository';
 import { listItems } from './itemRepository';
 import {
+  normalizeExpiresOn,
   normalizeNameKey,
   ValidationError,
   validateCategoryInput,
@@ -544,10 +545,27 @@ function validateTransferStockRow(
       'This inventory file contains a stock row that cannot be imported.',
     );
   }
+  // Normalize the expiry through the shared domain normalizer BEFORE
+  // anything can reach SQL: blank becomes null, padding is trimmed, and
+  // a value it rejects refuses here as typed `validation` instead of
+  // dying later on the v5 `GLOB` CHECK as a `storage` failure.
+  let expiresOn: string | null;
+  try {
+    expiresOn = normalizeExpiresOn(record.expiresOn);
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      throw new TransferError(
+        'validation',
+        'This inventory file contains a stock row that cannot be imported.',
+        error,
+      );
+    }
+    throw error;
+  }
   return {
     locationIndex,
     quantity: record.quantity,
-    expiresOn: typeof record.expiresOn === 'string' ? record.expiresOn : null,
+    expiresOn,
   };
 }
 

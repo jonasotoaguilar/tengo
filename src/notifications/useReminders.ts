@@ -54,6 +54,17 @@ export interface RemindersApi {
   ) => Promise<ReminderOutcome>;
   /** Run after a successful delete: cancel every row of the last-known detail. */
   afterDelete: (prev: ItemDetail | null) => Promise<ReminderOutcome>;
+  /**
+   * Run after a successful import: the wipe replaced every id, so the
+   * pre-import inventory's scheduled keys are orphans (cancel them),
+   * then each imported detail runs the brand-new-item save path (its
+   * low-stock first sighting pings, its expiry rows schedule under the
+   * new ids). Key logic stays in the shared `./reminders` primitives.
+   */
+  afterImport: (
+    prev: ItemDetail[],
+    next: ItemDetail[],
+  ) => Promise<ReminderOutcome>;
 }
 
 /** Single channel every reminder posts through on Android. */
@@ -241,5 +252,29 @@ export function useReminders({ enabled }: UseRemindersOptions): RemindersApi {
     [],
   );
 
-  return { permission, afterSave, afterDelete };
+  const afterImport = useCallback(
+    async (
+      prev: ItemDetail[],
+      next: ItemDetail[],
+    ): Promise<ReminderOutcome> => {
+      if (!enabledRef.current || permissionRef.current !== 'granted') {
+        return 'skipped';
+      }
+      // Stale schedules first: these keys belong to ids the wipe removed.
+      for (const key of new Set(prev.flatMap(expiryKeysForDetail))) {
+        await bestEffort(() =>
+          Notifications.cancelScheduledNotificationAsync(key),
+        );
+      }
+      // Then the imported inventory's own reminders, one brand-new
+      // item at a time through the same path a save uses.
+      for (const detail of next) {
+        await afterSave(null, detail);
+      }
+      return 'handled';
+    },
+    [afterSave],
+  );
+
+  return { permission, afterSave, afterDelete, afterImport };
 }

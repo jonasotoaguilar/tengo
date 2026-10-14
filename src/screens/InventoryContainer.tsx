@@ -39,6 +39,7 @@ import { initializeDatabase } from '../db';
 import type { RepositoryDb } from '../inventory/database';
 import { listCategories, listLocations } from '../inventory/entityRepository';
 import { getLastUsedLocationId, queryItems } from '../inventory/itemQuery';
+import type { TransferSummary } from '../inventory/transfer';
 import type {
   Category,
   ItemDetail,
@@ -82,6 +83,37 @@ const DARK: Palette = {
 // the delete confirmations use (dialog surface, text, destructive
 // confirm), plus the same overlay scrim values.
 type DialogPalette = PaletteBase & { overlay: string };
+
+/**
+ * U6 confirmation copy: the irreversibility lead plus the staged file's
+ * impact counts, each count through the app's One/Other pattern so one
+ * and many read correctly in both languages. The `t` type mirrors the
+ * `formMessageFor` precedent in `ItemFormScreen`.
+ */
+function transferConfirmCopy(
+  t: (key: string, options?: { count: number }) => string,
+  summary: TransferSummary,
+): string {
+  const locations = t(
+    summary.locations === 1
+      ? 'transferImportCountLocationsOne'
+      : 'transferImportCountLocationsOther',
+    { count: summary.locations },
+  );
+  const categories = t(
+    summary.categories === 1
+      ? 'transferImportCountCategoriesOne'
+      : 'transferImportCountCategoriesOther',
+    { count: summary.categories },
+  );
+  const items = t(
+    summary.items === 1
+      ? 'transferImportCountItemsOne'
+      : 'transferImportCountItemsOther',
+    { count: summary.items },
+  );
+  return `${t('transferImportConfirmMessage')} ${locations}, ${categories}, ${items}.`;
+}
 
 const LIGHT_DIALOG: DialogPalette = {
   ...LIGHT_BASE,
@@ -343,11 +375,23 @@ export default function InventoryContainer({
       message,
     }));
   }, []);
+  // U6 import re-homing: the wipe replaced every item and location id,
+  // so the pre-import inventory's scheduled reminder keys are orphans.
+  // Cancel them, then schedule the imported inventory's own reminders
+  // under the fresh ids. Fire-and-forget like the save/delete paths:
+  // the hook never throws, so the refresh below runs identically.
+  const handleImported = useCallback(
+    (prev: ItemDetail[], next: ItemDetail[]) => {
+      void reminders.afterImport(prev, next);
+    },
+    [reminders],
+  );
   const transfer = useTransferController({
     db: dbHandle,
     deps: transferDeps,
     onNotice: handleTransferNotice,
     onChanged: handleEntitiesChanged,
+    onImported: handleImported,
   });
 
   // Transient-notice lifecycle: announce once per new message, then
@@ -655,11 +699,7 @@ export default function InventoryContainer({
               testID="inventory-import-confirm-message"
               style={[styles.confirmMessage, { color: dialogPalette.text }]}
             >
-              {t('transferImportConfirmMessage', {
-                locations: transfer.pendingImport.summary.locations,
-                categories: transfer.pendingImport.summary.categories,
-                items: transfer.pendingImport.summary.items,
-              })}
+              {transferConfirmCopy(t, transfer.pendingImport.summary)}
             </Text>
             <Pressable
               testID="inventory-import-confirm-cancel"
@@ -682,11 +722,10 @@ export default function InventoryContainer({
               testID="inventory-import-confirm-confirm"
               accessibilityRole="button"
               accessibilityLabel={t('transferImportConfirm')}
-              accessibilityHint={t('transferImportConfirmMessage', {
-                locations: transfer.pendingImport.summary.locations,
-                categories: transfer.pendingImport.summary.categories,
-                items: transfer.pendingImport.summary.items,
-              })}
+              accessibilityHint={transferConfirmCopy(
+                t,
+                transfer.pendingImport.summary,
+              )}
               accessibilityState={{ disabled: false }}
               onPress={() => void transfer.onConfirmImport()}
               style={[

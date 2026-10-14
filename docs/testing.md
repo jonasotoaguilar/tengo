@@ -19,6 +19,12 @@ in-memory fakes with the `expo-sharing`/`expo-document-picker`/
 explicit confirmation dialog naming the replacement impact and its
 irreversibility (same destructive-confirmation pattern as the delete
 dialogs); cancelling the dialog applies nothing and stays silent.
+Known limitations, stated not waived: the file carries names,
+quantities, barcodes, thresholds and expiries but not `created_at` or
+row ids — ids are database-local by design, so an imported database
+assigns new ones and pre-import scheduled reminder keys are cancelled
+and re-homed on confirm. A hand-edited blank or space-padded expiry is
+normalized (blank to none, padding trimmed) rather than rejected.
 
 Unit tests prove SQL structure, error mapping, and transaction
 scoping only. They never touch a real database and are never cited

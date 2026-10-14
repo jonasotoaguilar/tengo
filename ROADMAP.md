@@ -372,13 +372,18 @@ approved tokens.
   the current figure. Images
   are out of scope, so no image budget applies.
 
-## 8. Distribution stage (no store release proposed)
+## 8. Distribution stage (preparation only, no store release)
 
 The pipeline stays source-only (`release.yml` on tag `v*`): `git
 archive` tarball plus unsigned export bundle; tag must equal
-`v<package.json version>`. No signing, no EAS, no store upload. If a
-future step proposes store distribution, it needs explicit user
-choices first: Google Play internal track
+`v<package.json version>`. Distribution preparation now exists
+(`eas.json` with Android-only development/preview/production profiles
+and local versioning, release fields in `app.json`, the release
+process and a listing-metadata draft in `docs/distribution.md`,
+guarded by `__tests__/distribution-config.test.ts`) — but no EAS
+project is linked, nothing has been built by EAS, nothing has been
+uploaded, and signing is undecided. A future submission step needs
+explicit user choices first: Google Play internal track
 vs. production, signing ownership, and whether review screenshots
 come from emulator or hardware. None of these is decided.
 

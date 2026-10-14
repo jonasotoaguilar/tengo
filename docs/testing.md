@@ -10,7 +10,15 @@ mocked (`jest.setup.ts`: `expo-sqlite`, `expo-localization`).
 Suites cover migrations, DB init, M1 domain validation, M2
 location/category/item repositories, the P3a `queryItems` filter,
 the v2 schema contract, i18n (`en`/`es`), the App-wired P3b2
-container, and the P3b1 controlled `InventoryList`.
+container, the P3b1 controlled `InventoryList`, and the U6
+versioned export/import round trip (`__tests__/transfer.test.ts`
+plus the container entry-point suite: file bytes, typed refusals,
+single-transaction atomicity, and the share/pick wiring, all against
+in-memory fakes with the `expo-sharing`/`expo-document-picker`/
+`expo-file-system` boundary injected). A staged import applies only after an
+explicit confirmation dialog naming the replacement impact and its
+irreversibility (same destructive-confirmation pattern as the delete
+dialogs); cancelling the dialog applies nothing and stays silent.
 
 Unit tests prove SQL structure, error mapping, and transaction
 scoping only. They never touch a real database and are never cited

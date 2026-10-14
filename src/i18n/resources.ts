@@ -25,6 +25,23 @@ export const en = {
   inventoryRetry: 'Retry',
   inventoryEmptyTitle: 'Nothing here yet',
   inventoryEmptyMessage: 'Add what you keep and where you keep it.',
+  inventoryExport: 'Export',
+  inventoryImport: 'Import',
+  inventoryTransferUnavailableHint:
+    'Export and import are not available in this preview yet.',
+  transferExported: 'Inventory exported.',
+  transferExportFailed: 'Could not export the inventory. Please try again.',
+  transferImported: 'Inventory imported.',
+  transferImportVersionMismatch:
+    'This file is from a newer version of Tengo and cannot be imported.',
+  transferImportMalformed: 'This file is not a valid inventory export.',
+  transferImportInvalid: 'This file contains data Tengo cannot import.',
+  transferImportFailed: 'Could not import the inventory. Please try again.',
+  transferImportConfirmTitle: 'Replace your inventory?',
+  transferImportConfirmMessage:
+    'Importing replaces your whole inventory and cannot be undone. File contents: {{locations}} locations, {{categories}} categories, {{items}} items.',
+  transferImportConfirm: 'Replace',
+  transferImportCancel: 'Cancel',
   inventoryAdd: 'Add',
   inventoryAddFirst: 'Add your first item',
   inventoryNoResultsForQuery: 'No results for "{{query}}"',
@@ -189,6 +206,27 @@ export const es: typeof en = {
   inventoryRetry: 'Reintentar',
   inventoryEmptyTitle: 'Aún no hay nada aquí',
   inventoryEmptyMessage: 'Añade lo que guardas y dónde lo guardas.',
+  inventoryExport: 'Exportar',
+  inventoryImport: 'Importar',
+  inventoryTransferUnavailableHint:
+    'Exportar e importar aún no están disponibles en esta vista previa.',
+  transferExported: 'Inventario exportado.',
+  transferExportFailed:
+    'No se pudo exportar el inventario. Inténtalo de nuevo.',
+  transferImported: 'Inventario importado.',
+  transferImportVersionMismatch:
+    'Este archivo es de una versión más nueva de Tengo y no se puede importar.',
+  transferImportMalformed:
+    'Este archivo no es una exportación válida del inventario.',
+  transferImportInvalid:
+    'Este archivo contiene datos que Tengo no puede importar.',
+  transferImportFailed:
+    'No se pudo importar el inventario. Inténtalo de nuevo.',
+  transferImportConfirmTitle: '¿Reemplazar tu inventario?',
+  transferImportConfirmMessage:
+    'Importar reemplaza todo tu inventario y no se puede deshacer. Contenido del archivo: {{locations}} ubicaciones, {{categories}} categorías, {{items}} artículos.',
+  transferImportConfirm: 'Reemplazar',
+  transferImportCancel: 'Cancelar',
   inventoryAdd: 'Añadir',
   inventoryAddFirst: 'Añade tu primer artículo',
   inventoryNoResultsForQuery: 'Sin resultados para "{{query}}"',
